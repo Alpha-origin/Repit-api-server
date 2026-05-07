@@ -1,0 +1,3 @@
+spring:
+  application:
+    name: Repit_api_server
