@@ -6,11 +6,11 @@ import repit.repit_api_server.domain.gitRepo.dto.request.AuthRequest;
 import repit.repit_api_server.domain.gitRepo.dto.response.AuthResponse;
 
 @Service
-public class GitUrlService {
+public class GitUrlAuthService {
 
     private final WebClient webClient;
 
-    public GitUrlService(WebClient.Builder builder) {
+    public GitUrlAuthService(WebClient.Builder builder) {
 
         this.webClient = builder
                 .baseUrl(".com") // auth 서버 url 넣기(필수)
