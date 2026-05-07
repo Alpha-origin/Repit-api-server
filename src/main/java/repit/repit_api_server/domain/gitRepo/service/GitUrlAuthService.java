@@ -17,7 +17,7 @@ public class GitUrlAuthService {
                 .build();
     }
 
-    public AuthResponse getGitUrl(AuthRequest request) {
+    public AuthResponse setGitUrl(AuthRequest request) {
         return webClient.post()
                 .uri("/") // auth 서버 세부 경로(엔드포인트 필수)
                 .bodyValue(request)
