@@ -13,6 +13,7 @@ public class S3config {
     // env에 설정 필요함
     @Value("${spring.cloud.aws.credentials.access-key}")
     private String accessKey;
+    
     // env에 설정 필요함
     @Value("${spring.cloud.aws.credentials.secret-key}")
     private String secretKey;

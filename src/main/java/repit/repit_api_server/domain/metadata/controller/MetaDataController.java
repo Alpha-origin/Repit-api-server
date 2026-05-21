@@ -15,8 +15,8 @@ import java.io.IOException;
 public class MetaDataController {
     private final MetaService metaService;
 
-    @PostMapping("/dataUpload/{userId}")
-    public ResponseEntity<UploadResponse> upload(@PathVariable Long userId,
+    @PostMapping("/dataUpload")
+    public ResponseEntity<UploadResponse> upload(@RequestParam Long userId,
                                                  @RequestParam("file") MultipartFile file,
                                                  @RequestParam("gitUrl") String gitUrl) throws IOException {
 
@@ -24,8 +24,8 @@ public class MetaDataController {
     }
 
 
-    @GetMapping("/getMetaData/{userId}")
-    public ResponseEntity<Long> getMetaData(@PathVariable Long userId) {
+    @GetMapping("/getMetaData")
+    public ResponseEntity<Long> getMetaData(@RequestParam Long userId) {
         return ResponseEntity.ok(metaService.GetMetaData(userId));
     }
 }
