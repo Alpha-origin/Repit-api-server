@@ -32,6 +32,10 @@ public class MetaService {
                 .build();
     }
 
+    public Long GetMetaData(Long userId) {
+        return userId;
+    }
+
     // S3 file 업로드
     public String uploadFile(MultipartFile file) throws IOException {
         // 원본 파일명과 확장자 추출

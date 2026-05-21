@@ -23,4 +23,9 @@ public class MetaDataController {
         return ResponseEntity.ok(metaService.DataUpload(userId, file, gitUrl));
     }
 
+
+    @GetMapping("/getMetaData/{userId}")
+    public ResponseEntity<Long> getMetaData(@PathVariable Long userId) {
+        return ResponseEntity.ok(metaService.GetMetaData(userId));
+    }
 }
