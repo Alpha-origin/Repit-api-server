@@ -17,7 +17,7 @@ import java.util.UUID;
 public class MetaService {
     private final S3Client s3Client;
 
-    // env에 올리기 필요함
+    // env에 설정 필요함
     @Value("{AWS s3Client}")
     private String bucketName;
 

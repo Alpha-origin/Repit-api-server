@@ -10,14 +10,14 @@ import software.amazon.awssdk.services.s3.S3Client;
 
 @Configuration
 public class S3config {
-    // env에 올리기 필요함
+    // env에 설정 필요함
     @Value("${spring.cloud.aws.credentials.access-key}")
     private String accessKey;
-    // env에 올리기 필요함
+    // env에 설정 필요함
     @Value("${spring.cloud.aws.credentials.secret-key}")
     private String secretKey;
 
-    // env에 올리기 필요함
+    // env에 설정 필요함
     @Value("${spring.cloud.aws.region.static}")
     private String region;
 
