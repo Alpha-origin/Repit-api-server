@@ -29,3 +29,6 @@ spring:
 
 auth-server:
   base-url: ${AUTH_SERVER}
+
+ai-server:
+  base-url: ${AI_SERVER}
