@@ -4,7 +4,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import repit.repit_api_server.domain.metadata.dto.response.UploadResponse;
+import repit.repit_api_server.global.client.AuthServerClient;
+import repit.repit_api_server.domain.metadata.dto.request.MetaDataSaveRequest;
+import repit.repit_api_server.domain.metadata.dto.response.GetMetaDataResponse;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -16,24 +18,37 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class MetaService {
     private final S3Client s3Client;
+    private final AuthServerClient authServerClient;
 
-    // env에 설정 필요함
-    @Value("{AWS s3Client}")
+    @Value("${spring.cloud.aws.s3.bucket}")
     private String bucketName;
+
+    @Value("${spring.cloud.aws.s3.base-url}")
+    private String baseUrl;
 
 
     // GitUrl, 포트폴리오 업로드
-    public UploadResponse DataUpload(Long userId, MultipartFile file, String gitUrl) throws IOException {
+    public GetMetaDataResponse dataUpload(String authorization,
+                                          MultipartFile file,
+                                          String gitUrl)
+            throws IOException {
         String s3Url = uploadFile(file);
-        return UploadResponse.builder()
-                .userId(userId)
+        authServerClient.saveMetaData(
+                authorization,
+                MetaDataSaveRequest.builder()
+                        .gitUrl(gitUrl)
+                        .fileUrl(s3Url)
+                        .build()
+        );
+
+        return GetMetaDataResponse.builder()
                 .gitUrl(gitUrl)
                 .fileUrl(s3Url)
                 .build();
     }
 
-    public Long GetMetaData(Long userId) {
-        return userId;
+    public GetMetaDataResponse getMetaData(String authorization) {
+        return authServerClient.getMetaData(authorization);
     }
 
     // S3 file 업로드
@@ -59,8 +74,6 @@ public class MetaService {
         s3Client.putObject(putObjectRequest, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
 
         // 업로드된 파일의 URL 반환
-        String url = String.format("https://%s.s3.ap-northeast-2.amazonaws.com/%s", bucketName, fileName);
-
-        return url;
+        return baseUrl + "/" + fileName;
     }
 }
