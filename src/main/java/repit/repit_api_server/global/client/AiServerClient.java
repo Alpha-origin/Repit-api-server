@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
+import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 
 @Component
 @RequiredArgsConstructor
@@ -14,8 +15,8 @@ public class AiServerClient {
     @Value("${ai-server.base-url}")
     private String aiServerBaseUrl;
 
-    public void sendMetaData(String authorization, MetaDataRequest request) {
-        restClientBuilder
+    public MetaDataResponse sendMetaData(String authorization, MetaDataRequest request) {
+        return restClientBuilder
                 .baseUrl(aiServerBaseUrl)
                 .build()
                 .post()
@@ -23,6 +24,6 @@ public class AiServerClient {
                 .header("Authorization", authorization)
                 .body(request)
                 .retrieve()
-                .toBodilessEntity();
+                .body(MetaDataResponse.class);
     }
 }
