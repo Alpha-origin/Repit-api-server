@@ -16,9 +16,6 @@ public class AuthServerClient {
     @Value("${auth-server.base-url}")
     private String authServerBaseUrl;
 
-    @Value("${}")
-    private String aiServerBaseUrl;
-
     public void saveMetaData(String authorization, MetaDataRequest request) {
         restClientBuilder
                 .baseUrl(authServerBaseUrl)
