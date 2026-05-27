@@ -6,7 +6,7 @@ import lombok.*;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class MetaDataSaveRequest {
+public class MetaDataRequest {
 
     private String gitUrl;
 

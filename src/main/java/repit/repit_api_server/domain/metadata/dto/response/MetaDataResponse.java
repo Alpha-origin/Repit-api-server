@@ -7,7 +7,7 @@ import lombok.*;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class GetMetaDataResponse {
+public class MetaDataResponse {
 
     private String gitUrl;
 

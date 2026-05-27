@@ -5,8 +5,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import repit.repit_api_server.global.client.AuthServerClient;
-import repit.repit_api_server.domain.metadata.dto.request.MetaDataSaveRequest;
-import repit.repit_api_server.domain.metadata.dto.response.GetMetaDataResponse;
+import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
+import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -28,26 +28,26 @@ public class MetaService {
 
 
     // GitUrl, 포트폴리오 업로드
-    public GetMetaDataResponse dataUpload(String authorization,
-                                          MultipartFile file,
-                                          String gitUrl)
-            throws IOException {
+    public MetaDataResponse dataUpload(String authorization,
+                                       MultipartFile file,
+                                       String gitUrl) throws IOException {
         String s3Url = uploadFile(file);
         authServerClient.saveMetaData(
                 authorization,
-                MetaDataSaveRequest.builder()
+                MetaDataRequest.builder()
                         .gitUrl(gitUrl)
                         .fileUrl(s3Url)
                         .build()
         );
 
-        return GetMetaDataResponse.builder()
+        return MetaDataResponse.builder()
                 .gitUrl(gitUrl)
                 .fileUrl(s3Url)
                 .build();
     }
 
-    public GetMetaDataResponse getMetaData(String authorization) {
+
+    public MetaDataResponse getMetaData(String authorization) {
         return authServerClient.getMetaData(authorization);
     }
 

@@ -4,8 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import repit.repit_api_server.domain.metadata.dto.request.MetaDataSaveRequest;
-import repit.repit_api_server.domain.metadata.dto.response.GetMetaDataResponse;
+import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
+import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 
 @Component
 @RequiredArgsConstructor
@@ -16,7 +16,10 @@ public class AuthServerClient {
     @Value("${auth-server.base-url}")
     private String authServerBaseUrl;
 
-    public void saveMetaData(String authorization, MetaDataSaveRequest request) {
+    @Value("${}")
+    private String aiServerBaseUrl;
+
+    public void saveMetaData(String authorization, MetaDataRequest request) {
         restClientBuilder
                 .baseUrl(authServerBaseUrl)
                 .build()
@@ -28,14 +31,16 @@ public class AuthServerClient {
                 .toBodilessEntity();
     }
 
-    public GetMetaDataResponse getMetaData(String authorization) {
+
+
+    public MetaDataResponse getMetaData(String authorization) {
         return restClientBuilder
                 .baseUrl(authServerBaseUrl)
                 .build()
                 .get()
-                .uri("/api/v1/users/metaData")
+                .uri("/api/v1/auth/getMetaData")
                 .header("Authorization", authorization)
                 .retrieve()
-                .body(GetMetaDataResponse.class);
+                .body(MetaDataResponse.class);
     }
 }
