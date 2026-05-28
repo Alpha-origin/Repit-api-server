@@ -21,7 +21,7 @@ public class AuthServerClient {
                 .baseUrl(authServerBaseUrl)
                 .build()
                 .post()
-                .uri("/api/v1/auth/metaData")
+                .uri("/api/v1/auth/saveMetaData")
                 .header("Authorization", authorization)
                 .body(request)
                 .retrieve()

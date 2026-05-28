@@ -11,7 +11,7 @@ import java.io.IOException;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("api/v1/metaData")
+@RequestMapping("/api/v1/metaData")
 public class MetaDataController {
     private final MetaService metaService;
 
