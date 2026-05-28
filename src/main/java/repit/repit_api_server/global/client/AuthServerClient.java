@@ -20,7 +20,7 @@ public class AuthServerClient {
 
     public void saveMetaData(String authorization, MetaDataRequest request) {
         restClientBuilder
-                .baseUrl("http://localhost:8081")
+                .baseUrl(authServerBaseUrl)
                 .build()
                 .post()
                 .uri("/api/v1/auth/saveMetaData")
@@ -35,7 +35,7 @@ public class AuthServerClient {
     public MetaDataResponse getMetaData(String authorization) {
         ApiResponse<MetaDataResponse> response =
                 restClientBuilder
-                        .baseUrl("http://localhost:8081")
+                        .baseUrl(authServerBaseUrl)
                         .build()
                         .get()
                         .uri("/api/v1/auth/getMetaData")
