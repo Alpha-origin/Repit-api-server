@@ -32,6 +32,7 @@ dependencies {
     testCompileOnly 'org.projectlombok:lombok'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testAnnotationProcessor 'org.projectlombok:lombok'
+    runtimeOnly "io.netty:netty-resolver-dns-native-macos:4.1.122.Final:osx-aarch_64"
 }
 
 tasks.named('test') {
