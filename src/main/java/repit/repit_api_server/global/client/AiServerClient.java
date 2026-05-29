@@ -15,6 +15,8 @@ public class AiServerClient {
     @Value("${ai-server.base-url}")
     private String aiServerBaseUrl;
 
+    // AI 서버에 metaData 전달
+    // 테스트 후 수정 필요 가능성 있음
     public MetaDataResponse sendMetaData(String authorization, MetaDataRequest request) {
         return restClientBuilder
                 .baseUrl(aiServerBaseUrl)

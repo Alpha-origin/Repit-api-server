@@ -47,6 +47,7 @@ public class MetaService {
     }
 
 
+    // metaData 반환
     public MetaDataResponse getMetaData(String authorization) {
         return authServerClient.getMetaData(authorization);
     }

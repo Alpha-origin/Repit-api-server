@@ -16,6 +16,7 @@ public class AiMetaDataController {
 
     private AiServerClient aiServerClient;
 
+    // AI 서버에 개발 필음
     @PostMapping("/sendMetaData")
     public ResponseEntity<MetaDataResponse> sendMetaData(@RequestHeader("Authorization") String authorization) {
         MetaDataResponse forRequest = metaService.getMetaData(authorization);

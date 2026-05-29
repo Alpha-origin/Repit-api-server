@@ -18,6 +18,7 @@ public class AuthServerClient {
     @Value("${auth-server.base-url}")
     private String authServerBaseUrl;
 
+    // Auth 서버에 metaData 전달
     public void saveMetaData(String authorization, MetaDataRequest request) {
         restClientBuilder
                 .baseUrl(authServerBaseUrl)
@@ -32,6 +33,7 @@ public class AuthServerClient {
 
 
 
+    // Auth 서버에서 metaData 반환
     public MetaDataResponse getMetaData(String authorization) {
         ApiResponse<MetaDataResponse> response =
                 restClientBuilder
