@@ -22,7 +22,7 @@ public class Persona {
     private Long id;
 
     @Column(name = "name", nullable = false)
-    private String personaname;
+    private String personaName;
 
     @Column(nullable = false)
     private Major major;

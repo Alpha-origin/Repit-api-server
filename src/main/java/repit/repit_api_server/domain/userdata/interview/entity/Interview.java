@@ -14,17 +14,17 @@ public class Interview {
     private Long id;
 
     @Column(nullable = false)
-    private Long user_id;
+    private Long userId;
 
     @Column(nullable = false)
-    private Long persona_id;
+    private Long personaId;
 
     @Column(nullable = false)
-    private String session_id;
+    private String sessionId;
 
     @Column(nullable = false)
     private Status status;
 
     @Column(nullable = false)
-    private LocalDateTime created_at;
+    private LocalDateTime createdAt;
 }
