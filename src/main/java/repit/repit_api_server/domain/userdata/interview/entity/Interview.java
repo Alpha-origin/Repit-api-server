@@ -1,12 +1,21 @@
 package repit.repit_api_server.domain.userdata.interview.entity;
 
 import jakarta.persistence.*;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "interview")
+@Getter
+@Builder
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor
 public class Interview {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -17,7 +26,7 @@ public class Interview {
     private Long userId;
 
     @JoinColumn(nullable = false)
-    @OneToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY)
     private Persona persona;
 
     @Column(nullable = false)
