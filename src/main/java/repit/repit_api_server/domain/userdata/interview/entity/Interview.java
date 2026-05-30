@@ -25,11 +25,11 @@ public class Interview {
     @Column(nullable = false)
     private Long userId;
 
-    @JoinColumn(nullable = false)
+    @JoinColumn(name = "persona_id", nullable = false)
     @ManyToOne(fetch = FetchType.LAZY)
     private Persona persona;
 
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true, length = 64)
     private String sessionId;
 
     @Enumerated(EnumType.STRING)
