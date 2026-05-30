@@ -16,8 +16,9 @@ public class Interview {
     @Column(nullable = false)
     private Long userId;
 
-    @Column(nullable = false)
-    private Long personaId;
+    @JoinColumn(nullable = false)
+    @OneToOne(fetch = FetchType.LAZY)
+    private Persona persona;
 
     @Column(nullable = false)
     private String sessionId;
