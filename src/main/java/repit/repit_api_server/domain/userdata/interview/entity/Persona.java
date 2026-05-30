@@ -24,15 +24,18 @@ public class Persona {
     @Column(name = "name", nullable = false)
     private String personaName;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Major major;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Type type;
 
     @Column(nullable = false)
     private int career;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Gender gender;
 }

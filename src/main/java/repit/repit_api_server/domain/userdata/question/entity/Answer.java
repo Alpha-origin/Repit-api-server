@@ -32,7 +32,7 @@ public class Answer {
     @JoinColumn(nullable = false)
     private Long userId;
 
-    @Column()
+    @Column(nullable = false)
     private int responseTime;
 
     @Column(nullable = false)

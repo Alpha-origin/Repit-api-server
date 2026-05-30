@@ -24,20 +24,22 @@ public class Question {
 
     @JoinColumn
     @ManyToOne(fetch = FetchType.LAZY)
-    private Interview interviewId;
+    private Interview interview;
 
     @JoinColumn()
-    private Long parentId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    private Question question;
 
-    @Column()
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
     private Type type;
 
-    @Column()
+    @Column(nullable = false)
     private String intention;
 
-    @Column()
+    @Column(nullable = false)
     private String content;
 
-    @Column()
+    @Column(nullable = false)
     private LocalDateTime createdAt;
 }
