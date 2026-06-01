@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
 import repit.repit_api_server.domain.userdata.interview.entity.Interview;
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 
@@ -40,6 +41,7 @@ public class Question {
     @Column(nullable = false)
     private String content;
 
-    @Column(nullable = false)
+    @CreationTimestamp
+    @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 }
