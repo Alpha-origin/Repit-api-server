@@ -32,7 +32,7 @@ public class MetaService {
                                        MultipartFile file,
                                        String gitUrl) throws IOException {
         String s3Url = uploadFile(file);
-        authServerClient.saveMetaData(
+        authServerClient.createMetaData(
                 authorization,
                 MetaDataRequest.builder()
                         .gitUrl(gitUrl)

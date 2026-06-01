@@ -22,7 +22,7 @@ public class AiServerClient {
                 .baseUrl(aiServerBaseUrl)
                 .build()
                 .post()
-                .uri("/api/v1/ai/saveMetaData")
+                .uri("/api/v1/ai/createMetaData")
                 .header("Authorization", authorization)
                 .body(request)
                 .retrieve()

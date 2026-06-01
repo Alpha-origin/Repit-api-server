@@ -19,12 +19,12 @@ public class AuthServerClient {
     private String authServerBaseUrl;
 
     // Auth 서버에 metaData 전달
-    public void saveMetaData(String authorization, MetaDataRequest request) {
+    public void createMetaData(String authorization, MetaDataRequest request) {
         restClientBuilder
                 .baseUrl(authServerBaseUrl)
                 .build()
                 .post()
-                .uri("/api/v1/auth/saveMetaData")
+                .uri("/api/v1/auth/createMetaData")
                 .header("Authorization", authorization)
                 .body(request)
                 .retrieve()
