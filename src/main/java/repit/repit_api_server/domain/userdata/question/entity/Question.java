@@ -23,7 +23,7 @@ public class Question {
     @Column(name = "question_id")
     private Long id;
 
-    @JoinColumn
+    @JoinColumn(nullable = false)
     @ManyToOne(fetch = FetchType.LAZY)
     private Interview interview;
 
