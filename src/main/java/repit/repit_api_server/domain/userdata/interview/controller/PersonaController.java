@@ -3,8 +3,8 @@ package repit.repit_api_server.domain.userdata.interview.controller;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.global.common.ApiResponse;
-import repit.repit_api_server.domain.userdata.interview.dto.request.savePersonaRequest;
-import repit.repit_api_server.domain.userdata.interview.dto.response.savePersonaResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.request.createPersonaRequest;
+import repit.repit_api_server.domain.userdata.interview.dto.response.createPersonaResponse;
 import repit.repit_api_server.domain.userdata.interview.service.PersonaService;
 
 @RestController
@@ -14,7 +14,7 @@ public class PersonaController {
 
     @PostMapping("/savePersona")
     @ResponseStatus(HttpStatus.CREATED)
-    public ApiResponse<savePersonaResponse> savePersona(@RequestBody savePersonaRequest request) {
-        return ApiResponse.created(personaService.savePersona(request));
+    public ApiResponse<createPersonaResponse> savePersona(@RequestBody createPersonaRequest request) {
+        return ApiResponse.created(personaService.createPersona(request));
     }
 }

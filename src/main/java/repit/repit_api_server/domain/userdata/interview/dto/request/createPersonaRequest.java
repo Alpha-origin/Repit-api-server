@@ -12,8 +12,8 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Type;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-public class savePersonaRequest {
-    
+public class createPersonaRequest {
+
     private String personaName;
 
     private Major major;

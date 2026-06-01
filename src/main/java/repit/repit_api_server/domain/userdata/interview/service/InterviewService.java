@@ -20,7 +20,7 @@ public class InterviewService {
     private final InterviewRepository interviewRepository;
     private AuthServerClient authServerClient;
 
-    public InterviewResponse saveInterview(String authorization, Persona persona) {
+    public InterviewResponse createInterview(String authorization, Persona persona) {
         UserResponse user = authServerClient.getUser(authorization);
         String sessionId = UUID.randomUUID().toString();
 

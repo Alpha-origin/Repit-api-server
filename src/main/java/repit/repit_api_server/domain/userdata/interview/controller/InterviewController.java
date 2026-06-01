@@ -15,6 +15,6 @@ public class InterviewController {
     public ApiResponse<InterviewResponse> saveInterview(
             @RequestHeader("Authorization") String authorization,
             @RequestBody Persona persona) {
-        return ApiResponse.created(interviewService.saveInterview(authorization, persona));
+        return ApiResponse.created(interviewService.createInterview(authorization, persona));
     }
 }
