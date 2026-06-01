@@ -6,6 +6,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 
 import java.time.LocalDateTime;
@@ -36,6 +37,7 @@ public class Interview {
     @Column(nullable = false)
     private Status status;
 
-    @Column(nullable = false)
+    @CreationTimestamp
+    @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 }
