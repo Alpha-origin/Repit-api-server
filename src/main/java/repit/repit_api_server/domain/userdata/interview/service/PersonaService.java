@@ -6,6 +6,7 @@ import repit.repit_api_server.domain.userdata.interview.dto.request.PersonaReque
 import repit.repit_api_server.domain.userdata.interview.dto.response.PersonaResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.Persona;
 import repit.repit_api_server.domain.userdata.interview.repository.PersonaRepository;
+import repit.repit_api_server.global.common.ApiResponse;
 
 import java.util.Optional;
 
@@ -31,6 +32,11 @@ public class PersonaService {
 
     public PersonaResponse getPersonaById(Long id) {
         Optional<Persona> persona = personaRepository.findById(id);
+        return PersonaResponse.from(persona.get());
+    }
+
+    public PersonaResponse getPersonaByName(String name) {
+        Optional<Persona> persona = personaRepository.findByPersonaName(name);
         return PersonaResponse.from(persona.get());
     }
 }
