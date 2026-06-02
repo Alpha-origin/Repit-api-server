@@ -22,4 +22,9 @@ public class PersonaController {
     public ApiResponse<PersonaResponse> getPersonaById(@RequestParam Long id) {
         return ApiResponse.success(personaService.getPersonaById(id));
     }
+
+    @GetMapping("/getPersonaByName")
+    public ApiResponse<PersonaResponse> getPersonaByName(@RequestParam String name) {
+        return ApiResponse.success(personaService.getPersonaByName(name));
+    }
 }
