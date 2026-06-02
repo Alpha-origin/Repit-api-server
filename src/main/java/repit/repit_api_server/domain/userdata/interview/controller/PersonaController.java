@@ -17,4 +17,9 @@ public class PersonaController {
     public ApiResponse<PersonaResponse> savePersona(@RequestBody PersonaRequest request) {
         return ApiResponse.created(personaService.createPersona(request));
     }
+
+    @GetMapping("/getPersonaById")
+    public ApiResponse<PersonaResponse> getPersonaById(@RequestParam Long id) {
+        return ApiResponse.success(personaService.getPersonaById(id));
+    }
 }
