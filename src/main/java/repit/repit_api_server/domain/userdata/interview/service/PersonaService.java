@@ -7,6 +7,8 @@ import repit.repit_api_server.domain.userdata.interview.dto.response.PersonaResp
 import repit.repit_api_server.domain.userdata.interview.entity.Persona;
 import repit.repit_api_server.domain.userdata.interview.repository.PersonaRepository;
 
+import java.util.Optional;
+
 @Service
 @RequiredArgsConstructor
 public class PersonaService {
@@ -25,5 +27,10 @@ public class PersonaService {
         Persona saved =  personaRepository.save(persona);
 
         return PersonaResponse.from(saved);
+    }
+
+    public PersonaResponse getPersonaById(Long id) {
+        Optional<Persona> persona = personaRepository.findById(id);
+        return PersonaResponse.from(persona.get());
     }
 }
