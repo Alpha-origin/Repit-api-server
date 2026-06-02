@@ -12,7 +12,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Type;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-public class createPersonaRequest {
+public class PersonaRequest {
 
     private String personaName;
 

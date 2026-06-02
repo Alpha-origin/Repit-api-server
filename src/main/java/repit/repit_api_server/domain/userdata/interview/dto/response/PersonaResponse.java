@@ -9,7 +9,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Type;
 @Getter
 @Builder
 @AllArgsConstructor
-public class createPersonaResponse {
+public class PersonaResponse {
 
     private Long id;
     private String personaName;
@@ -19,8 +19,8 @@ public class createPersonaResponse {
     private Gender gender;
 
 
-    public static createPersonaResponse from(Persona persona) {
-        return new createPersonaResponse(
+    public static PersonaResponse from(Persona persona) {
+        return new PersonaResponse(
                 persona.getId(),
                 persona.getPersonaName(),
                 persona.getMajor(),

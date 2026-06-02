@@ -2,8 +2,8 @@ package repit.repit_api_server.domain.userdata.interview.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import repit.repit_api_server.domain.userdata.interview.dto.request.createPersonaRequest;
-import repit.repit_api_server.domain.userdata.interview.dto.response.createPersonaResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.request.PersonaRequest;
+import repit.repit_api_server.domain.userdata.interview.dto.response.PersonaResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.Persona;
 import repit.repit_api_server.domain.userdata.interview.repository.PersonaRepository;
 
@@ -13,7 +13,7 @@ public class PersonaService {
 
     private final PersonaRepository personaRepository;
 
-    public createPersonaResponse createPersona(createPersonaRequest request) {
+    public PersonaResponse createPersona(PersonaRequest request) {
         Persona persona = Persona.builder()
                 .personaName(request.getPersonaName())
                 .type(request.getType())
@@ -24,6 +24,6 @@ public class PersonaService {
 
         Persona saved =  personaRepository.save(persona);
 
-        return createPersonaResponse.from(saved);
+        return PersonaResponse.from(saved);
     }
 }
