@@ -21,7 +21,7 @@ public class Persona {
     @Column(name = "persona_id")
     private Long id;
 
-    @Column(name = "name", nullable = false)
+    @Column(name = "name", nullable = false,  unique = true)
     private String personaName;
 
     @Enumerated(EnumType.STRING)
