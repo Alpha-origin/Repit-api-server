@@ -17,4 +17,12 @@ public class InterviewController {
             @RequestBody Persona persona) {
         return ApiResponse.created(interviewService.createInterview(authorization, persona));
     }
+
+    @PostMapping("/sendUserData")
+    public void sendUserData(
+            @RequestHeader("Authorization") String authorization,
+            @RequestBody Long interviewId
+    ) {
+        interviewService.sendUserData(authorization, interviewId);
+    }
 }
