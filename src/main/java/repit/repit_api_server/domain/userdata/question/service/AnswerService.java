@@ -27,7 +27,7 @@ public class AnswerService {
         if (question == null) {
             return null;
         }
-        Interview interview = questionRepository.findByQuestion(question);
+        Interview interview = interviewRepository.findByUserId(user.getId());
         if (interview == null) {
             return null;
         }
