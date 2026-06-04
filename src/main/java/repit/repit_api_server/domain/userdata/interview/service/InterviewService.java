@@ -56,7 +56,7 @@ public class InterviewService {
         }
     }
 
-    public List<Interview> getAllInterviewsByUserId(String authorization) {
+    public List<InterviewResponse> getAllInterviewsByUserId(String authorization) {
         UserResponse user = authServerClient.getUser(authorization);
 
         return interviewRepository.findAllByUserId(user.getId());

@@ -2,6 +2,8 @@ package repit.repit_api_server.global.common;
 
 import lombok.*;
 
+import java.util.List;
+
 @Getter
 @Setter
 @Builder
