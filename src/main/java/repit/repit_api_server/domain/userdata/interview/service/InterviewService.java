@@ -55,4 +55,10 @@ public class InterviewService {
             chatServerClient.sendUserData(authorization, sendUserDataRequest);
         }
     }
+
+    public List<Interview> getAllInterviewsByUserId(String authorization) {
+        UserResponse user = authServerClient.getUser(authorization);
+
+        return interviewRepository.findAllByUserId(user.getId());
+    }
 }
