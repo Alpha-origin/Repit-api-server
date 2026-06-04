@@ -3,7 +3,6 @@ package repit.repit_api_server.domain.userdata.question.controller;
 import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.domain.userdata.question.dto.request.AnswerRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.AnswerResponse;
-import repit.repit_api_server.domain.userdata.question.entity.Answer;
 import repit.repit_api_server.domain.userdata.question.service.AnswerService;
 
 @RestController
