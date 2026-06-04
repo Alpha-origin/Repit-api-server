@@ -30,7 +30,7 @@ public class Answer {
     @OneToOne(fetch = FetchType.LAZY)
     private Question question;
 
-    @JoinColumn(nullable = false)
+    @Column(nullable = false)
     private Long userId;
 
     @Column(nullable = false)
