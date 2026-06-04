@@ -45,7 +45,7 @@ public class InterviewService {
     public void sendUserData(String authorization, Long interviewId) {
         Interview interview = interviewRepository.findById(interviewId).orElse(null);
 
-        if (interview == null) {
+        if (interview != null) {
             String sessionId = interview.getSessionId();
             List<Question> questions = new ArrayList<>(questionRepository.findAllByInterview(interview));
             SendUserDataRequest sendUserDataRequest = SendUserDataRequest.builder()
