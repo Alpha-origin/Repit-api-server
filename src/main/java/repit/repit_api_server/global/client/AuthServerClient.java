@@ -60,7 +60,9 @@ public class AuthServerClient {
                         .retrieve()
                         .body(new ParameterizedTypeReference<ApiResponse<UserResponse>>() {});
 
-
+        if (response == null) {
+            return null;
+        }
         return response.getData();
     }
 }
