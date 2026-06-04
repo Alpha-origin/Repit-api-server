@@ -18,17 +18,20 @@ public class PersonaController {
 
     @PostMapping("/savePersona")
     @ResponseStatus(HttpStatus.CREATED)
-    public ApiResponse<PersonaResponse> savePersona(@RequestBody PersonaRequest request) {
+    public ApiResponse<PersonaResponse> savePersona(
+            @RequestBody PersonaRequest request) {
         return ApiResponse.created(personaService.createPersona(request));
     }
 
     @GetMapping("/getPersonaById")
-    public ApiResponse<PersonaResponse> getPersonaById(@RequestParam Long id) {
+    public ApiResponse<PersonaResponse> getPersonaById(
+            @RequestParam Long id) {
         return ApiResponse.success(personaService.getPersonaById(id));
     }
 
     @GetMapping("/getPersonaByName")
-    public ApiResponse<PersonaResponse> getPersonaByName(@RequestParam String name) {
+    public ApiResponse<PersonaResponse> getPersonaByName(
+            @RequestParam String name) {
         return ApiResponse.success(personaService.getPersonaByName(name));
     }
 
