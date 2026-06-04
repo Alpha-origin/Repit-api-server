@@ -30,14 +30,11 @@ public class QuestionService {
     }
 
     public QuestionResponse getQuestionById(String authorization, Long questionId) {
-        Optional<Question> question = questionRepository.findById(questionId);
-        return QuestionResponse.builder()
-                .id(questionId)
-                .interview(question.get().getInterview())
-                .question(question.get().getQuestion())
-                .type(question.get().getType())
-                .intention(question.get().getIntention())
-                .content(question.get().getContent())
-                .build();
+        Question question = questionRepository.findById(questionId).orElse(null);
+        if (question == null) {
+            return null;
+        }
+
+        return QuestionResponse.from(question);
     }
 }

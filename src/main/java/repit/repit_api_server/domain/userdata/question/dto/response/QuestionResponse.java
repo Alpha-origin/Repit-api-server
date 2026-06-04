@@ -23,15 +23,16 @@ public class QuestionResponse {
     private String content;
     private LocalDateTime createdAt;
 
-    public QuestionResponse from(Question question) {
+    public static QuestionResponse from(Question question) {
         return new QuestionResponse(
-                getId(),
-                getInterview(),
-                getQuestion(),
-                getType(),
-                getIntention(),
-                getContent(),
-                getCreatedAt()
+                question.getId(),
+                question.getInterview(),
+                question.getQuestion(),
+                question.getType(),
+                question.getIntention(),
+                question.getContent(),
+                question.getCreatedAt()
+
         );
     }
 }
