@@ -1,5 +1,6 @@
 package repit.repit_api_server.domain.userdata.question.controller;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.domain.userdata.question.service.QuestionService;
@@ -7,8 +8,9 @@ import repit.repit_api_server.global.common.ApiResponse;
 
 @RestController
 @RequestMapping("/api/v1/interview")
+@RequiredArgsConstructor
 public class QuestionController {
-    private QuestionService questionService;
+    private final QuestionService questionService;
 
     @PostMapping("/createQuestion")
     public ApiResponse<QuestionResponse> createQuestion(@RequestHeader("Authorization") String authorization) {
