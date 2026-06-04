@@ -11,8 +11,8 @@ import repit.repit_api_server.global.common.ApiResponse;
 public class InterviewController {
     private InterviewService interviewService;
 
-    @PostMapping("/saveInterview")
-    public ApiResponse<InterviewResponse> saveInterview(
+    @PostMapping("/createInterview")
+    public ApiResponse<InterviewResponse> createInterview(
             @RequestHeader("Authorization") String authorization,
             @RequestBody Persona persona) {
         return ApiResponse.created(interviewService.createInterview(authorization, persona));
