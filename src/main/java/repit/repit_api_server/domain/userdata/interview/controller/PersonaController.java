@@ -8,6 +8,8 @@ import repit.repit_api_server.domain.userdata.interview.dto.request.PersonaReque
 import repit.repit_api_server.domain.userdata.interview.dto.response.PersonaResponse;
 import repit.repit_api_server.domain.userdata.interview.service.PersonaService;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/v1/interview")
 @RequiredArgsConstructor
@@ -28,5 +30,10 @@ public class PersonaController {
     @GetMapping("/getPersonaByName")
     public ApiResponse<PersonaResponse> getPersonaByName(@RequestParam String name) {
         return ApiResponse.success(personaService.getPersonaByName(name));
+    }
+
+    @GetMapping("/getAllPersona")
+    public ApiResponse<List<PersonaResponse>> getAllPersona() {
+        return ApiResponse.success(personaService.getAllPersona());
     }
 }
