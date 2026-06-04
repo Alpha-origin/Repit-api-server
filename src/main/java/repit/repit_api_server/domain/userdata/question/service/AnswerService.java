@@ -17,7 +17,6 @@ import repit.repit_api_server.global.response.UserResponse;
 @RequiredArgsConstructor
 public class AnswerService {
     private final QuestionRepository questionRepository;
-    private final InterviewRepository interviewRepository;
     private final AnswerRepository answerRepository;
     private final AuthServerClient authServerClient;
 
