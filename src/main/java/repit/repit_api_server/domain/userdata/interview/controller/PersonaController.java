@@ -1,5 +1,6 @@
 package repit.repit_api_server.domain.userdata.interview.controller;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.global.common.ApiResponse;
@@ -9,8 +10,9 @@ import repit.repit_api_server.domain.userdata.interview.service.PersonaService;
 
 @RestController
 @RequestMapping("/api/v1/interview")
+@RequiredArgsConstructor
 public class PersonaController {
-    private PersonaService personaService;
+    private final PersonaService personaService;
 
     @PostMapping("/savePersona")
     @ResponseStatus(HttpStatus.CREATED)
