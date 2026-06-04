@@ -64,4 +64,10 @@ public class InterviewService {
 
         return interviewRepository.findAllByUserId(user.getId());
     }
+
+    public InterviewResponse getInterviewById(String authorization, Long interviewId) {
+        Interview interview = interviewRepository.findById(interviewId).orElse(null);
+        assert interview != null;
+        return InterviewResponse.from(interview);
+    }
 }
