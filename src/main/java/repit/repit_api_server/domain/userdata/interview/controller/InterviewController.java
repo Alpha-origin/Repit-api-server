@@ -32,14 +32,14 @@ public class InterviewController {
         interviewService.sendUserData(authorization, interviewId);
     }
 
-    @GetMapping("/findAllInterview")
-    public ApiResponse<List<InterviewResponse>> findAllInterview(
+    @GetMapping("/getAllInterview")
+    public ApiResponse<List<InterviewResponse>> getAllInterview(
             @RequestHeader("Authorization") String authorization) {
         return ApiResponse.success(interviewService.getAllInterviewsByUserId(authorization));
     }
 
-    @GetMapping("/findInterview")
-    public ApiResponse<InterviewResponse> findInterview(
+    @GetMapping("/getInterview")
+    public ApiResponse<InterviewResponse> getInterview(
             @RequestHeader("Authorization") String authorization,
             @RequestParam Long interviewId
     ) {
