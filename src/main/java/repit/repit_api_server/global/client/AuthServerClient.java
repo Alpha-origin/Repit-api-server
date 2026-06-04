@@ -45,6 +45,9 @@ public class AuthServerClient {
                         .retrieve()
                         .body(new ParameterizedTypeReference<ApiResponse<MetaDataResponse>>() {});
 
+        if (response == null) {
+            return null;
+        }
         return response.getData();
     }
 }
