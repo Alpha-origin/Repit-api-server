@@ -14,7 +14,7 @@ import repit.repit_api_server.global.client.AiServerClient;
 public class AiMetaDataController {
     private final MetaService metaService;
 
-    private AiServerClient aiServerClient;
+    private final AiServerClient aiServerClient;
 
     // AI 서버에 개발 필음
     @PostMapping("/sendMetaData")
