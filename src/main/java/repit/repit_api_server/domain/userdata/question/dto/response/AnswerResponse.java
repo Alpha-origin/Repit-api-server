@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import repit.repit_api_server.domain.userdata.interview.entity.Interview;
+import repit.repit_api_server.domain.userdata.question.entity.Answer;
 import repit.repit_api_server.domain.userdata.question.entity.Question;
 
 import java.time.LocalDateTime;
@@ -27,4 +28,16 @@ public class AnswerResponse {
     private String content;
 
     private LocalDateTime createdAt;
+
+    public static AnswerResponse from(Answer answer) {
+        return new AnswerResponse(
+            getId(),
+            getInterview(),
+            getQuestion(),
+            getUserId(),
+            getResponseTime(),
+            getContent(),
+            getCreatedAt()
+        );
+    }
 }

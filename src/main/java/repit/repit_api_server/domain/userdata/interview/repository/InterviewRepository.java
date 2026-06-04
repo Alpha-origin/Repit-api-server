@@ -2,7 +2,8 @@ package repit.repit_api_server.domain.userdata.interview.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.Interview;
+import repit.repit_api_server.domain.userdata.question.entity.Question;
 
 public interface InterviewRepository extends JpaRepository<Interview, Long> {
-
+    Interview findByQuestion(Question question);
 }
