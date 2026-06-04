@@ -43,6 +43,9 @@ public class AiServerClient {
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<QuestionResponse>> () {});
 
+        if (response == null) {
+            return null;
+        }
         return response.getData();
     }
 }
