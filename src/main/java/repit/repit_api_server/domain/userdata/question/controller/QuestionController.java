@@ -16,7 +16,8 @@ public class QuestionController {
     private final QuestionService questionService;
 
     @PostMapping("/createQuestion")
-    public ApiResponse<QuestionResponse> createQuestion(@RequestHeader("Authorization") String authorization) {
+    public ApiResponse<QuestionResponse> createQuestion(
+            @RequestHeader("Authorization") String authorization) {
         return ApiResponse.created(questionService.createQuestion(authorization));
     }
 
