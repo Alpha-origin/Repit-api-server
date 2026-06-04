@@ -13,6 +13,9 @@ import repit.repit_api_server.domain.userdata.question.repository.QuestionReposi
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.response.UserResponse;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 public class AnswerService {
@@ -44,5 +47,12 @@ public class AnswerService {
             return null;
         }
         return AnswerResponse.from(answer);
+    }
+
+    public List<AnswerResponse> getAllAnswer(String authorization, Interview interview) {
+        List<Answer> answers = answerRepository.findAllByInterview(interview);
+        return answers.stream()
+                .map(AnswerResponse::from)
+                .toList();
     }
 }
