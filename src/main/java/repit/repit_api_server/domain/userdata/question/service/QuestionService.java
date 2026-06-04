@@ -8,6 +8,8 @@ import repit.repit_api_server.domain.userdata.question.entity.Question;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 
+import java.util.Optional;
+
 @Service
 @RequiredArgsConstructor
 public class QuestionService {
@@ -25,5 +27,17 @@ public class QuestionService {
                 .build();
         questionRepository.save(question);
         return response;
+    }
+
+    public QuestionResponse getQuestionById(String authorization, Long questionId) {
+        Optional<Question> question = questionRepository.findById(questionId);
+        return QuestionResponse.builder()
+                .id(questionId)
+                .interview(question.get().getInterview())
+                .question(question.get().getQuestion())
+                .type(question.get().getType())
+                .intention(question.get().getIntention())
+                .content(question.get().getContent())
+                .build();
     }
 }
