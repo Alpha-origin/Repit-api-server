@@ -44,16 +44,19 @@ public class InterviewService {
 
     public void sendUserData(String authorization, Long interviewId) {
         Interview interview = interviewRepository.findById(interviewId).orElse(null);
-
-        if (interview != null) {
-            String sessionId = interview.getSessionId();
-            List<Question> questions = new ArrayList<>(questionRepository.findAllByInterview(interview));
-            SendUserDataRequest sendUserDataRequest = SendUserDataRequest.builder()
-                    .sessionId(sessionId)
-                    .questions(questions)
-                    .build();
-            chatServerClient.sendUserData(authorization, sendUserDataRequest);
+        if (interview == null) {
+            System.out.println("interview is null");
         }
+
+        assert interview != null;
+        String sessionId = interview.getSessionId();
+        List<Question> questions = new ArrayList<>(questionRepository.findAllByInterview(interview));
+        SendUserDataRequest sendUserDataRequest = SendUserDataRequest.builder()
+                .sessionId(sessionId)
+                .questions(questions)
+                .build();
+        chatServerClient.sendUserData(authorization, sendUserDataRequest);
+
     }
 
     public List<InterviewResponse> getAllInterviewsByUserId(String authorization) {
