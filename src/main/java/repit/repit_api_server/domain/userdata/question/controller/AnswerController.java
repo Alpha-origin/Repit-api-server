@@ -19,4 +19,11 @@ public class AnswerController {
             @RequestBody AnswerRequest request) {
         return ApiResponse.created(answerService.createAnswer(authorization, request));
     }
+
+    @GetMapping("/getAnswer")
+    public ApiResponse<AnswerResponse> getAnswer(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam("answerId") Long answerId) {
+        return ApiResponse.success(answerService.getAnswerById(authorization, answerId));
+    }
 }
