@@ -37,4 +37,12 @@ public class AnswerService {
 
         return AnswerResponse.from(answer);
     }
+
+    public AnswerResponse getAnswerById(String authorization, Long answerId) {
+        Answer answer = answerRepository.findById(answerId).orElse(null);
+        if (answer == null) {
+            return null;
+        }
+        return AnswerResponse.from(answer);
+    }
 }
