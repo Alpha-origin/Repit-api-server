@@ -31,13 +31,13 @@ public class AnswerResponse {
 
     public static AnswerResponse from(Answer answer) {
         return new AnswerResponse(
-            getId(),
-            getInterview(),
-            getQuestion(),
-            getUserId(),
-            getResponseTime(),
-            getContent(),
-            getCreatedAt()
+            answer.getId(),
+            answer.getInterview(),
+            answer.getQuestion(),
+            answer.getUserId(),
+            answer.getResponseTime(),
+            answer.getContent(),
+            answer.getCreatedAt()
         );
     }
 }
