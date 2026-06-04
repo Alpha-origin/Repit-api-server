@@ -1,7 +1,5 @@
 package repit.repit_api_server.domain.userdata.question.dto.response;
 
-import jakarta.persistence.*;
-import org.hibernate.annotations.CreationTimestamp;
 import repit.repit_api_server.domain.userdata.interview.entity.Interview;
 import repit.repit_api_server.domain.userdata.question.entity.Question;
 
