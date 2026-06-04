@@ -12,11 +12,8 @@ import repit.repit_api_server.domain.userdata.question.entity.Question;
 @AllArgsConstructor
 @NoArgsConstructor
 public class AnswerRequest {
-    private Interview interview;
 
     private Question question;
-
-    private Long userId;
 
     private int responseTime;
 
