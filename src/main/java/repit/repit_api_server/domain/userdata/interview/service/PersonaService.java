@@ -8,6 +8,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.Persona;
 import repit.repit_api_server.domain.userdata.interview.repository.PersonaRepository;
 import repit.repit_api_server.global.common.ApiResponse;
 
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -38,5 +39,12 @@ public class PersonaService {
     public PersonaResponse getPersonaByName(String name) {
         Optional<Persona> persona = personaRepository.findByPersonaName(name);
         return PersonaResponse.from(persona.get());
+    }
+
+    public List<PersonaResponse> getAllPersona() {
+        return personaRepository.findAll()
+                .stream()
+                .map(PersonaResponse::from)
+                .toList();
     }
 }
