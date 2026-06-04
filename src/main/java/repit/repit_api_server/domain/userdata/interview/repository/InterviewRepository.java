@@ -8,6 +8,4 @@ import java.util.List;
 
 public interface InterviewRepository extends JpaRepository<Interview, Long> {
     List<InterviewResponse> findAllByUserId(Long UserId);
-
-    Interview findByUserId(Long userId);
 }
