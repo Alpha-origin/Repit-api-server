@@ -25,7 +25,7 @@ public class InterviewService {
     private final InterviewRepository interviewRepository;
     private final QuestionRepository questionRepository;
     private final ChatServerClient chatServerClient;
-    private AuthServerClient authServerClient;
+    private final AuthServerClient authServerClient;
 
     public InterviewResponse createInterview(String authorization, Persona persona) {
         UserResponse user = authServerClient.getUser(authorization);
