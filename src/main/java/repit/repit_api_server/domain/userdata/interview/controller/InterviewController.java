@@ -37,4 +37,12 @@ public class InterviewController {
             @RequestHeader("Authorization") String authorization) {
         return ApiResponse.success(interviewService.getAllInterviewsByUserId(authorization));
     }
+
+    @GetMapping("/findInterview")
+    public ApiResponse<InterviewResponse> findInterview(
+            @RequestHeader("Authorization") String authorization,
+            @RequestParam Long interviewId
+    ) {
+        return ApiResponse.success(interviewService.getInterviewById(authorization, interviewId));
+    }
 }
