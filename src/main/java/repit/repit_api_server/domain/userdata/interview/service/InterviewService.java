@@ -52,7 +52,7 @@ public class InterviewService {
                     .sessionId(sessionId)
                     .questions(questions)
                     .build();
-            chatServerClient.sendUserData(sessionId, sendUserDataRequest);
+            chatServerClient.sendUserData(authorization, sendUserDataRequest);
         }
     }
 }
