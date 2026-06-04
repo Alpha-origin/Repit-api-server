@@ -53,7 +53,7 @@ public class MetaService {
     }
 
     // S3 file 업로드
-    public String uploadFile(MultipartFile file) throws IOException {
+    private String uploadFile(MultipartFile file) throws IOException {
         // 원본 파일명과 확장자 추출
         String originalFilename = file.getOriginalFilename();
         String extension = "";
