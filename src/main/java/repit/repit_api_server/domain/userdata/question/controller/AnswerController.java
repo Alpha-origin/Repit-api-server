@@ -1,5 +1,6 @@
 package repit.repit_api_server.domain.userdata.question.controller;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.domain.userdata.question.dto.request.AnswerRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.AnswerResponse;
@@ -7,8 +8,9 @@ import repit.repit_api_server.domain.userdata.question.service.AnswerService;
 
 @RestController
 @RequestMapping("/api/v1/interview")
+@RequiredArgsConstructor
 public class AnswerController {
-    private AnswerService answerService;
+    private final AnswerService answerService;
 
     @PostMapping("/createAnswer")
     public AnswerResponse createAnswer(@RequestHeader("Authorization") String authorization,
