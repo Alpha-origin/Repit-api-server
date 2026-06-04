@@ -31,8 +31,7 @@ public class QuestionController {
     @GetMapping("/getAllQuestion")
     public ApiResponse<List<QuestionResponse>> getAllQuestion(
             @RequestHeader("Authorization") String authorization,
-            @RequestBody Interview interview
-    ) {
+            @RequestBody Interview interview) {
         return ApiResponse.success(questionService.findAllByInterview(authorization, interview));
     }
 }
