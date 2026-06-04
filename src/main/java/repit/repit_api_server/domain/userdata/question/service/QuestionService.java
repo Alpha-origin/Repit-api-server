@@ -14,7 +14,7 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class QuestionService {
     private final QuestionRepository questionRepository;
-    private AiServerClient aiServerClient;
+    private final AiServerClient aiServerClient;
 
     public QuestionResponse createQuestion(String authorization) {
         QuestionResponse response = aiServerClient.createQuestion(authorization);
