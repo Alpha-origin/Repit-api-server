@@ -27,12 +27,8 @@ public class AnswerService {
         if (question == null) {
             return null;
         }
-        Interview interview = interviewRepository.findByUserId(user.getId());
-        if (interview == null) {
-            return null;
-        }
         Answer answer = Answer.builder()
-                .interview(interview)
+                .interview(request.getInterview())
                 .question(request.getQuestion())
                 .userId(user.getId())
                 .responseTime(request.getResponseTime())
