@@ -31,7 +31,7 @@ public class QuestionController {
     @GetMapping("/getAllQuestion")
     public ApiResponse<List<QuestionResponse>> getAllQuestion(
             @RequestHeader("Authorization") String authorization,
-            @RequestBody Interview interview) {
-        return ApiResponse.success(questionService.getAllByInterview(authorization, interview));
+            @RequestParam Long interviewId) {
+        return ApiResponse.success(questionService.getAllByInterview(authorization, interviewId));
     }
 }
