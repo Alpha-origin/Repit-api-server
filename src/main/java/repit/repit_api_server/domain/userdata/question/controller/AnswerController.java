@@ -33,8 +33,7 @@ public class AnswerController {
     @GetMapping("/getAllANswer")
     public ApiResponse<List<AnswerResponse>> getAllAnswer(
             @RequestHeader("Authorization") String authorization,
-            @RequestBody Interview interview
-    ) {
-        return ApiResponse.success(answerService.getAllAnswer(authorization, interview));
+            @RequestParam Long interviewId) {
+        return ApiResponse.success(answerService.getAllAnswer(authorization, interviewId));
     }
 }

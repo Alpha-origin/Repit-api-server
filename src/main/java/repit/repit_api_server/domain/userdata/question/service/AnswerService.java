@@ -22,6 +22,7 @@ public class AnswerService {
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
     private final AuthServerClient authServerClient;
+    private final InterviewRepository interviewRepository;
 
     public AnswerResponse createAnswer(String authorization, AnswerRequest request) {
         UserResponse user = authServerClient.getUser(authorization);
@@ -49,7 +50,8 @@ public class AnswerService {
         return AnswerResponse.from(answer);
     }
 
-    public List<AnswerResponse> getAllAnswer(String authorization, Interview interview) {
+    public List<AnswerResponse> getAllAnswer(String authorization, Long interviewId) {
+        Interview interview = interviewRepository.findById(interviewId).orElse(null);
         List<Answer> answers = answerRepository.findAllByInterview(interview);
         return answers.stream()
                 .map(AnswerResponse::from)
