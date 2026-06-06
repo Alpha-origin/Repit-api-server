@@ -2,10 +2,13 @@ package repit.repit_api_server.domain.userdata.question.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import repit.repit_api_server.domain.userdata.interview.entity.Interview;
 import repit.repit_api_server.domain.userdata.question.dto.request.AnswerRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.AnswerResponse;
 import repit.repit_api_server.domain.userdata.question.service.AnswerService;
 import repit.repit_api_server.global.common.ApiResponse;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/interview")
@@ -25,5 +28,13 @@ public class AnswerController {
             @RequestHeader("Authorization") String authorization,
             @RequestParam("answerId") Long answerId) {
         return ApiResponse.success(answerService.getAnswerById(authorization, answerId));
+    }
+
+    @GetMapping("/getAllANswer")
+    public ApiResponse<List<AnswerResponse>> getAllAnswer(
+            @RequestHeader("Authorization") String authorization,
+            @RequestBody Interview interview
+    ) {
+        return ApiResponse.success(answerService.getAllAnswer(authorization, interview));
     }
 }
