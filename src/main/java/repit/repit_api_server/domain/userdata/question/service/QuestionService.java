@@ -3,6 +3,7 @@ package repit.repit_api_server.domain.userdata.question.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.userdata.interview.entity.Interview;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.domain.userdata.question.entity.Question;
@@ -18,6 +19,7 @@ import java.util.Optional;
 public class QuestionService {
     private final QuestionRepository questionRepository;
     private final AiServerClient aiServerClient;
+    private final InterviewRepository interviewRepository;
 
     public QuestionResponse createQuestion(String authorization) {
         QuestionResponse response = aiServerClient.createQuestion(authorization);
@@ -42,9 +44,7 @@ public class QuestionService {
     }
 
     public List<QuestionResponse> getAllByInterview(String authorization, Long interviewId) {
-        Interview interview = Interview.builder()
-                .id(interviewId)
-                .build();
+        Interview interview = interviewRepository.findById(interviewId).orElse(null);
         List<Question> questions = questionRepository.findAllByInterview(interview);
         return questions.stream()
                 .map(QuestionResponse::from)
