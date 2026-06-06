@@ -32,6 +32,6 @@ public class QuestionController {
     public ApiResponse<List<QuestionResponse>> getAllQuestion(
             @RequestHeader("Authorization") String authorization,
             @RequestBody Interview interview) {
-        return ApiResponse.success(questionService.findAllByInterview(authorization, interview));
+        return ApiResponse.success(questionService.getAllByInterview(authorization, interview));
     }
 }

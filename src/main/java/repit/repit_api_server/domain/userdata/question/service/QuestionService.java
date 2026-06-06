@@ -41,7 +41,7 @@ public class QuestionService {
         return QuestionResponse.from(question);
     }
 
-    public List<QuestionResponse> findAllByInterview(String authorization, Interview interview) {
+    public List<QuestionResponse> getAllByInterview(String authorization, Interview interview) {
         List<Question> questions = questionRepository.findAllByInterview(interview);
         return questions.stream()
                 .map(QuestionResponse::from)
