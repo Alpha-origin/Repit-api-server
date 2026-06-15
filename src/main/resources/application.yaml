@@ -35,3 +35,12 @@ ai-server:
 
 chat-server:
   base-url: ${CHAT_SERVER}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
