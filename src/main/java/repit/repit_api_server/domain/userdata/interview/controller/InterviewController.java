@@ -2,6 +2,7 @@ package repit.repit_api_server.domain.userdata.interview.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.Persona;
 import repit.repit_api_server.domain.userdata.interview.service.InterviewService;
@@ -11,7 +12,7 @@ import repit.repit_api_server.global.common.ApiResponse;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/interview")
+@RequestMapping("/api/interviews")
 @RequiredArgsConstructor
 public class InterviewController {
     private final InterviewService interviewService;
@@ -44,5 +45,12 @@ public class InterviewController {
             @RequestParam Long interviewId
     ) {
         return ApiResponse.success(interviewService.getInterviewById(authorization, interviewId));
+    }
+
+    @PostMapping("/result")
+    public void saveInterview(@RequestHeader("Authorization") String authorization,
+                              @RequestBody SaveInterviewRequest request
+    ) {
+        interviewService.saveInterview(authorization, request);
     }
 }
