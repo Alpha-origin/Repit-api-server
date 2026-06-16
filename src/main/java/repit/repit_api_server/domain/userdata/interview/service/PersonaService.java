@@ -4,9 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.userdata.interview.dto.request.PersonaRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.PersonaResponse;
-import repit.repit_api_server.domain.userdata.interview.entity.Persona;
+import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.PersonaRepository;
-import repit.repit_api_server.global.common.ApiResponse;
 
 import java.util.List;
 import java.util.Optional;
@@ -18,7 +17,7 @@ public class PersonaService {
     private final PersonaRepository personaRepository;
 
     public PersonaResponse createPersona(PersonaRequest request) {
-        Persona persona = Persona.builder()
+        PersonaEntity persona = PersonaEntity.builder()
                 .personaName(request.getPersonaName())
                 .type(request.getType())
                 .major(request.getMajor())
@@ -26,18 +25,18 @@ public class PersonaService {
                 .gender(request.getGender())
                 .build();
 
-        Persona saved =  personaRepository.save(persona);
+        PersonaEntity saved =  personaRepository.save(persona);
 
         return PersonaResponse.from(saved);
     }
 
     public PersonaResponse getPersonaById(Long id) {
-        Optional<Persona> persona = personaRepository.findById(id);
+        Optional<PersonaEntity> persona = personaRepository.findById(id);
         return PersonaResponse.from(persona.get());
     }
 
     public PersonaResponse getPersonaByName(String name) {
-        Optional<Persona> persona = personaRepository.findByPersonaName(name);
+        Optional<PersonaEntity> persona = personaRepository.findByPersonaName(name);
         return PersonaResponse.from(persona.get());
     }
 

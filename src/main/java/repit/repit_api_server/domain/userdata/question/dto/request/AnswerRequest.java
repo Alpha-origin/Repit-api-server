@@ -4,17 +4,17 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import repit.repit_api_server.domain.userdata.interview.entity.Interview;
-import repit.repit_api_server.domain.userdata.question.entity.Question;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 
 @Getter
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
 public class AnswerRequest {
-    private Interview interview;
+    private InterviewEntity interview;
 
-    private Question question;
+    private QuestionEntity question;
 
     private int responseTime;
 

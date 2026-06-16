@@ -5,18 +5,13 @@ import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SendUserDataRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
-import repit.repit_api_server.domain.userdata.interview.entity.Interview;
-import repit.repit_api_server.domain.userdata.interview.entity.Persona;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
-import repit.repit_api_server.domain.userdata.question.dto.request.AnswerRequest;
-import repit.repit_api_server.domain.userdata.question.dto.request.QuestionRequest;
-import repit.repit_api_server.domain.userdata.question.entity.Answer;
-import repit.repit_api_server.domain.userdata.question.entity.Question;
+import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
-import repit.repit_api_server.domain.userdata.question.service.AnswerService;
-import repit.repit_api_server.domain.userdata.question.service.QuestionService;
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.response.UserResponse;
@@ -35,30 +30,30 @@ public class InterviewService {
     private final AuthServerClient authServerClient;
     private final AnswerRepository answerRepository;
 
-    public InterviewResponse createInterview(String authorization, Persona persona) {
+    public InterviewResponse createInterview(String authorization, PersonaEntity persona) {
         UserResponse user = authServerClient.getUser(authorization);
         String sessionId = UUID.randomUUID().toString();
 
-        Interview interview = Interview.builder()
+        InterviewEntity interview = InterviewEntity.builder()
                 .userId(user.getId())
                 .persona(persona)
                 .status(Status.IN_PROGRESS)
                 .sessionId(sessionId)
                 .build();
 
-        Interview saved = interviewRepository.save(interview);
+        InterviewEntity saved = interviewRepository.save(interview);
         return InterviewResponse.from(saved);
     }
 
     public void sendUserData(String authorization, Long interviewId) {
-        Interview interview = interviewRepository.findById(interviewId).orElse(null);
+        InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
         if (interview == null) {
             System.out.println("interview is null");
         }
 
         assert interview != null;
         String sessionId = interview.getSessionId();
-        List<Question> questions = new ArrayList<>(questionRepository.findAllByInterview(interview));
+        List<QuestionEntity> questions = new ArrayList<>(questionRepository.findAllByInterview(interview));
         SendUserDataRequest sendUserDataRequest = SendUserDataRequest.builder()
                 .sessionId(sessionId)
                 .questions(questions)
@@ -74,13 +69,13 @@ public class InterviewService {
     }
 
     public InterviewResponse getInterviewById(String authorization, Long interviewId) {
-        Interview interview = interviewRepository.findById(interviewId).orElse(null);
+        InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
         assert interview != null;
         return InterviewResponse.from(interview);
     }
 
     public void saveInterview(String authorization, SaveInterviewRequest request) {
-        Interview interview = interviewRepository.findById(request.getInterviewId()).orElse(null);
+        InterviewEntity interview = interviewRepository.findById(request.getInterviewId()).orElse(null);
         assert interview != null;
         interview.setSessionId(request.getSessionId());
         interview.setStatus(request.getStatus());

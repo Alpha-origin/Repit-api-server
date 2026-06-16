@@ -4,8 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import repit.repit_api_server.domain.userdata.interview.entity.Interview;
-import repit.repit_api_server.domain.userdata.interview.entity.Persona;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 
 import java.time.LocalDateTime;
@@ -17,12 +17,12 @@ import java.time.LocalDateTime;
 public class InterviewResponse {
     private Long id;
     private Long userId;
-    private Persona persona;
+    private PersonaEntity persona;
     private String sessionId;
     private Status status;
     private LocalDateTime createdAt;
 
-    public static InterviewResponse from(Interview interview) {
+    public static InterviewResponse from(InterviewEntity interview) {
         return new InterviewResponse(
                 interview.getId(),
                 interview.getUserId(),

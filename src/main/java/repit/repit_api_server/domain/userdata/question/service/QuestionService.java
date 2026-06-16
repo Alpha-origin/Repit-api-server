@@ -2,17 +2,14 @@ package repit.repit_api_server.domain.userdata.question.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import repit.repit_api_server.domain.userdata.interview.entity.Interview;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
-import repit.repit_api_server.domain.userdata.question.dto.request.QuestionRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
-import repit.repit_api_server.domain.userdata.question.entity.Question;
+import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -23,7 +20,7 @@ public class QuestionService {
 
     public QuestionResponse createQuestion(String authorization) {
         QuestionResponse response = aiServerClient.createQuestion(authorization);
-        Question question = Question.builder()
+        QuestionEntity question = QuestionEntity.builder()
                 .interview(response.getInterview())
                 .question(response.getQuestion())
                 .type(response.getType())
@@ -35,7 +32,7 @@ public class QuestionService {
     }
 
     public QuestionResponse getQuestionById(String authorization, Long questionId) {
-        Question question = questionRepository.findById(questionId).orElse(null);
+        QuestionEntity question = questionRepository.findById(questionId).orElse(null);
         if (question == null) {
             return null;
         }
@@ -44,8 +41,8 @@ public class QuestionService {
     }
 
     public List<QuestionResponse> getAllByInterview(String authorization, Long interviewId) {
-        Interview interview = interviewRepository.findById(interviewId).orElse(null);
-        List<Question> questions = questionRepository.findAllByInterview(interview);
+        InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
+        List<QuestionEntity> questions = questionRepository.findAllByInterview(interview);
         return questions.stream()
                 .map(QuestionResponse::from)
                 .toList();

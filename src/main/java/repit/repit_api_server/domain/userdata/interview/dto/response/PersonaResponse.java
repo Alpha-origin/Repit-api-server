@@ -1,7 +1,7 @@
 package repit.repit_api_server.domain.userdata.interview.dto.response;
 
 import lombok.*;
-import repit.repit_api_server.domain.userdata.interview.entity.Persona;
+import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Gender;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Type;
@@ -19,7 +19,7 @@ public class PersonaResponse {
     private Gender gender;
 
 
-    public static PersonaResponse from(Persona persona) {
+    public static PersonaResponse from(PersonaEntity persona) {
         return new PersonaResponse(
                 persona.getId(),
                 persona.getPersonaName(),

@@ -15,7 +15,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Type;
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
-public class Persona {
+public class PersonaEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "persona_id")

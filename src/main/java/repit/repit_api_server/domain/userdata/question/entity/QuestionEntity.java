@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
-import repit.repit_api_server.domain.userdata.interview.entity.Interview;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 
 import java.time.LocalDateTime;
@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class Question {
+public class QuestionEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "question_id")
@@ -25,11 +25,11 @@ public class Question {
 
     @JoinColumn(nullable = false)
     @ManyToOne(fetch = FetchType.LAZY)
-    private Interview interview;
+    private InterviewEntity interview;
 
     @JoinColumn()
     @ManyToOne(fetch = FetchType.LAZY)
-    private Question question;
+    private QuestionEntity question;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

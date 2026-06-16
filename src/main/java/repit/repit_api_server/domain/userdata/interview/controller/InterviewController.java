@@ -4,7 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
-import repit.repit_api_server.domain.userdata.interview.entity.Persona;
+import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.service.InterviewService;
 import repit.repit_api_server.domain.userdata.question.service.AnswerService;
 import repit.repit_api_server.global.common.ApiResponse;
@@ -21,7 +21,7 @@ public class InterviewController {
     @PostMapping("/createInterview")
     public ApiResponse<InterviewResponse> createInterview(
             @RequestHeader("Authorization") String authorization,
-            @RequestBody Persona persona) {
+            @RequestBody PersonaEntity persona) {
         return ApiResponse.created(interviewService.createInterview(authorization, persona));
     }
 

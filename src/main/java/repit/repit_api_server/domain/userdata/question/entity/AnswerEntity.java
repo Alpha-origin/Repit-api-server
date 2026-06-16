@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
-import repit.repit_api_server.domain.userdata.interview.entity.Interview;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 
 import java.time.LocalDateTime;
 
@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class Answer {
+public class AnswerEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "answer_id")
@@ -24,11 +24,11 @@ public class Answer {
 
     @JoinColumn(nullable = false)
     @ManyToOne(fetch = FetchType.LAZY)
-    private Interview interview;
+    private InterviewEntity interview;
 
     @JoinColumn(nullable = false)
     @OneToOne(fetch = FetchType.LAZY)
-    private Question question;
+    private QuestionEntity question;
 
     @Column(nullable = false)
     private Long userId;

@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
-public class Interview {
+public class InterviewEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "interview_id")
@@ -25,7 +25,7 @@ public class Interview {
 
     @JoinColumn(name = "persona_id", nullable = false)
     @ManyToOne(fetch = FetchType.LAZY)
-    private Persona persona;
+    private PersonaEntity persona;
 
     @Column(nullable = false, unique = true, length = 64)
     private String sessionId;

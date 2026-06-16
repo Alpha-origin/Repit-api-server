@@ -2,7 +2,6 @@ package repit.repit_api_server.domain.userdata.question.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
-import repit.repit_api_server.domain.userdata.interview.entity.Interview;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.domain.userdata.question.service.QuestionService;
 import repit.repit_api_server.global.common.ApiResponse;
