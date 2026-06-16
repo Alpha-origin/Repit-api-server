@@ -11,7 +11,7 @@ import repit.repit_api_server.domain.userdata.interview.service.PersonaService;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/interview")
+@RequestMapping("/api/interviews")
 @RequiredArgsConstructor
 public class PersonaController {
     private final PersonaService personaService;

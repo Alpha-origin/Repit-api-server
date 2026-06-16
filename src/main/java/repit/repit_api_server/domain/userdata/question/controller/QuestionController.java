@@ -10,7 +10,7 @@ import repit.repit_api_server.global.common.ApiResponse;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/interview")
+@RequestMapping("/api/interviews")
 @RequiredArgsConstructor
 public class QuestionController {
     private final QuestionService questionService;
