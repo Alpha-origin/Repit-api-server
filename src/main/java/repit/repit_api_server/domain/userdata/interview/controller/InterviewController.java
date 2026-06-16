@@ -2,6 +2,7 @@ package repit.repit_api_server.domain.userdata.interview.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import repit.repit_api_server.domain.userdata.interview.dto.request.PersonaRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
@@ -21,8 +22,8 @@ public class InterviewController {
     @PostMapping("/createInterview")
     public ApiResponse<InterviewResponse> createInterview(
             @RequestHeader("Authorization") String authorization,
-            @RequestBody PersonaEntity persona) {
-        return ApiResponse.created(interviewService.createInterview(authorization, persona));
+            @RequestBody PersonaRequest request) throws ClassNotFoundException {
+        return ApiResponse.created(interviewService.createInterview(authorization, request));
     }
 
     @PostMapping("/sendUserData")

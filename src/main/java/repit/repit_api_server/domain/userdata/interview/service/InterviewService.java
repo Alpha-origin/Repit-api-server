@@ -2,6 +2,7 @@ package repit.repit_api_server.domain.userdata.interview.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import repit.repit_api_server.domain.userdata.interview.dto.request.PersonaRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SendUserDataRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
@@ -9,6 +10,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.interview.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
@@ -18,6 +20,7 @@ import repit.repit_api_server.global.response.UserResponse;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -29,10 +32,15 @@ public class InterviewService {
     private final ChatServerClient chatServerClient;
     private final AuthServerClient authServerClient;
     private final AnswerRepository answerRepository;
+    private final PersonaRepository personaRepository;
 
-    public InterviewResponse createInterview(String authorization, PersonaEntity persona) {
+    public InterviewResponse createInterview(String authorization, PersonaRequest request) throws ClassNotFoundException {
         UserResponse user = authServerClient.getUser(authorization);
         String sessionId = UUID.randomUUID().toString();
+        PersonaEntity persona = personaRepository.findByPersonaName(request.getPersonaName()).orElse(null);
+        if (persona == null) {
+            throw new ClassNotFoundException("페르소나가 없습니다");
+        }
 
         InterviewEntity interview = InterviewEntity.builder()
                 .userId(user.getId())
