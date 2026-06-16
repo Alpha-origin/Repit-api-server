@@ -32,3 +32,12 @@ auth-server:
 
 ai-server:
   base-url: ${AI_SERVER}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
