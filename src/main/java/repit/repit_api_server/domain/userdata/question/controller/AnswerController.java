@@ -10,26 +10,26 @@ import repit.repit_api_server.global.common.ApiResponse;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/interviews")
+@RequestMapping("/api/answer")
 @RequiredArgsConstructor
 public class AnswerController {
     private final AnswerService answerService;
 
-    @PostMapping("/createAnswer")
+    @PostMapping
     public ApiResponse<AnswerResponse> createAnswer(
             @RequestHeader("Authorization") String authorization,
             @RequestBody AnswerRequest request) {
         return ApiResponse.created(answerService.createAnswer(authorization, request));
     }
 
-    @GetMapping("/getAnswer")
+    @GetMapping
     public ApiResponse<AnswerResponse> getAnswer(
             @RequestHeader("Authorization") String authorization,
             @RequestParam("answerId") Long answerId) {
         return ApiResponse.success(answerService.getAnswerById(authorization, answerId));
     }
 
-    @GetMapping("/getAllANswer")
+    @GetMapping("/getAll")
     public ApiResponse<List<AnswerResponse>> getAllAnswer(
             @RequestHeader("Authorization") String authorization,
             @RequestParam Long interviewId) {
