@@ -6,8 +6,9 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
-import repit.repit_api_server.domain.metadata.dto.response.ApiResponse;
+import repit.repit_api_server.global.common.ApiResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.global.response.UserResponse;
 
 @Component
 @RequiredArgsConstructor
@@ -44,6 +45,23 @@ public class AuthServerClient {
                         .header("Authorization", authorization)
                         .retrieve()
                         .body(new ParameterizedTypeReference<ApiResponse<MetaDataResponse>>() {});
+
+        if (response == null) {
+            return null;
+        }
+        return response.getData();
+    }
+
+    public UserResponse getUser(String authorization) {
+        ApiResponse<UserResponse> response =
+                restClientBuilder
+                        .baseUrl(authServerBaseUrl)
+                        .build()
+                        .get()
+                        .uri("/api/v1/users/me")
+                        .header("Authorization", authorization)
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<ApiResponse<UserResponse>>() {});
 
         if (response == null) {
             return null;

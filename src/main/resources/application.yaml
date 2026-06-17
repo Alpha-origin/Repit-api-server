@@ -33,6 +33,9 @@ auth-server:
 ai-server:
   base-url: ${AI_SERVER}
 
+chat-server:
+  base-url: ${CHAT_SERVER}
+
 management:
   endpoints:
     web:
