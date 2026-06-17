@@ -1,0 +1,24 @@
+# Gradle cache & build output
+.gradle/
+build/
+
+# IDE
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# Docker
+docker-compose.yml
+docker/
+
+# Environment & secrets
+.env
+.env.*
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
