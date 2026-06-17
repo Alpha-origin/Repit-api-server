@@ -19,14 +19,14 @@ public class InterviewController {
     private final InterviewService interviewService;
     private final AnswerService answerService;
 
-    @PostMapping("/createInterview")
+    @PostMapping("/create")
     public ApiResponse<InterviewResponse> createInterview(
             @RequestHeader("Authorization") String authorization,
             @RequestBody PersonaRequest request) throws ClassNotFoundException {
         return ApiResponse.created(interviewService.createInterview(authorization, request));
     }
 
-    @PostMapping("/sendUserData")
+    @PostMapping
     public void sendUserData(
             @RequestHeader("Authorization") String authorization,
             @RequestBody Long interviewId
@@ -34,13 +34,13 @@ public class InterviewController {
         interviewService.sendUserData(authorization, interviewId);
     }
 
-    @GetMapping("/getAllInterview")
+    @GetMapping("/getAll")
     public ApiResponse<List<InterviewResponse>> getAllInterview(
             @RequestHeader("Authorization") String authorization) {
         return ApiResponse.success(interviewService.getAllInterviewsByUserId(authorization));
     }
 
-    @GetMapping("/getInterview")
+    @GetMapping("/get")
     public ApiResponse<InterviewResponse> getInterview(
             @RequestHeader("Authorization") String authorization,
             @RequestParam Long interviewId
