@@ -25,9 +25,9 @@ public class QuestionResponse {
 
     public static QuestionResponse from(QuestionEntity question) {
         return new QuestionResponse(
-                question.getId(),
+                question.getQuestionId(),
                 question.getInterview(),
-                question.getQuestion(),
+                question.getParent(),
                 question.getType(),
                 question.getIntention(),
                 question.getContent(),

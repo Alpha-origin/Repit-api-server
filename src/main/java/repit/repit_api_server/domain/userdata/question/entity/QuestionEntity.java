@@ -21,15 +21,15 @@ public class QuestionEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "question_id")
-    private Long id;
+    private Long questionId;
 
     @JoinColumn(nullable = false)
     @ManyToOne(fetch = FetchType.LAZY)
-    private InterviewEntity interview;
+    private InterviewEntity interviewId;
 
     @JoinColumn()
     @ManyToOne(fetch = FetchType.LAZY)
-    private QuestionEntity question;
+    private QuestionEntity parentId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

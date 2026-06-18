@@ -31,7 +31,7 @@ public class AnswerResponse {
 
     public static AnswerResponse from(AnswerEntity answer) {
         return new AnswerResponse(
-            answer.getId(),
+            answer.getAnswerId(),
             answer.getInterview(),
             answer.getQuestion(),
             answer.getUserId(),

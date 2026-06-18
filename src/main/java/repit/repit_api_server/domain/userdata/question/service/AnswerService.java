@@ -25,13 +25,13 @@ public class AnswerService {
 
     public AnswerResponse createAnswer(String authorization, AnswerRequest request) {
         UserResponse user = authServerClient.getUser(authorization);
-        QuestionEntity question = questionRepository.findById(request.getQuestion().getId()).orElse(null);
+        QuestionEntity question = questionRepository.findById(request.getQuestion().getQuestionId()).orElse(null);
         if (question == null) {
             return null;
         }
         AnswerEntity answer = AnswerEntity.builder()
-                .interview(request.getInterview())
-                .question(request.getQuestion())
+                .interviewId(request.getInterview())
+                .questionId(request.getQuestion())
                 .userId(user.getId())
                 .responseTime(request.getResponseTime())
                 .content(request.getContent())
