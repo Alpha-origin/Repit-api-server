@@ -51,7 +51,7 @@ public class AnswerService {
 
     public List<AnswerResponse> getAllAnswer(String authorization, Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
-        List<AnswerEntity> answers = answerRepository.findAllByInterview(interview);
+        List<AnswerEntity> answers = answerRepository.findAllByInterviewId(interview);
         return answers.stream()
                 .map(AnswerResponse::from)
                 .toList();
