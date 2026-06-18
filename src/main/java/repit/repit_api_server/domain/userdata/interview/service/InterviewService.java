@@ -61,7 +61,7 @@ public class InterviewService {
 
         assert interview != null;
         String sessionId = interview.getSessionId();
-        List<QuestionEntity> questions = new ArrayList<>(questionRepository.findAllByInterview(interview));
+        List<QuestionEntity> questions = new ArrayList<>(questionRepository.findAllByInterviewId(interview));
         SendUserDataRequest sendUserDataRequest = SendUserDataRequest.builder()
                 .sessionId(sessionId)
                 .questions(questions)
