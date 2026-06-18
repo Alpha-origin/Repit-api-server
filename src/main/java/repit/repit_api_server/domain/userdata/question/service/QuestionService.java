@@ -21,8 +21,8 @@ public class QuestionService {
     public QuestionResponse createQuestion(String authorization) {
         QuestionResponse response = aiServerClient.createQuestion(authorization);
         QuestionEntity question = QuestionEntity.builder()
-                .interview(response.getInterview())
-                .question(response.getQuestion())
+                .interviewId(response.getInterview())
+                .parentId(response.getQuestion())
                 .type(response.getType())
                 .intention(response.getIntention())
                 .content(response.getContent())
