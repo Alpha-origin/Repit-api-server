@@ -18,14 +18,13 @@ public class InterviewEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "interview_id")
-    private Long id;
+    private Long interviewId;
 
     @Column(nullable = false)
     private Long userId;
 
-    @JoinColumn(name = "persona_id", nullable = false)
-    @ManyToOne(fetch = FetchType.LAZY)
-    private PersonaEntity persona;
+    @Column(nullable = false)
+    private Long personaId;
 
     @Column(nullable = false, unique = true, length = 64)
     private String sessionId;

@@ -18,11 +18,11 @@ public class QuestionService {
     private final AiServerClient aiServerClient;
     private final InterviewRepository interviewRepository;
 
-    public QuestionResponse createQuestion(String authorization) {
-        QuestionResponse response = aiServerClient.createQuestion(authorization);
+    public QuestionResponse createQuestion() {
+        QuestionResponse response = aiServerClient.createQuestion();
         QuestionEntity question = QuestionEntity.builder()
-                .interviewId(response.getInterview())
-                .parentId(response.getQuestion())
+                .interviewId(response.getInterviewId())
+                .parentId(response.getQuestionId())
                 .type(response.getType())
                 .intention(response.getIntention())
                 .content(response.getContent())
@@ -31,7 +31,7 @@ public class QuestionService {
         return response;
     }
 
-    public QuestionResponse getQuestionById(String authorization, Long questionId) {
+    public QuestionResponse getQuestionById(Long questionId) {
         QuestionEntity question = questionRepository.findById(questionId).orElse(null);
         if (question == null) {
             return null;
@@ -40,7 +40,7 @@ public class QuestionService {
         return QuestionResponse.from(question);
     }
 
-    public List<QuestionResponse> getAllByInterview(String authorization, Long interviewId) {
+    public List<QuestionResponse> getAllByInterview(Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
         List<QuestionEntity> questions = questionRepository.findAllByInterviewId(interview);
         return questions.stream()

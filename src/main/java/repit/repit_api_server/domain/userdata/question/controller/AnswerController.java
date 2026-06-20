@@ -24,15 +24,13 @@ public class AnswerController {
 
     @GetMapping
     public ApiResponse<AnswerResponse> getAnswer(
-            @RequestHeader("Authorization") String authorization,
             @RequestParam("answerId") Long answerId) {
-        return ApiResponse.success(answerService.getAnswerById(authorization, answerId));
+        return ApiResponse.success(answerService.getAnswerById(answerId));
     }
 
     @GetMapping("/getAll")
     public ApiResponse<List<AnswerResponse>> getAllAnswer(
-            @RequestHeader("Authorization") String authorization,
             @RequestParam Long interviewId) {
-        return ApiResponse.success(answerService.getAllAnswer(authorization, interviewId));
+        return ApiResponse.success(answerService.getAllAnswer(interviewId));
     }
 }

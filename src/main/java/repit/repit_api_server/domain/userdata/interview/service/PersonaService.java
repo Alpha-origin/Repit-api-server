@@ -31,8 +31,9 @@ public class PersonaService {
     }
 
     public PersonaResponse getPersonaById(Long id) {
-        Optional<PersonaEntity> persona = personaRepository.findById(id);
-        return PersonaResponse.from(persona.get());
+        PersonaEntity persona = personaRepository.findById(id).orElse(null);
+        assert persona != null;
+        return PersonaResponse.from(persona);
     }
 
     public PersonaResponse getPersonaByName(String name) {

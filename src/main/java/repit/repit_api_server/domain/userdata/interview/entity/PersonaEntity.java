@@ -19,7 +19,7 @@ public class PersonaEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "persona_id")
-    private Long id;
+    private Long personaId;
 
     @Column(name = "name", nullable = false,  unique = true)
     private String personaName;

@@ -11,7 +11,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Type;
 @AllArgsConstructor
 public class PersonaResponse {
 
-    private Long id;
+    private Long personaId;
     private String personaName;
     private Major major;
     private Type type;
@@ -21,7 +21,7 @@ public class PersonaResponse {
 
     public static PersonaResponse from(PersonaEntity persona) {
         return new PersonaResponse(
-                persona.getId(),
+                persona.getPersonaId(),
                 persona.getPersonaName(),
                 persona.getMajor(),
                 persona.getType(),

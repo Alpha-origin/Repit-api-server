@@ -6,6 +6,7 @@ import repit.repit_api_server.domain.userdata.interview.dto.request.PersonaReque
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SendUserDataRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.response.PersonaResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
@@ -20,7 +21,6 @@ import repit.repit_api_server.global.response.UserResponse;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -44,7 +44,7 @@ public class InterviewService {
 
         InterviewEntity interview = InterviewEntity.builder()
                 .userId(user.getId())
-                .persona(persona)
+                .personaId(persona.getPersonaId())
                 .status(Status.IN_PROGRESS)
                 .sessionId(sessionId)
                 .build();
@@ -60,11 +60,19 @@ public class InterviewService {
         }
 
         assert interview != null;
+        PersonaEntity persona = personaRepository.findById(interview.getPersonaId()).orElse(null);
+        if (persona == null) {
+            System.out.println("persona is null");
+        }
+
+        assert persona != null;
+        PersonaResponse personaResponse = PersonaResponse.from(persona);
         String sessionId = interview.getSessionId();
         List<QuestionEntity> questions = new ArrayList<>(questionRepository.findAllByInterviewId(interview));
         SendUserDataRequest sendUserDataRequest = SendUserDataRequest.builder()
                 .sessionId(sessionId)
                 .questions(questions)
+                .persona(personaResponse)
                 .build();
         chatServerClient.sendUserData(authorization, sendUserDataRequest);
 
@@ -76,20 +84,20 @@ public class InterviewService {
         return interviewRepository.findAllByUserId(user.getId());
     }
 
-    public InterviewResponse getInterviewById(String authorization, Long interviewId) {
+    public InterviewResponse getInterviewById(Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
         assert interview != null;
         return InterviewResponse.from(interview);
     }
 
-    public void saveInterview(String authorization, SaveInterviewRequest request) {
+    public void saveInterview(SaveInterviewRequest request) {
         InterviewEntity interview = interviewRepository.findById(request.getInterviewId()).orElse(null);
         assert interview != null;
         interview.setSessionId(request.getSessionId());
         interview.setStatus(request.getStatus());
         interviewRepository.save(interview);
 
-        answerRepository.saveAll(request.getAnswers());
-        questionRepository.saveAll(request.getQuestions());
+        answerRepository.saveAll(answerRepository.findAllById(request.getAnswers()));
+        questionRepository.saveAll(questionRepository.findAllById(request.getQuestions()));
     }
 }

@@ -14,9 +14,9 @@ import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 @NoArgsConstructor
 public class QuestionRequest {
 
-    private InterviewEntity interview;
+    private Long interviewId;
 
-    private QuestionEntity question;
+    private Long questionId;
 
     private Type type;
 

@@ -19,6 +19,6 @@ public class SaveInterviewRequest {
     private Long interviewId;
     private Long userId;
     private Status status;
-    private List<QuestionEntity> questions;
-    private List<AnswerEntity> answers;
+    private List<Long> questions;
+    private List<Long> answers;
 }

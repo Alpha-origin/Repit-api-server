@@ -42,16 +42,15 @@ public class InterviewController {
 
     @GetMapping("/get")
     public ApiResponse<InterviewResponse> getInterview(
-            @RequestHeader("Authorization") String authorization,
             @RequestParam Long interviewId
     ) {
-        return ApiResponse.success(interviewService.getInterviewById(authorization, interviewId));
+        return ApiResponse.success(interviewService.getInterviewById(interviewId));
     }
 
     @PostMapping("/result")
-    public void saveInterview(@RequestHeader("Authorization") String authorization,
-                              @RequestBody SaveInterviewRequest request
+    public void saveInterview(
+            @RequestBody SaveInterviewRequest request
     ) {
-        interviewService.saveInterview(authorization, request);
+        interviewService.saveInterview(request);
     }
 }

@@ -15,9 +15,9 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class QuestionResponse {
-    private Long id;
-    private InterviewEntity interview;
-    private QuestionEntity question;
+    private Long questionId;
+    private Long interviewId;
+    private Long parentId;
     private Type type;
     private String intention;
     private String content;

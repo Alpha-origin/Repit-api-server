@@ -15,22 +15,19 @@ public class QuestionController {
     private final QuestionService questionService;
 
     @PostMapping
-    public ApiResponse<QuestionResponse> createQuestion(
-            @RequestHeader("Authorization") String authorization) {
-        return ApiResponse.created(questionService.createQuestion(authorization));
+    public ApiResponse<QuestionResponse> createQuestion() {
+        return ApiResponse.created(questionService.createQuestion());
     }
 
     @GetMapping
     public ApiResponse<QuestionResponse> getQuestionById(
-            @RequestHeader("Authorization") String authorization,
             @RequestParam Long questionId) {
-        return ApiResponse.success(questionService.getQuestionById(authorization, questionId));
+        return ApiResponse.success(questionService.getQuestionById(questionId));
     }
 
     @GetMapping("/getAll")
     public ApiResponse<List<QuestionResponse>> getAllQuestion(
-            @RequestHeader("Authorization") String authorization,
             @RequestParam Long interviewId) {
-        return ApiResponse.success(questionService.getAllByInterview(authorization, interviewId));
+        return ApiResponse.success(questionService.getAllByInterview(interviewId));
     }
 }
