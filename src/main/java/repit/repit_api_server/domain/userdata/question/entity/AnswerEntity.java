@@ -22,13 +22,11 @@ public class AnswerEntity {
     @Column(name = "answer_id")
     private Long answerId;
 
-    @JoinColumn(nullable = false)
-    @ManyToOne(fetch = FetchType.LAZY)
-    private InterviewEntity interviewId;
+    @Column(nullable = false)
+    private Long interviewId;
 
-    @JoinColumn(nullable = false)
-    @OneToOne(fetch = FetchType.LAZY)
-    private QuestionEntity questionId;
+    @Column(nullable = false)
+    private Long questionId;
 
     @Column(nullable = false)
     private Long userId;

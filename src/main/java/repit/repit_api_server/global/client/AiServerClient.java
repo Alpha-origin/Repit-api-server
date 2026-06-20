@@ -5,9 +5,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
+import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
-import repit.repit_api_server.domain.userdata.question.dto.request.QuestionRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.global.common.ApiResponse;
 
@@ -33,13 +34,12 @@ public class AiServerClient {
                 .body(MetaDataResponse.class);
     }
 
-    public QuestionResponse createQuestion(String authorization) {
+    public QuestionResponse createQuestion() {
         ApiResponse<QuestionResponse> response = restClientBuilder
                 .baseUrl(aiServerBaseUrl)
                 .build()
                 .get()
                 .uri("/api/vi/ai/createQuestion")
-                .header("Authorization", authorization)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<QuestionResponse>> () {});
 
@@ -47,5 +47,27 @@ public class AiServerClient {
             return null;
         }
         return response.getData();
+    }
+
+    public GenerateResponse generate(GenerateRequest request) {
+        return restClientBuilder
+                .baseUrl(aiServerBaseUrl)
+                .build()
+                .post()
+                .uri("/generate")
+                .body(request)
+                .retrieve()
+                .body(GenerateResponse.class);
+    }
+
+    public GenerateResponse generateMock(GenerateRequest request) {
+        return restClientBuilder
+                .baseUrl(aiServerBaseUrl)
+                .build()
+                .post()
+                .uri("/generate-mock")
+                .body(request)
+                .retrieve()
+                .body(GenerateResponse.class);
     }
 }

@@ -23,13 +23,11 @@ public class QuestionEntity {
     @Column(name = "question_id")
     private Long questionId;
 
-    @JoinColumn(nullable = false)
-    @ManyToOne(fetch = FetchType.LAZY)
-    private InterviewEntity interviewId;
+    @Column(nullable = false)
+    private Long interviewId;
 
-    @JoinColumn()
-    @ManyToOne(fetch = FetchType.LAZY)
-    private QuestionEntity parentId;
+    @Column()
+    private Long parentId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

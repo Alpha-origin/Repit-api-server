@@ -15,18 +15,18 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @NoArgsConstructor
 public class InterviewResponse {
-    private Long id;
+    private Long interviewId;
     private Long userId;
-    private PersonaEntity persona;
+    private Long personaId;
     private String sessionId;
     private Status status;
     private LocalDateTime createdAt;
 
     public static InterviewResponse from(InterviewEntity interview) {
         return new InterviewResponse(
-                interview.getId(),
+                interview.getInterviewId(),
                 interview.getUserId(),
-                interview.getPersona(),
+                interview.getPersonaId(),
                 interview.getSessionId(),
                 interview.getStatus(),
                 interview.getCreatedAt()

@@ -15,11 +15,11 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class AnswerResponse {
-    private Long id;
+    private Long answerId;
 
-    private InterviewEntity interview;
+    private Long interview;
 
-    private QuestionEntity question;
+    private Long question;
 
     private Long userId;
 

@@ -7,5 +7,5 @@ import repit.repit_api_server.domain.userdata.question.entity.AnswerEntity;
 import java.util.List;
 
 public interface AnswerRepository extends JpaRepository<AnswerEntity, Long> {
-    List<AnswerEntity> findAllByInterviewId(InterviewEntity interviewId);
+    List<AnswerEntity> findAllByInterviewId(Long interviewId);
 }

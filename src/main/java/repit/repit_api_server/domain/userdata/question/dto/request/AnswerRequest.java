@@ -12,9 +12,9 @@ import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 @AllArgsConstructor
 @NoArgsConstructor
 public class AnswerRequest {
-    private InterviewEntity interview;
+    private Long interviewId;
 
-    private QuestionEntity question;
+    private Long questionId;
 
     private int responseTime;
 
