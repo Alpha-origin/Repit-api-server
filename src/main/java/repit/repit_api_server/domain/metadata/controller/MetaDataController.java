@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import repit.repit_api_server.domain.metadata.dto.request.SendDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.service.MetaService;
 
@@ -18,9 +19,8 @@ public class MetaDataController {
     @PostMapping("/dataUpload")
     public ResponseEntity<MetaDataResponse> upload(@RequestHeader String authorization,
                                                    @RequestPart("file") MultipartFile file,
-                                                   @RequestPart("gitUrl") String gitUrl)
-            throws IOException {
-        return ResponseEntity.ok(metaService.dataUpload(authorization, file, gitUrl));
+                                                   @RequestBody SendDataRequest request) throws IOException {
+        return ResponseEntity.ok(metaService.dataUpload(authorization, file, request));
     }
 
 

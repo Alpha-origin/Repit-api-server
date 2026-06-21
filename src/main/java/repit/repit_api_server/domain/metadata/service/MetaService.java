@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import repit.repit_api_server.domain.metadata.dto.request.SendDataRequest;
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
@@ -30,18 +31,18 @@ public class MetaService {
     // GitUrl, 포트폴리오 업로드
     public MetaDataResponse dataUpload(String authorization,
                                        MultipartFile file,
-                                       String gitUrl) throws IOException {
+                                       SendDataRequest request) throws IOException {
         String s3Url = uploadFile(file);
         authServerClient.createMetaData(
                 authorization,
                 MetaDataRequest.builder()
-                        .gitUrl(gitUrl)
+                        .gitUrls(request.getGitUrls())
                         .fileUrl(s3Url)
                         .build()
         );
 
         return MetaDataResponse.builder()
-                .gitUrl(gitUrl)
+                .gitUrls(request.getGitUrls())
                 .fileUrl(s3Url)
                 .build();
     }

@@ -14,6 +14,7 @@ import repit.repit_api_server.domain.metadata.service.MetaService;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.common.ApiResponse;
 
+import java.util.Arrays;
 import java.util.List;
 
 @RestController
@@ -25,12 +26,11 @@ public class AiMetaDataController {
 
     private final AiServerClient aiServerClient;
 
-    // AI 서버에 개발 필음
     @PostMapping("/sendMetaData")
     public ResponseEntity<MetaDataResponse> sendMetaData(@RequestHeader("Authorization") String authorization) {
         MetaDataResponse forRequest = metaService.getMetaData(authorization);
         MetaDataRequest request = MetaDataRequest.builder()
-                .gitUrl(forRequest.getGitUrl())
+                .gitUrls(forRequest.getGitUrls())
                 .fileUrl(forRequest.getFileUrl())
                 .build();
 
@@ -45,7 +45,7 @@ public class AiMetaDataController {
         MetaDataResponse forRequest = metaService.getMetaData(authorization);
         GenerateRequest request = GenerateRequest.builder()
                 .portfolio_url(forRequest.getFileUrl())
-                .github_urls(List.of(forRequest.getGitUrl()))
+                .github_urls(Arrays.asList(forRequest.getGitUrls()))
                 .callback_url("https://wildcat-startle-rope.ngrok-free.dev/api/v1/ai/callback")
                 .build();
 
@@ -60,7 +60,7 @@ public class AiMetaDataController {
         MetaDataResponse forRequest = metaService.getMetaData(authorization);
         GenerateRequest request = GenerateRequest.builder()
                 .portfolio_url(forRequest.getFileUrl())
-                .github_urls(List.of(forRequest.getGitUrl()))
+                .github_urls(Arrays.asList(forRequest.getGitUrls()))
                 .callback_url("https://wildcat-startle-rope.ngrok-free.dev/api/v1/ai/callback")
                 .build();
 

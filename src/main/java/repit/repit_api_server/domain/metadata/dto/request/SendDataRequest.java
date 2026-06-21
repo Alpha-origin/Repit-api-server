@@ -3,13 +3,10 @@ package repit.repit_api_server.domain.metadata.dto.request;
 import lombok.*;
 
 @Getter
-@Builder
-@NoArgsConstructor
+@Setter
 @AllArgsConstructor
-public class MetaDataRequest {
-
+@NoArgsConstructor
+@Builder
+public class SendDataRequest {
     private String[] gitUrls;
-
-    private String fileUrl;
-
 }

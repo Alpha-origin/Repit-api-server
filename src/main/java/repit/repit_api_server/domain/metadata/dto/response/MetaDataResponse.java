@@ -9,7 +9,7 @@ import lombok.*;
 @AllArgsConstructor
 public class MetaDataResponse {
 
-    private String gitUrl;
+    private String[] gitUrls;
 
     private String fileUrl;
 
