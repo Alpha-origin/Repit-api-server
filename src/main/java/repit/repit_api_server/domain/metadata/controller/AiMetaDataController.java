@@ -44,8 +44,8 @@ public class AiMetaDataController {
     ) {
         MetaDataResponse forRequest = metaService.getMetaData(authorization);
         GenerateRequest request = GenerateRequest.builder()
-                .portfolio_url("https://repit-storage-dev.s3.ap-northeast-2.amazonaws.com/b66c5c81-09bf-4b4c-8118-8d45a227a1b4_StartHub.pdf")
-                .github_urls(List.of("https://github.com/JinInSaDaeCheonMyeong/startHub-server", "https://github.com/JinInSaDaeCheonMyeong/starthub-ai"))
+                .portfolio_url(forRequest.getFileUrl())
+                .github_urls(List.of(forRequest.getGitUrl()))
                 .callback_url("https://wildcat-startle-rope.ngrok-free.dev/api/v1/ai/callback")
                 .build();
 
