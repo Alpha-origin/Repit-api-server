@@ -9,13 +9,13 @@ import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.domain.metadata.dto.response.ResultResponse;
 import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.common.ApiResponse;
 
 import java.util.Arrays;
-import java.util.List;
 
 @RestController
 @RequiredArgsConstructor
@@ -45,7 +45,7 @@ public class AiMetaDataController {
         MetaDataResponse forRequest = metaService.getMetaData(authorization);
         GenerateRequest request = GenerateRequest.builder()
                 .portfolio_url(forRequest.getFileUrl())
-                .github_urls(Arrays.asList(forRequest.getGitUrls()))
+                .github_urls(forRequest.getGitUrls())
                 .callback_url("https://wildcat-startle-rope.ngrok-free.dev/api/v1/ai/callback")
                 .build();
 
@@ -60,7 +60,7 @@ public class AiMetaDataController {
         MetaDataResponse forRequest = metaService.getMetaData(authorization);
         GenerateRequest request = GenerateRequest.builder()
                 .portfolio_url(forRequest.getFileUrl())
-                .github_urls(Arrays.asList(forRequest.getGitUrls()))
+                .github_urls(forRequest.getGitUrls())
                 .callback_url("https://wildcat-startle-rope.ngrok-free.dev/api/v1/ai/callback")
                 .build();
 
@@ -79,5 +79,12 @@ public class AiMetaDataController {
                 .result(request.getResult())
                 .build();
         return ApiResponse.success(response);
+    }
+
+    @GetMapping
+    public ApiResponse<ResultResponse> getResult(
+            @RequestBody String jobId
+    ) {
+        return ApiResponse.success(aiMetaDataService.getResult(jobId));
     }
 }

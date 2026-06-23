@@ -3,6 +3,7 @@ package repit.repit_api_server.domain.metadata.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
+import repit.repit_api_server.domain.metadata.dto.response.ResultResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 
@@ -17,5 +18,11 @@ public class AiMetaDataService {
                 .result(request.getResult())
                 .build();
         analysisDataRepository.save(data);
+    }
+
+    public ResultResponse getResult(String jobId) {
+        return analysisDataRepository.findById(jobId)
+                .map(data -> new ResultResponse(data.getResult()))
+                .orElseGet(() -> new ResultResponse(null));
     }
 }

@@ -2,6 +2,8 @@ package repit.repit_api_server.domain.metadata.dto.response;
 
 import lombok.*;
 
+import java.util.List;
+
 @Getter
 @Setter
 @Builder
@@ -9,7 +11,7 @@ import lombok.*;
 @AllArgsConstructor
 public class MetaDataResponse {
 
-    private String[] gitUrls;
+    private List<String> gitUrls;
 
     private String fileUrl;
 
