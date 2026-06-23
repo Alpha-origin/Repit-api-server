@@ -42,7 +42,8 @@ public class QuestionService {
 
     public List<QuestionResponse> getAllByInterview(Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
-        List<QuestionEntity> questions = questionRepository.findAllByInterviewId(interview);
+        assert interview != null;
+        List<QuestionEntity> questions = questionRepository.findAllByInterviewId(interview.getInterviewId());
         return questions.stream()
                 .map(QuestionResponse::from)
                 .toList();

@@ -12,6 +12,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -30,18 +31,18 @@ public class MetaService {
     // GitUrl, 포트폴리오 업로드
     public MetaDataResponse dataUpload(String authorization,
                                        MultipartFile file,
-                                       String gitUrl) throws IOException {
+                                       List<String> git_urls) throws IOException {
         String s3Url = uploadFile(file);
         authServerClient.createMetaData(
                 authorization,
                 MetaDataRequest.builder()
-                        .gitUrl(gitUrl)
+                        .gitUrls(git_urls)
                         .fileUrl(s3Url)
                         .build()
         );
 
         return MetaDataResponse.builder()
-                .gitUrl(gitUrl)
+                .gitUrls(git_urls)
                 .fileUrl(s3Url)
                 .build();
     }

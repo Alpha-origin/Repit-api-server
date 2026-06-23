@@ -39,7 +39,7 @@ public class AiServerClient {
                 .baseUrl(aiServerBaseUrl)
                 .build()
                 .get()
-                .uri("/api/vi/ai/createQuestion")
+                .uri("/api/v1/ai/createQuestion")
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<QuestionResponse>> () {});
 
