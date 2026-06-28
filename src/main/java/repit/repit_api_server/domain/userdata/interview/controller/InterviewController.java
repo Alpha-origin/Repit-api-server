@@ -22,7 +22,7 @@ public class InterviewController {
     @PostMapping("/create")
     public ApiResponse<InterviewResponse> createInterview(
             @RequestHeader("Authorization") String authorization,
-            @RequestBody PersonaRequest request) throws ClassNotFoundException {
+            @RequestBody PersonaRequest request) throws RuntimeException {
         return ApiResponse.created(interviewService.createInterview(authorization, request));
     }
 

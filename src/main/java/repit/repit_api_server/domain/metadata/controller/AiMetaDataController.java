@@ -83,7 +83,7 @@ public class AiMetaDataController {
 
     @GetMapping
     public ApiResponse<ResultResponse> getResult(
-            @RequestBody String jobId
+            @RequestParam String jobId
     ) {
         return ApiResponse.success(aiMetaDataService.getResult(jobId));
     }

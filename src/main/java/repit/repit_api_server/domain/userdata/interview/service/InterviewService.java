@@ -34,12 +34,15 @@ public class InterviewService {
     private final AnswerRepository answerRepository;
     private final PersonaRepository personaRepository;
 
-    public InterviewResponse createInterview(String authorization, PersonaRequest request) throws ClassNotFoundException {
+    public InterviewResponse createInterview(String authorization, PersonaRequest request) throws RuntimeException {
         UserResponse user = authServerClient.getUser(authorization);
+        if (user == null) {
+            throw new RuntimeException("사용자를 찾을 수 없습니다");
+        }
         String sessionId = UUID.randomUUID().toString();
         PersonaEntity persona = personaRepository.findByPersonaName(request.getPersonaName()).orElse(null);
         if (persona == null) {
-            throw new ClassNotFoundException("페르소나가 없습니다");
+            throw new RuntimeException("페르소나가 없습니다");
         }
 
         InterviewEntity interview = InterviewEntity.builder()

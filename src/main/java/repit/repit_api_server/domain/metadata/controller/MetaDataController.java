@@ -19,7 +19,7 @@ public class MetaDataController {
 
     @PostMapping(value = "/dataUpload",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<MetaDataResponse> upload(@RequestHeader String authorization,
+    public ResponseEntity<MetaDataResponse> upload(@RequestHeader("Authorization") String authorization,
                                                    @RequestPart("file") MultipartFile file,
                                                    @RequestParam List<String> gitUrls) throws IOException {
         return ResponseEntity.ok(metaService.dataUpload(authorization, file, gitUrls));
@@ -31,5 +31,22 @@ public class MetaDataController {
             @RequestHeader("Authorization") String authorization
     ) {
         return ResponseEntity.ok(metaService.getMetaData(authorization));
+    }
+
+
+    @GetMapping("/isGit")
+    public ResponseEntity<Boolean> isGit(
+            @RequestHeader("Authorization") String authorization
+    ) {
+        MetaDataResponse metaData = metaService.getMetaData(authorization);
+        return ResponseEntity.ok(!metaData.getGitUrls().isEmpty());
+    }
+
+    @GetMapping("/isPortfolio")
+    public ResponseEntity<Boolean> isPortfolio(
+            @RequestHeader("Authorization") String authorization
+    ) {
+        MetaDataResponse metaData = metaService.getMetaData(authorization);
+        return ResponseEntity.ok(!metaData.getFileUrl().isEmpty());
     }
 }
