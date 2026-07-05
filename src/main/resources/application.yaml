@@ -2,6 +2,11 @@ spring:
   application:
     name: Repit_api_server
 
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB
+
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}
