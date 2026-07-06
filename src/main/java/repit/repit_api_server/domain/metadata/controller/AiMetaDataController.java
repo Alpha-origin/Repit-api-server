@@ -116,9 +116,13 @@ public class AiMetaDataController {
             return;
         }
 
+        String eventName = "succeeded".equalsIgnoreCase(response.getStatus())
+                ? "question-generated"
+                : "question-generation-failed";
+
         try {
             emitter.send(SseEmitter.event()
-                    .name("question-generated")
+                    .name(eventName)
                     .data(response));
             emitter.complete();
         } catch (IOException e) {
