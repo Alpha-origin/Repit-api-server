@@ -6,6 +6,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.server.ResponseStatusException;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.global.common.ApiResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
@@ -41,7 +42,7 @@ public class AuthServerClient {
 
 
     // Auth 서버에서 metaData 반환
-    public MetaDataResponse getMetaData(String authorization) {
+    public MetaDataResponse getMetaData(String authorization) throws HttpClientErrorException {
         try {
             ApiResponse<MetaDataResponse> response =
                     restClientBuilder
@@ -60,7 +61,7 @@ public class AuthServerClient {
             return response.getData();
         }
         catch (HttpClientErrorException.Unauthorized e) {
-            throw new RuntimeException("인증 실패");
+            throw new ResponseStatusException(e.getStatusCode(), "인증 실패");
         }
 
     }
