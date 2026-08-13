@@ -1,5 +1,7 @@
 package repit.repit_api_server.global.client;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
@@ -11,6 +13,8 @@ import java.util.function.Supplier;
 
 @Component
 public class ExternalApiExecutor {
+
+    private static final Logger log = LoggerFactory.getLogger(ExternalApiExecutor.class);
 
     private static final int MAX_ATTEMPTS = 3;
     private static final long BASE_BACKOFF_MILLIS = 200L;
@@ -37,10 +41,15 @@ public class ExternalApiExecutor {
             }
 
             if (attempt < maxAttempts) {
-                sleep(BASE_BACKOFF_MILLIS * (1L << (attempt - 1)));
+                long backoffMillis = BASE_BACKOFF_MILLIS * (1L << (attempt - 1));
+                log.warn("[{}] 요청 실패 ({}/{}번째 시도), {}ms 후 재시도. 원인: {}",
+                        serverName, attempt, maxAttempts, backoffMillis, lastFailure.getMessage());
+                sleep(backoffMillis);
             }
         }
 
+        log.error("[{}] 요청이 {}회 시도 후 최종 실패. 원인: {}",
+                serverName, maxAttempts, lastFailure.getMessage(), lastFailure.getCause());
         throw lastFailure;
     }
 

@@ -47,6 +47,10 @@ ai-server:
 chat-server:
   base-url: ${CHAT_SERVER}
 
+external-api:
+  connect-timeout: 3s
+  read-timeout: 5s
+
 management:
   endpoints:
     web:
