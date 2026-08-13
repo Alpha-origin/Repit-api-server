@@ -20,7 +20,7 @@ public class ChatServerClient {
                     chatServerApi.sendUserData(authorization, request);
                     return null;
                 },
-                this::resolveMessage);
+                this::resolveMessage, false);
     }
 
     private String resolveMessage(HttpStatusCode status) {

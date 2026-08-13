@@ -24,14 +24,14 @@ public class AuthServerClient {
                     authServerApi.createMetaData(authorization, request);
                     return null;
                 },
-                this::resolveMessage);
+                this::resolveMessage, false);
     }
 
     // Auth 서버에서 metaData 반환
     public MetaDataResponse getMetaData(String authorization) {
         ApiResponse<MetaDataResponse> response = executor.execute(SERVER_NAME,
                 () -> authServerApi.getMetaData(authorization),
-                this::resolveMessage);
+                this::resolveMessage, true);
 
         return response == null ? null : response.getData();
     }
@@ -39,7 +39,7 @@ public class AuthServerClient {
     public UserResponse getUser(String authorization) {
         ApiResponse<UserResponse> response = executor.execute(SERVER_NAME,
                 () -> authServerApi.getUser(authorization),
-                this::resolveMessage);
+                this::resolveMessage, true);
 
         return response == null ? null : response.getData();
     }

@@ -22,13 +22,13 @@ public class AiServerClient {
     public MetaDataResponse sendMetaData(String authorization, MetaDataRequest request) {
         return executor.execute(SERVER_NAME,
                 () -> aiServerApi.createMetaData(authorization, request),
-                this::resolveMessage);
+                this::resolveMessage, false);
     }
 
     public QuestionResponse createQuestion() {
         ApiResponse<QuestionResponse> response = executor.execute(SERVER_NAME,
                 aiServerApi::createQuestion,
-                this::resolveMessage);
+                this::resolveMessage, true);
 
         return response == null ? null : response.getData();
     }
@@ -36,13 +36,13 @@ public class AiServerClient {
     public GenerateResponse generate(GenerateRequest request) {
         return executor.execute(SERVER_NAME,
                 () -> aiServerApi.generate(request),
-                this::resolveMessage);
+                this::resolveMessage, false);
     }
 
     public GenerateResponse generateMock(GenerateRequest request) {
         return executor.execute(SERVER_NAME,
                 () -> aiServerApi.generateMock(request),
-                this::resolveMessage);
+                this::resolveMessage, false);
     }
 
     private String resolveMessage(HttpStatusCode status) {
