@@ -8,12 +8,18 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.exception.ExternalApiException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<ErrorResponse> handleBusinessException(BusinessException e) {
+        return ResponseEntity.status(e.getStatus()).body(new ErrorResponse(e.getMessage()));
+    }
 
     @ExceptionHandler(ExternalApiException.class)
     public ResponseEntity<ErrorResponse> handleExternalApiException(ExternalApiException e) {
