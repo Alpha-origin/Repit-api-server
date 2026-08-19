@@ -1,0 +1,311 @@
+package repit.repit_api_server.domain.userdata.feedback.service;
+
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallbackRequest;
+import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackResponse;
+import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStatus;
+import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRepository;
+import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackRepository;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatAnswerResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewAllResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewQnAResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatQuestionResponse;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
+import repit.repit_api_server.global.client.AiServerClient;
+import repit.repit_api_server.global.client.AuthServerClient;
+import repit.repit_api_server.global.client.ChatServerClient;
+import repit.repit_api_server.global.exception.BusinessException;
+import repit.repit_api_server.global.response.UserResponse;
+
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+
+@Service
+@RequiredArgsConstructor
+public class FeedbackService {
+
+    private static final Logger log = LoggerFactory.getLogger(FeedbackService.class);
+
+    private static final String CALLBACK_PATH = "/api/feedbacks/callback";
+    private static final int MAX_QUESTIONS = 50;
+    private static final String STATUS_SUCCEEDED = "succeeded";
+
+    private final FeedbackRepository feedbackRepository;
+    private final FeedbackItemRepository feedbackItemRepository;
+    private final InterviewRepository interviewRepository;
+    private final ChatServerClient chatServerClient;
+    private final AiServerClient aiServerClient;
+    private final AuthServerClient authServerClient;
+
+    @Value("${app.callback-base-url}")
+    private String callbackBaseUrl;
+
+    // 이 시간을 넘도록 콜백이 오지 않으면 실패로 간주한다.
+    @Value("${app.feedback.pending-timeout:5m}")
+    private Duration pendingTimeout;
+
+
+    // 외부 서버 호출이 세 번 들어가므로 트랜잭션으로 감싸지 않는다.
+    // 감싸면 느린 HTTP 응답을 기다리는 내내 DB 커넥션을 붙잡게 된다.
+    // 개별 저장은 각 리포지토리 호출이 자체 트랜잭션으로 처리한다.
+    public FeedbackAcceptedResponse requestFeedback(String authorization, Long interviewId) {
+        Long userId = currentUserId(authorization);
+
+        InterviewEntity interview = interviewRepository.findById(interviewId)
+                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+        verifyOwner(interview.getUserId(), userId);
+
+        FeedbackEntity existing = feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId)
+                .orElse(null);
+        if (existing != null) {
+            expireIfTimedOut(existing);
+            if (existing.getStatus() == FeedbackStatus.PENDING) {
+                throw BusinessException.conflict("이미 피드백을 생성하고 있습니다. 잠시 후 다시 확인해주세요.");
+            }
+            if (existing.getStatus() == FeedbackStatus.SUCCEEDED) {
+                throw BusinessException.conflict("이미 생성된 피드백이 있습니다.");
+            }
+        }
+
+        ChatInterviewAllResponse chatInterview = chatServerClient.getInterview(interview.getSessionId());
+        FeedbackSoloRequest request = toSoloRequest(interview, chatInterview);
+
+        FeedbackAcceptedResponse accepted = aiServerClient.requestSoloFeedback(request);
+
+        feedbackRepository.save(FeedbackEntity.builder()
+                .interviewId(interview.getInterviewId())
+                .userId(interview.getUserId())
+                .sessionId(interview.getSessionId())
+                .jobId(accepted == null ? null : accepted.getJobId())
+                .status(FeedbackStatus.PENDING)
+                .build());
+
+        return accepted;
+    }
+
+    private FeedbackSoloRequest toSoloRequest(InterviewEntity interview, ChatInterviewAllResponse chatInterview) {
+        List<ChatInterviewQnAResponse> qnAs = chatInterview == null || chatInterview.getQnAResponses() == null
+                ? List.of()
+                : chatInterview.getQnAResponses();
+
+        List<FeedbackSoloRequest.Question> questions = new ArrayList<>();
+        List<FeedbackSoloRequest.Answer> answers = new ArrayList<>();
+
+        for (ChatInterviewQnAResponse qnA : qnAs) {
+            ChatQuestionResponse question = qnA.getQuestion();
+            if (question == null) {
+                continue;
+            }
+            questions.add(toQuestion(question));
+
+            ChatAnswerResponse answer = qnA.getAnswer();
+            if (answer != null) {
+                answers.add(FeedbackSoloRequest.Answer.builder()
+                        .answerId(String.valueOf(answer.getAnswerId()))
+                        .questionId(String.valueOf(question.getQuestionId()))
+                        .content(answer.getAnswerContent())
+                        .createdAt(toUtc(answer.getAnswerCreatedAt()))
+                        .build());
+            }
+        }
+
+        // 아래 조건은 분석 서버가 422로 즉시 거부하는 항목이라 요청 전에 걸러낸다.
+        if (questions.isEmpty()) {
+            throw BusinessException.unprocessable("채점할 질문이 없습니다.");
+        }
+        if (questions.size() > MAX_QUESTIONS) {
+            throw BusinessException.unprocessable("질문은 최대 " + MAX_QUESTIONS + "개까지 채점할 수 있습니다.");
+        }
+        if (answers.isEmpty()) {
+            throw BusinessException.unprocessable("채점할 답변이 없습니다.");
+        }
+
+        return FeedbackSoloRequest.builder()
+                .sessionId(interview.getSessionId())
+                .interviewId(String.valueOf(interview.getInterviewId()))
+                .userId(String.valueOf(interview.getUserId()))
+                .personaType(chatInterview.getPersonaType() == null ? null : chatInterview.getPersonaType().name())
+                .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
+                .questions(questions)
+                .answers(answers)
+                .build();
+    }
+
+    private FeedbackSoloRequest.Question toQuestion(ChatQuestionResponse question) {
+        // ORIGINAL에 parentId가 실려 있거나 FOLLOW에 없으면 분석 서버가 요청 전체를 422로 거부한다.
+        String parentId = question.getQuestionType() == Type.FOLLOW && question.getParentId() != null
+                ? String.valueOf(question.getParentId())
+                : null;
+
+        return FeedbackSoloRequest.Question.builder()
+                .questionId(String.valueOf(question.getQuestionId()))
+                .parentId(parentId)
+                .type(question.getQuestionType())
+                .intention(question.getQuestionIntention())
+                .content(question.getQuestionContent())
+                .createdAt(toUtc(question.getQuestionCreatedAt()))
+                .build();
+    }
+
+    /**
+     * 분석 서버는 콜백 전송에 두 번 실패하면 결과를 영구 폐기한다.
+     * 그 경우 콜백이 영영 오지 않으므로, 오래 걸린 PENDING은 실패로 정리해 재요청을 열어준다.
+     */
+    private void expireIfTimedOut(FeedbackEntity feedback) {
+        if (feedback.getStatus() != FeedbackStatus.PENDING || feedback.getCreatedAt() == null) {
+            return;
+        }
+        if (feedback.getCreatedAt().plus(pendingTimeout).isAfter(LocalDateTime.now())) {
+            return;
+        }
+
+        log.warn("피드백 콜백이 {} 내에 도착하지 않아 실패 처리합니다. feedbackId={}, jobId={}",
+                pendingTimeout, feedback.getFeedbackId(), feedback.getJobId());
+
+        feedback.setStatus(FeedbackStatus.FAILED);
+        feedback.setErrorMessage("피드백 생성 결과를 제때 받지 못했습니다. 다시 시도해주세요.");
+        feedbackRepository.save(feedback);
+    }
+
+    private Long currentUserId(String authorization) {
+        UserResponse user = authServerClient.getUser(authorization);
+        if (user == null || user.getId() == null) {
+            throw BusinessException.unauthorized("사용자 정보를 확인할 수 없습니다. 다시 로그인해주세요.");
+        }
+        return user.getId();
+    }
+
+    // 면접 답변과 평가는 본인만 볼 수 있어야 한다.
+    private void verifyOwner(Long ownerId, Long requesterId) {
+        if (!requesterId.equals(ownerId)) {
+            throw BusinessException.forbidden("본인의 면접 피드백만 조회할 수 있습니다.");
+        }
+    }
+
+    // 채팅 서버는 오프셋이 붙은 시각을 주므로 같은 순간을 UTC 표기로만 바꿔서 분석 서버에 넘긴다.
+    private OffsetDateTime toUtc(OffsetDateTime createdAt) {
+        if (createdAt == null) {
+            return null;
+        }
+        return createdAt.withOffsetSameInstant(ZoneOffset.UTC);
+    }
+
+    /**
+     * 분석 서버가 채점을 마치고 보내는 콜백. 재전송이 있을 수 있어 같은 결과를 두 번 받아도 안전해야 한다.
+     */
+    @Transactional
+    public void handleCallback(FeedbackCallbackRequest request) {
+        FeedbackEntity feedback = findTarget(request);
+        if (feedback == null) {
+            log.warn("알 수 없는 피드백 콜백을 받았습니다. jobId={}, sessionId={}",
+                    request.getJobId(), request.getSessionId());
+            return;
+        }
+
+        if (feedback.getJobId() == null) {
+            feedback.setJobId(request.getJobId());
+        }
+
+        if (STATUS_SUCCEEDED.equalsIgnoreCase(request.getStatus()) && request.getResult() != null) {
+            applySuccess(feedback, request.getResult());
+        } else {
+            applyFailure(feedback, request.getError());
+        }
+
+        feedbackRepository.save(feedback);
+    }
+
+    private FeedbackEntity findTarget(FeedbackCallbackRequest request) {
+        if (request.getJobId() != null) {
+            FeedbackEntity byJobId = feedbackRepository.findByJobId(request.getJobId()).orElse(null);
+            if (byJobId != null) {
+                return byJobId;
+            }
+        }
+        if (request.getSessionId() != null) {
+            return feedbackRepository.findTopBySessionIdOrderByCreatedAtDesc(request.getSessionId()).orElse(null);
+        }
+        return null;
+    }
+
+    private void applySuccess(FeedbackEntity feedback, FeedbackCallbackRequest.Result result) {
+        FeedbackCallbackRequest.Overall overall = result.getOverall();
+        if (overall != null) {
+            feedback.setTotalScore(overall.getTotalScore());
+            feedback.setIntentAlignmentScore(overall.getIntentAlignmentScore());
+            feedback.setReliabilityScore(overall.getReliabilityScore());
+            feedback.setSummary(overall.getSummary());
+            feedback.setStrengths(overall.getStrengths());
+            feedback.setImprovements(overall.getImprovements());
+            feedback.setFrequentWords(overall.getFrequentWords());
+            feedback.setAnsweredCount(overall.getAnsweredCount());
+            feedback.setQuestionCount(overall.getQuestionCount());
+        }
+        feedback.setStatus(FeedbackStatus.SUCCEEDED);
+        feedback.setErrorStatusCode(null);
+        feedback.setErrorMessage(null);
+
+        // 콜백이 재전송되어도 문항이 중복되지 않도록 기존 것을 지우고 다시 넣는다.
+        feedbackItemRepository.deleteAllByFeedbackId(feedback.getFeedbackId());
+
+        List<FeedbackCallbackRequest.Item> items = result.getFeedbacks() == null ? List.of() : result.getFeedbacks();
+        List<FeedbackItemEntity> entities = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++) {
+            FeedbackCallbackRequest.Item item = items.get(i);
+            entities.add(FeedbackItemEntity.builder()
+                    .feedbackId(feedback.getFeedbackId())
+                    .questionId(Objects.toString(item.getQuestionId(), ""))
+                    .sortOrder(i)
+                    .questionContent(item.getQuestionContent())
+                    .intention(item.getIntention())
+                    .userAnswer(item.getUserAnswer())
+                    .modelAnswer(item.getModelAnswer())
+                    .strengths(item.getStrengths())
+                    .improvements(item.getImprovements())
+                    .comment(item.getComment())
+                    .build());
+        }
+        feedbackItemRepository.saveAll(entities);
+    }
+
+    private void applyFailure(FeedbackEntity feedback, FeedbackCallbackRequest.Error error) {
+        feedback.setStatus(FeedbackStatus.FAILED);
+        feedback.setErrorStatusCode(error == null ? null : error.getStatusCode());
+        feedback.setErrorMessage(error == null
+                ? "피드백 생성에 실패했습니다."
+                : error.getMessage());
+    }
+
+    // 인증 서버 호출이 들어가므로 마찬가지로 트랜잭션 밖에서 처리한다.
+    public FeedbackResponse getFeedback(String authorization, Long interviewId) {
+        Long userId = currentUserId(authorization);
+
+        FeedbackEntity feedback = feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId)
+                .orElseThrow(() -> BusinessException.notFound("피드백이 없습니다. 먼저 피드백 생성을 요청해주세요."));
+        verifyOwner(feedback.getUserId(), userId);
+
+        // 폴링하는 클라이언트가 PENDING에 갇히지 않도록 조회 시점에도 판정한다.
+        expireIfTimedOut(feedback);
+
+        List<FeedbackItemEntity> items =
+                feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(feedback.getFeedbackId());
+
+        return FeedbackResponse.of(feedback, items);
+    }
+}

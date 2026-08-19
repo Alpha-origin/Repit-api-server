@@ -8,6 +8,8 @@ import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.global.common.ApiResponse;
 
@@ -25,4 +27,8 @@ public interface AiServerApi {
 
     @PostExchange("/generate-mock")
     GenerateResponse generateMock(@RequestBody GenerateRequest request);
+
+    // 비동기 채점. 202로 접수만 되고 결과는 callbackUrl로 POST된다.
+    @PostExchange("/feedback/solo")
+    FeedbackAcceptedResponse requestSoloFeedback(@RequestBody FeedbackSoloRequest request);
 }

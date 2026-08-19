@@ -51,6 +51,12 @@ external-api:
   connect-timeout: 3s
   read-timeout: 5s
 
+app:
+  callback-base-url: ${CALLBACK_BASE_URL:https://wildcat-startle-rope.ngrok-free.dev}
+  feedback:
+    # 이 시간을 넘도록 분석 서버 콜백이 오지 않으면 실패로 처리하고 재요청을 허용한다.
+    pending-timeout: 10m
+
 management:
   endpoints:
     web:
