@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewAllResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.service.InterviewService;
 import repit.repit_api_server.domain.userdata.answer.service.AnswerService;
@@ -26,11 +28,11 @@ public class InterviewController {
     }
 
     @PostMapping
-    public void sendUserData(
+    public ApiResponse<ChatInterviewResponse> prepareInterview(
             @RequestHeader("Authorization") String authorization,
             @RequestBody Long interviewId
     ) {
-        interviewService.sendUserData(authorization, interviewId);
+        return ApiResponse.success(interviewService.prepareInterview(authorization, interviewId));
     }
 
     @GetMapping("/getAll")
@@ -44,6 +46,13 @@ public class InterviewController {
             @RequestParam Long interviewId
     ) {
         return ApiResponse.success(interviewService.getInterviewById(interviewId));
+    }
+
+    @GetMapping("/chat")
+    public ApiResponse<ChatInterviewAllResponse> getChatInterview(
+            @RequestParam Long interviewId
+    ) {
+        return ApiResponse.success(interviewService.getChatInterview(interviewId));
     }
 
     @PostMapping("/result")

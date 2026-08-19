@@ -3,7 +3,9 @@ package repit.repit_api_server.global.client;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
-import repit.repit_api_server.domain.userdata.interview.dto.request.SendUserDataRequest;
+import repit.repit_api_server.domain.userdata.interview.dto.request.ChatInterviewPrepareRequest;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewAllResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewResponse;
 
 @Component
 @RequiredArgsConstructor
@@ -14,13 +16,16 @@ public class ChatServerClient {
     private final ChatServerApi chatServerApi;
     private final ExternalApiExecutor executor;
 
-    public void sendUserData(String authorization, SendUserDataRequest request) {
-        executor.execute(SERVER_NAME,
-                () -> {
-                    chatServerApi.sendUserData(authorization, request);
-                    return null;
-                },
+    public ChatInterviewResponse prepareInterview(String authorization, ChatInterviewPrepareRequest request) {
+        return executor.execute(SERVER_NAME,
+                () -> chatServerApi.prepareInterview(authorization, request),
                 this::resolveMessage, false);
+    }
+
+    public ChatInterviewAllResponse getInterview(String sessionId) {
+        return executor.execute(SERVER_NAME,
+                () -> chatServerApi.getInterview(sessionId),
+                this::resolveMessage, true);
     }
 
     private String resolveMessage(HttpStatusCode status) {

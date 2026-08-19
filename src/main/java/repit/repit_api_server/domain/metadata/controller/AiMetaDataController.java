@@ -1,6 +1,7 @@
 package repit.repit_api_server.domain.metadata.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -15,7 +16,9 @@ import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
 import repit.repit_api_server.domain.metadata.sse.SseEmitterRepository;
 import repit.repit_api_server.global.client.AiServerClient;
+import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.common.ApiResponse;
+import repit.repit_api_server.global.response.UserResponse;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -26,11 +29,15 @@ import java.util.Arrays;
 public class AiMetaDataController {
     private static final long SSE_TIMEOUT = 10 * 60 * 1000L; // 10분
 
+    @Value("${app.callback-base-url}")
+    private String callbackBaseUrl;
+
     private final MetaService metaService;
     private final AiMetaDataService aiMetaDataService;
     private final SseEmitterRepository sseEmitterRepository;
 
     private final AiServerClient aiServerClient;
+    private final AuthServerClient authServerClient;
 
     @GetMapping("/subscribe/{jobId}")
     public SseEmitter subscribe(@PathVariable String jobId) {
@@ -72,10 +79,11 @@ public class AiMetaDataController {
         GenerateRequest request = GenerateRequest.builder()
                 .portfolio_url(forRequest.getFileUrl())
                 .github_urls(forRequest.getGitUrls())
-                .callback_url("https://wildcat-startle-rope.ngrok-free.dev/api/v1/ai/callback")
+                .callback_url(callbackBaseUrl + "/api/v1/ai/callback")
                 .build();
 
         GenerateResponse response = aiServerClient.generate(request);
+        registerJobOwner(authorization, response);
         return ResponseEntity.ok(response);
     }
 
@@ -87,11 +95,21 @@ public class AiMetaDataController {
         GenerateRequest request = GenerateRequest.builder()
                 .portfolio_url(forRequest.getFileUrl())
                 .github_urls(forRequest.getGitUrls())
-                .callback_url("https://wildcat-startle-rope.ngrok-free.dev/api/v1/ai/callback")
+                .callback_url(callbackBaseUrl + "/api/v1/ai/callback")
                 .build();
 
         GenerateResponse response = aiServerClient.generateMock(request);
+        registerJobOwner(authorization, response);
         return ResponseEntity.ok(response);
+    }
+
+    // 이후 채팅 서버 요청에서 jobId를 서버가 직접 찾을 수 있도록 소유자를 기록해둔다.
+    private void registerJobOwner(String authorization, GenerateResponse response) {
+        UserResponse user = authServerClient.getUser(authorization);
+        if (user == null) {
+            return;
+        }
+        aiMetaDataService.registerJob(response.getJob_id(), user.getId());
     }
 
     @PostMapping("/callback")
