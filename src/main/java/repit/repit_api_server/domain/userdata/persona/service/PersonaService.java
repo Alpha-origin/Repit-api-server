@@ -1,14 +1,13 @@
-package repit.repit_api_server.domain.userdata.interview.service;
+package repit.repit_api_server.domain.userdata.persona.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import repit.repit_api_server.domain.userdata.interview.dto.request.PersonaRequest;
-import repit.repit_api_server.domain.userdata.interview.dto.response.PersonaResponse;
-import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
-import repit.repit_api_server.domain.userdata.interview.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest;
+import repit.repit_api_server.domain.userdata.persona.dto.response.PersonaResponse;
+import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 
 import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor

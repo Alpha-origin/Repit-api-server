@@ -1,12 +1,12 @@
-package repit.repit_api_server.domain.userdata.interview.controller;
+package repit.repit_api_server.domain.userdata.persona.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.global.common.ApiResponse;
-import repit.repit_api_server.domain.userdata.interview.dto.request.PersonaRequest;
-import repit.repit_api_server.domain.userdata.interview.dto.response.PersonaResponse;
-import repit.repit_api_server.domain.userdata.interview.service.PersonaService;
+import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest;
+import repit.repit_api_server.domain.userdata.persona.dto.response.PersonaResponse;
+import repit.repit_api_server.domain.userdata.persona.service.PersonaService;
 
 import java.util.List;
 
