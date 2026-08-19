@@ -9,7 +9,9 @@ import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
+import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorAcceptedResponse;
 import repit.repit_api_server.global.common.ApiResponse;
 
 @Component
@@ -53,12 +55,18 @@ public class AiServerClient {
                 this::resolveMessage, false);
     }
 
+    public QuestionTailorAcceptedResponse tailorQuestions(QuestionTailorRequest request) {
+        return executor.execute(SERVER_NAME,
+                () -> aiServerApi.tailorQuestions(request),
+                this::resolveMessage, false);
+    }
+
     private String resolveMessage(HttpStatusCode status) {
         if (status.value() == 401) {
             return "AI 서버 인증에 실패했습니다.";
         }
         if (status.value() == 422) {
-            return "채점할 수 있는 면접 데이터가 아닙니다.";
+            return "AI 서버가 처리할 수 있는 형식의 데이터가 아닙니다.";
         }
         if (status.value() == 404) {
             return "요청한 AI 리소스를 찾을 수 없습니다.";
