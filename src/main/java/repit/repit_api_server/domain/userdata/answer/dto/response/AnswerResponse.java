@@ -1,12 +1,10 @@
-package repit.repit_api_server.domain.userdata.question.dto.response;
+package repit.repit_api_server.domain.userdata.answer.dto.response;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
-import repit.repit_api_server.domain.userdata.question.entity.AnswerEntity;
-import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
+import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 
 import java.time.LocalDateTime;
 

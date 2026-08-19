@@ -4,7 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import repit.repit_api_server.domain.userdata.interview.dto.response.PersonaResponse;
+import repit.repit_api_server.domain.userdata.persona.dto.response.PersonaResponse;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 
 import java.util.List;

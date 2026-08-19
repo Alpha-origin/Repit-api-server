@@ -19,5 +19,4 @@ public class UserResponse {
     private String provider;
     private String role;
     private LocalDateTime createAt;
-    private boolean ifPortfolio;
 }

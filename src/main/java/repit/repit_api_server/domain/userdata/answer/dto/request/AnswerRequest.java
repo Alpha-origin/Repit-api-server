@@ -1,11 +1,9 @@
-package repit.repit_api_server.domain.userdata.question.dto.request;
+package repit.repit_api_server.domain.userdata.answer.dto.request;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
-import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 
 @Getter
 @Builder

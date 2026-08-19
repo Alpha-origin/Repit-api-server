@@ -1,10 +1,10 @@
-package repit.repit_api_server.domain.userdata.interview.dto.response;
+package repit.repit_api_server.domain.userdata.persona.dto.response;
 
 import lombok.*;
-import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
-import repit.repit_api_server.domain.userdata.interview.entity.enums.Gender;
-import repit.repit_api_server.domain.userdata.interview.entity.enums.Major;
-import repit.repit_api_server.domain.userdata.interview.entity.enums.Type;
+import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 
 @Getter
 @Builder

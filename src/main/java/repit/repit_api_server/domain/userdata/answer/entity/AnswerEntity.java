@@ -1,4 +1,4 @@
-package repit.repit_api_server.domain.userdata.question.entity;
+package repit.repit_api_server.domain.userdata.answer.entity;
 
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -6,7 +6,6 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
-import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 
 import java.time.LocalDateTime;
 

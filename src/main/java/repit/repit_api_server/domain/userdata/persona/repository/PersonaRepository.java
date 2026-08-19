@@ -1,7 +1,7 @@
-package repit.repit_api_server.domain.userdata.interview.repository;
+package repit.repit_api_server.domain.userdata.persona.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 
 import java.util.Optional;
 

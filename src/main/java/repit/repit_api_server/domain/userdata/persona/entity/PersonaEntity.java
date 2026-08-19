@@ -1,13 +1,13 @@
-package repit.repit_api_server.domain.userdata.interview.entity;
+package repit.repit_api_server.domain.userdata.persona.entity;
 
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import repit.repit_api_server.domain.userdata.interview.entity.enums.Gender;
-import repit.repit_api_server.domain.userdata.interview.entity.enums.Major;
-import repit.repit_api_server.domain.userdata.interview.entity.enums.Type;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 
 @Entity
 @Table(name = "persona")

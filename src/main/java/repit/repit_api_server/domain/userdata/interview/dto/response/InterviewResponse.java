@@ -5,7 +5,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
-import repit.repit_api_server.domain.userdata.interview.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 
 import java.time.LocalDateTime;

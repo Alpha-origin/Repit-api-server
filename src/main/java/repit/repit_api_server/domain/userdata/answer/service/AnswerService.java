@@ -1,15 +1,13 @@
-package repit.repit_api_server.domain.userdata.question.service;
+package repit.repit_api_server.domain.userdata.answer.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.bind.annotation.CrossOrigin;
-import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
-import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
-import repit.repit_api_server.domain.userdata.question.dto.request.AnswerRequest;
-import repit.repit_api_server.domain.userdata.question.dto.response.AnswerResponse;
-import repit.repit_api_server.domain.userdata.question.entity.AnswerEntity;
+import repit.repit_api_server.domain.userdata.answer.dto.request.AnswerRequest;
+import repit.repit_api_server.domain.userdata.answer.dto.response.AnswerResponse;
+import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
-import repit.repit_api_server.domain.userdata.question.repository.AnswerRepository;
+import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.response.UserResponse;
