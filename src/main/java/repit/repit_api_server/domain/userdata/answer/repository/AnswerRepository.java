@@ -1,8 +1,7 @@
-package repit.repit_api_server.domain.userdata.question.repository;
+package repit.repit_api_server.domain.userdata.answer.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
-import repit.repit_api_server.domain.userdata.question.entity.AnswerEntity;
+import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 
 import java.util.List;
 

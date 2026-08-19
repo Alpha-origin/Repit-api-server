@@ -6,7 +6,7 @@ import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.service.InterviewService;
-import repit.repit_api_server.domain.userdata.question.service.AnswerService;
+import repit.repit_api_server.domain.userdata.answer.service.AnswerService;
 import repit.repit_api_server.global.common.ApiResponse;
 
 import java.util.List;
