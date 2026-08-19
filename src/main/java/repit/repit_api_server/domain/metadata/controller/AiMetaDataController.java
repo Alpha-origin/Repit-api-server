@@ -121,6 +121,7 @@ public class AiMetaDataController {
                 .job_id(request.getJob_id())
                 .status(request.getStatus())
                 .result(request.getResult())
+                .error(request.getError())
                 .build();
 
         sendCompletionEvent(request.getJob_id(), response);
@@ -150,10 +151,16 @@ public class AiMetaDataController {
         }
     }
 
+    /**
+     * 채팅 서버가 면접에 쓸 질문을 가져가는 경로.
+     * 질문 재작성이 끝나 있으면 재작성된 본문이 담겨 나간다.
+     * 한 분석 결과로 여러 면접을 여는 경우 interviewId를 함께 주면 그 면접의 재작성본으로 정확히 맞춘다.
+     */
     @GetMapping
     public ApiResponse<ResultResponse> getResult(
-            @RequestParam String jobId
+            @RequestParam String jobId,
+            @RequestParam(required = false) Long interviewId
     ) {
-        return ApiResponse.success(aiMetaDataService.getResult(jobId));
+        return ApiResponse.success(aiMetaDataService.getResult(jobId, interviewId));
     }
 }
