@@ -20,7 +20,9 @@ public class CorsConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(List.of(
                 "http://localhost:5173",
-                "https://repit-web-psi.vercel.app"));
+                "https://repit-web-psi.vercel.app",
+                "https://team-alpha.org"
+                ));
         config.setAllowedMethods(List.of(
                 "GET",
                 "POST",
