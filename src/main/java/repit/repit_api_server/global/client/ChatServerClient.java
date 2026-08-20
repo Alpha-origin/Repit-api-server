@@ -16,9 +16,9 @@ public class ChatServerClient {
     private final ChatServerApi chatServerApi;
     private final ExternalApiExecutor executor;
 
-    public ChatInterviewResponse prepareInterview(String authorization, ChatInterviewPrepareRequest request) {
+    public ChatInterviewResponse prepareInterview(ChatInterviewPrepareRequest request) {
         return executor.execute(SERVER_NAME,
-                () -> chatServerApi.prepareInterview(authorization, request),
+                () -> chatServerApi.prepareInterview(request),
                 this::resolveMessage, false);
     }
 

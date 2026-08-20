@@ -5,13 +5,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResultResponse;
 import repit.repit_api_server.domain.metadata.dto.response.GeneratedQuestionResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorCallbackRequest;
@@ -38,9 +38,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * /generate 로 만들어 둔 원질문을 지원자의 사전 정보에 맞게 다시 쓰는 흐름.
- * 재작성이 실패해도 원질문으로 면접을 열 수 있어야 하므로, 어떤 경로로 끝나든
- * 조회 시 쓸 수 있는 질문 목록이 남는다.
+ * 면접 시작 시 도는 질문 재작성 흐름.
+ *
+ * <p>DB에 저장된 원질문을 페르소나와 함께 분석 서버로 보내고, 콜백으로 돌아온 재작성 질문을
+ * 원질문과 함께 저장한 뒤, 그 전체를 채팅 서버로 넘긴다. 재작성이 실패해도 원질문은 유효한
+ * 산출물이라 어떤 경로로 끝나든 면접에 쓸 질문이 남고 채팅 서버로도 넘어간다.
  */
 @Service
 @RequiredArgsConstructor
@@ -58,6 +60,7 @@ public class QuestionTailorService {
     private final AnalysisDataRepository analysisDataRepository;
     private final AiServerClient aiServerClient;
     private final AuthServerClient authServerClient;
+    private final ChatInterviewHandoffService chatInterviewHandoffService;
     private final ObjectMapper objectMapper;
 
     @Value("${app.callback-base-url}")
@@ -68,24 +71,23 @@ public class QuestionTailorService {
     private Duration pendingTimeout;
 
     /**
-     * 외부 서버 호출이 두 번 들어가므로 트랜잭션으로 감싸지 않는다.
-     * 감싸면 느린 HTTP 응답을 기다리는 내내 DB 커넥션을 붙잡게 된다.
+     * 면접 시작 요청이 들어오면 원질문 + 페르소나를 분석 서버로 보낸다.
+     *
+     * <p>외부 서버 호출이 들어가므로 트랜잭션으로 감싸지 않는다. 감싸면 느린 HTTP 응답을
+     * 기다리는 내내 DB 커넥션을 붙잡게 된다.
+     *
+     * <p>같은 면접을 두 번 시작해도 작업이 겹치지 않도록, 진행 중이거나 이미 끝난 건이 있으면
+     * 새로 요청하지 않고 그 상태를 그대로 돌려준다.
      */
-    public QuestionTailorAcceptedResponse requestTailor(String authorization, Long interviewId) {
-        UserResponse user = currentUser(authorization);
-
-        InterviewEntity interview = interviewRepository.findById(interviewId)
-                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
-        verifyOwner(interview.getUserId(), user.getId());
-
+    public QuestionTailorEntity requestTailor(InterviewEntity interview, UserResponse user) {
         QuestionTailorEntity existing = questionTailorRepository
-                .findTopByInterviewIdOrderByCreatedAtDesc(interviewId)
+                .findTopByInterviewIdOrderByCreatedAtDesc(interview.getInterviewId())
                 .orElse(null);
         if (existing != null) {
             expireIfTimedOut(existing);
-            if (existing.getStatus() == TailorStatus.PENDING) {
-                throw BusinessException.conflict("이미 질문을 다시 쓰고 있습니다. 잠시 후 다시 확인해주세요.");
-            }
+            // 이미 확정된 건은 채팅 서버 전달만 마저 시도하고 끝낸다.
+            deliverToChatServer(existing);
+            return existing;
         }
 
         SourceQuestions source = loadOriginalQuestions(interview.getUserId());
@@ -100,17 +102,16 @@ public class QuestionTailorService {
                 .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
                 .build());
 
-        questionTailorRepository.save(QuestionTailorEntity.builder()
+        return questionTailorRepository.save(QuestionTailorEntity.builder()
                 .interviewId(interview.getInterviewId())
                 .userId(interview.getUserId())
                 .jobId(accepted == null ? null : accepted.getJobId())
-                // 채팅 서버는 분석 jobId로만 질문을 가져가므로, 재작성본을 되찾을 수 있게 함께 남긴다.
+                // 재작성본이 어느 분석 결과에서 나왔는지. 채팅 서버로 함께 넘긴다.
                 .analysisJobId(source.analysisJobId())
                 .status(TailorStatus.PENDING)
                 .sourceQuestions(sourceQuestions)
+                .chatDelivered(false)
                 .build());
-
-        return accepted;
     }
 
     private QuestionTailorRequest.Question toRequestQuestion(TailoredQuestionResponse question) {
@@ -123,14 +124,11 @@ public class QuestionTailorService {
                 .build();
     }
 
-    /** 원질문과 그 질문이 나온 분석 작업. 재작성본을 분석 결과에 되꽂을 때 jobId가 필요하다. */
+    /** 원질문과 그 질문이 나온 분석 작업. 채팅 서버에 어느 분석 결과인지 알려줄 때 jobId가 필요하다. */
     private record SourceQuestions(String analysisJobId, List<TailoredQuestionResponse> questions) {
     }
 
-    /**
-     * 재작성 대상은 해당 사용자의 가장 최근 분석 결과다.
-     * 면접 준비(prepareInterview)가 채팅 서버에 넘기는 jobId와 같은 기준을 쓴다.
-     */
+    /** 재작성 대상은 해당 사용자의 가장 최근 분석 결과에 담긴 원질문이다. */
     private SourceQuestions loadOriginalQuestions(Long userId) {
         AnalysisDataEntity analysisData = analysisDataRepository
                 .findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(userId)
@@ -186,14 +184,14 @@ public class QuestionTailorService {
 
         return QuestionTailorRequest.Profile.builder()
                 .jobRole(jobRole)
-                // 지원자 경력은 아직 수집하지 않는다. 값이 생기면 여기에 채운다.
+                // persona.career는 면접관 설정이지 지원자 경력이 아니다. 지원자 경력은 아직 수집하지 않는다.
                 .experienceLevel(null)
                 .personaType(personaType)
                 .build();
     }
 
     /**
-     * 분석 서버는 콜백 전송에 두 번 실패하면 결과를 폐기한다.
+     * 분석 서버는 콜백 전송에 실패하면 결과를 폐기한다.
      * 그 경우 콜백이 영영 오지 않으므로, 오래 걸린 PENDING은 원질문 폴백으로 정리한다.
      */
     private void expireIfTimedOut(QuestionTailorEntity tailor) {
@@ -212,9 +210,13 @@ public class QuestionTailorService {
     }
 
     /**
-     * 분석 서버가 재작성을 마치고 보내는 콜백. 재전송이 있을 수 있어 두 번 받아도 안전해야 한다.
+     * 분석 서버가 재작성을 마치고 보내는 콜백.
+     * 재작성 질문을 원질문과 함께 저장한 뒤, 그 전체를 채팅 서버로 넘긴다.
+     * 재전송이 있을 수 있어 두 번 받아도 안전해야 한다.
+     *
+     * <p>저장과 채팅 서버 호출을 한 트랜잭션으로 묶지 않는다. 외부 호출이 늦어져도 재작성 결과는
+     * 이미 DB에 남아 있어야 조회와 재전달이 가능하다.
      */
-    @Transactional
     public void handleCallback(QuestionTailorCallbackRequest request) {
         QuestionTailorEntity tailor = findTarget(request);
         if (tailor == null) {
@@ -233,6 +235,32 @@ public class QuestionTailorService {
             applyFailure(tailor, request.getError());
         }
 
+        questionTailorRepository.save(tailor);
+        deliverToChatServer(tailor);
+    }
+
+    /**
+     * 재작성이 확정된 면접 데이터를 채팅 서버로 넘긴다.
+     *
+     * <p>아직 PENDING이면 넘길 최종 질문이 없으므로 넘어간다. 이미 넘긴 건은 콜백이 재전송돼도
+     * 다시 넘기지 않는다. 전달에 실패해도 콜백 자체는 성공 처리한다 — 여기서 예외를 던지면
+     * 분석 서버가 결과를 재전송하다 폐기해버려 재작성본까지 잃는다.
+     */
+    private void deliverToChatServer(QuestionTailorEntity tailor) {
+        if (tailor.getStatus() == TailorStatus.PENDING || Boolean.TRUE.equals(tailor.getChatDelivered())) {
+            return;
+        }
+
+        try {
+            chatInterviewHandoffService.deliver(tailor);
+            tailor.setChatDelivered(true);
+            tailor.setChatErrorMessage(null);
+        } catch (RuntimeException e) {
+            log.error("면접 데이터를 채팅 서버로 넘기지 못했습니다. tailorId={}, interviewId={}",
+                    tailor.getTailorId(), tailor.getInterviewId(), e);
+            tailor.setChatDelivered(false);
+            tailor.setChatErrorMessage(e.getMessage());
+        }
         questionTailorRepository.save(tailor);
     }
 
@@ -296,6 +324,7 @@ public class QuestionTailorService {
         }
 
         tailor.setTailored(true);
+        // 본문만 갈아끼운다. category/expectedAnswer/basedOn은 콜백에 실려오지 않아 원질문 값을 유지한다.
         tailor.setQuestions(source.stream()
                 .map(question -> TailoredQuestionResponse.builder()
                         .id(question.getId())
@@ -327,8 +356,8 @@ public class QuestionTailorService {
     }
 
     /**
-     * 면접 시작 직전 클라이언트가 폴링하는 조회.
-     * 재작성을 요청하지 않았거나 실패했어도 원질문을 돌려주므로 응답만 보고 면접을 열 수 있다.
+     * 면접 시작 뒤 클라이언트가 준비 상태를 확인하는 조회.
+     * 재작성이 실패했어도 원질문을 돌려주므로 응답만 보고 면접을 열 수 있다.
      */
     public QuestionTailorResponse getTailorResult(String authorization, Long interviewId) {
         UserResponse user = currentUser(authorization);
@@ -345,13 +374,11 @@ public class QuestionTailorService {
                     loadOriginalQuestions(interview.getUserId()).questions());
         }
 
-        // 폴링하는 클라이언트가 PENDING에 갇히지 않도록 조회 시점에도 판정한다.
+        // 폴링하는 클라이언트가 PENDING에 갇히지 않도록 조회 시점에도 판정하고, 밀린 전달을 마저 시도한다.
         expireIfTimedOut(tailor);
+        deliverToChatServer(tailor);
 
-        List<TailoredQuestionResponse> questions = tailor.getQuestions() == null
-                ? originalQuestions(tailor)
-                : tailor.getQuestions();
-        return QuestionTailorResponse.of(tailor, questions);
+        return QuestionTailorResponse.of(tailor);
     }
 
     private UserResponse currentUser(String authorization) {

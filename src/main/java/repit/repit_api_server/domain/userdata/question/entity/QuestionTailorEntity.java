@@ -13,9 +13,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 면접 시작 직전에 돌린 질문 재작성 작업 한 건.
+ * 면접 시작 요청 한 건에 대응하는 질문 재작성 작업.
  * 콜백은 재작성된 본문만 돌려주므로, 나머지 필드를 복원하려면 요청에 실어보낸 원질문이 필요하다.
- * 그래서 sourceQuestions를 함께 남긴다.
+ * 그래서 원질문(sourceQuestions)과 면접에 쓸 최종 질문(questions)을 함께 남긴다.
+ * 이 두 벌이 그대로 채팅 서버로 넘어간다.
  */
 @Entity
 @Table(name = "question_tailor")
@@ -64,6 +65,12 @@ public class QuestionTailorEntity {
 
     @Column(columnDefinition = "TEXT")
     private String errorMessage;
+
+    // 재작성 결과를 채팅 서버에 넘겼는지. 콜백 재전송으로 두 번 밀어넣지 않으려고 남긴다.
+    private Boolean chatDelivered;
+
+    @Column(columnDefinition = "TEXT")
+    private String chatErrorMessage;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)

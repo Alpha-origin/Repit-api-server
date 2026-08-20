@@ -151,16 +151,11 @@ public class AiMetaDataController {
         }
     }
 
-    /**
-     * 채팅 서버가 면접에 쓸 질문을 가져가는 경로.
-     * 질문 재작성이 끝나 있으면 재작성된 본문이 담겨 나간다.
-     * 한 분석 결과로 여러 면접을 여는 경우 interviewId를 함께 주면 그 면접의 재작성본으로 정확히 맞춘다.
-     */
+    // 분석 결과 조회. 면접 질문은 재작성이 끝나는 시점에 채팅 서버로 직접 넘어간다.
     @GetMapping
     public ApiResponse<ResultResponse> getResult(
-            @RequestParam String jobId,
-            @RequestParam(required = false) Long interviewId
+            @RequestParam String jobId
     ) {
-        return ApiResponse.success(aiMetaDataService.getResult(jobId, interviewId));
+        return ApiResponse.success(aiMetaDataService.getResult(jobId));
     }
 }
