@@ -49,6 +49,10 @@ public class AnalysisDataEntity {
     @Column(columnDefinition = "TEXT")
     private String errorMessage;
 
+    // 콜백을 저장한 시각. 같은 jobId로 분석을 다시 요청했을 때 여기 남은 결과가
+    // 이번 실행의 것인지 지난 실행의 것인지는 이 값으로만 가릴 수 있다.
+    private LocalDateTime completedAt;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

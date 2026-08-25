@@ -13,6 +13,8 @@ import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.global.exception.BusinessException;
 
+import java.time.LocalDateTime;
+
 @Service
 @RequiredArgsConstructor
 public class AiMetaDataService {
@@ -26,22 +28,39 @@ public class AiMetaDataService {
     private final AnalysisDataRepository analysisDataRepository;
 
     /**
-     * 분석 요청 시점에 작업 소유자를 먼저 기록해둔다. 결과는 콜백에서 채워진다.
+     * 분석 요청 시점에 이번 실행을 접수한다. 소유자를 기록하고, 지난 실행에 남은 결과를 걷어낸다.
      *
-     * <p>분석 서버가 빠르면 이 메서드보다 콜백이 먼저 도착할 수 있다. 그때 행 전체를 저장하면
-     * 아직 비어 있는 result로 이미 받아둔 결과를 덮어쓰게 되므로, 소유자 컬럼만 갱신하고
-     * 행이 없을 때만 새로 만든다.
+     * <p>분석 서버는 같은 jobId를 다시 내려줄 수 있다. 그 행에 지난 실행의 결과가 그대로 남아
+     * 있으면, 구독이 붙는 순간 콜백이 오기도 전에 옛 결과가 완료 이벤트로 나간다. 클라이언트는
+     * 새 분석이 끝난 줄 알고 지난 결과를 집어 든다.
+     *
+     * <p>분석 서버가 빠르면 이 메서드보다 콜백이 먼저 도착할 수 있다. 그 결과까지 지우면
+     * 방금 받아둔 결과를 잃으므로, {@code requestedAt}(분석 서버에 요청을 보내기 직전 시각)보다
+     * 나중에 끝난 결과는 이번 실행의 것으로 보고 그대로 둔다.
+     *
+     * <p>행 전체를 저장하는 대신 조건을 담은 갱신을 쓰는 것도 같은 이유다. 읽고 쓰는 사이에
+     * 도착한 콜백을 아직 비어 있는 result로 덮어쓰지 않는다.
      */
     @Transactional
-    public void registerJob(String jobId, Long userId) {
-        if (jobId == null || userId == null) {
+    public void registerJob(String jobId, Long userId, LocalDateTime requestedAt) {
+        if (jobId == null) {
             return;
         }
-        if (analysisDataRepository.updateUserId(jobId, userId) == 0) {
+
+        LocalDateTime boundary = requestedAt == null ? LocalDateTime.now() : requestedAt;
+        boolean cleared = analysisDataRepository.clearPreviousRun(jobId, AnalysisStatus.PENDING, boundary) > 0;
+
+        // 걷어낸 것도 없고 행도 없다면 이번 실행이 처음이다.
+        if (!cleared && !analysisDataRepository.existsById(jobId)) {
             analysisDataRepository.save(AnalysisDataEntity.builder()
                     .jobId(jobId)
                     .userId(userId)
                     .build());
+            return;
+        }
+
+        if (userId != null) {
+            analysisDataRepository.updateUserId(jobId, userId);
         }
     }
 
@@ -68,6 +87,7 @@ public class AiMetaDataService {
             data.setResult(request.getResult());
             data.setErrorStatusCode(null);
             data.setErrorMessage(null);
+            data.setCompletedAt(LocalDateTime.now());
             analysisDataRepository.save(data);
             return;
         }
@@ -86,6 +106,7 @@ public class AiMetaDataService {
             data.setErrorStatusCode(request.getError().getStatus_code());
             data.setErrorMessage(request.getError().getMessage());
         }
+        data.setCompletedAt(LocalDateTime.now());
         analysisDataRepository.save(data);
     }
 
@@ -94,11 +115,15 @@ public class AiMetaDataService {
      *
      * <p>구독이 콜백보다 늦게 붙는 경우가 있다. 그때 SSE로 흘릴 것이 없으면 클라이언트는
      * 영영 아무것도 받지 못하므로, 저장해둔 결과로 되짚어준다.
+     *
+     * <p>끝났다는 판정은 SUCCEEDED와 FAILED에만 준다. "PENDING이 아니면 끝난 것"으로 보면
+     * 상태를 알 수 없는 행이 완료로 새어나가, 콜백이 오기도 전에 실패 이벤트가 나간다.
      */
     @Transactional(readOnly = true)
     public CallbackSuccessResponse findFinished(String jobId) {
         return analysisDataRepository.findById(jobId)
-                .filter(data -> data.getStatus() != AnalysisStatus.PENDING)
+                .filter(data -> data.getStatus() == AnalysisStatus.SUCCEEDED
+                        || data.getStatus() == AnalysisStatus.FAILED)
                 .map(data -> CallbackSuccessResponse.builder()
                         .job_id(data.getJobId())
                         .status(statusName(data.getStatus()))

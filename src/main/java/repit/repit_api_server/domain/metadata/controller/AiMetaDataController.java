@@ -24,7 +24,7 @@ import repit.repit_api_server.global.exception.ExternalApiException;
 import repit.repit_api_server.global.response.UserResponse;
 
 import java.io.IOException;
-import java.util.Arrays;
+import java.time.LocalDateTime;
 
 @RestController
 @RequiredArgsConstructor
@@ -49,6 +49,20 @@ public class AiMetaDataController {
     public SseEmitter subscribe(@PathVariable String jobId) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
 
+        // 등록을 먼저 하고 결과를 확인한다. 순서를 뒤집으면 확인과 등록 사이에 도착한 콜백이
+        // 흘려보낼 구독을 찾지 못해 이벤트를 그대로 버리고, 구독은 타임아웃까지 매달린다.
+        SseEmitter previous = sseEmitterRepository.save(jobId, emitter);
+        if (previous != null) {
+            // 같은 작업을 다시 구독했다. 밀려난 연결에는 이제 아무것도 흐르지 않으니 여기서 끊는다.
+            previous.complete();
+        }
+
+        // 정리는 자기 자신이 등록돼 있을 때만 한다. jobId만 보고 지우면 뒤늦게 끝난 예전 구독이
+        // 방금 붙은 구독을 밀어낸다.
+        emitter.onCompletion(() -> sseEmitterRepository.remove(jobId, emitter));
+        emitter.onTimeout(() -> sseEmitterRepository.remove(jobId, emitter));
+        emitter.onError((e) -> sseEmitterRepository.remove(jobId, emitter));
+
         // 콜백이 구독보다 먼저 도착했을 수 있다. 그때는 붙는 즉시 결과를 돌려주고 끝낸다.
         // 되짚어주지 않으면 이미 끝난 작업을 구독한 클라이언트는 아무것도 받지 못한 채 타임아웃까지
         // 매달려 있고, EventSource가 그때마다 다시 붙어 재연결만 반복한다.
@@ -58,18 +72,12 @@ public class AiMetaDataController {
             return emitter;
         }
 
-        sseEmitterRepository.save(jobId, emitter);
-
-        emitter.onCompletion(() -> sseEmitterRepository.remove(jobId));
-        emitter.onTimeout(() -> sseEmitterRepository.remove(jobId));
-        emitter.onError((e) -> sseEmitterRepository.remove(jobId));
-
         try {
             emitter.send(SseEmitter.event()
                     .name("connect")
                     .data("connected"));
         } catch (IOException e) {
-            sseEmitterRepository.remove(jobId);
+            sseEmitterRepository.remove(jobId, emitter);
         }
 
         return emitter;
@@ -98,8 +106,10 @@ public class AiMetaDataController {
                 .callback_url(callbackBaseUrl + "/api/v1/ai/callback")
                 .build();
 
+        // 분석 서버에 넘기기 직전 시각. 이 작업에 남아 있는 결과가 지난 실행의 것인지 가르는 기준이다.
+        LocalDateTime requestedAt = LocalDateTime.now();
         GenerateResponse response = aiServerClient.generate(request);
-        registerJobOwner(authorization, response);
+        registerJob(authorization, response, requestedAt);
         return ResponseEntity.ok(response);
     }
 
@@ -114,22 +124,26 @@ public class AiMetaDataController {
                 .callback_url(callbackBaseUrl + "/api/v1/ai/callback")
                 .build();
 
+        LocalDateTime requestedAt = LocalDateTime.now();
         GenerateResponse response = aiServerClient.generateMock(request);
-        registerJobOwner(authorization, response);
+        registerJob(authorization, response, requestedAt);
         return ResponseEntity.ok(response);
     }
 
     /**
-     * 이후 채팅 서버 요청에서 jobId를 서버가 직접 찾을 수 있도록 소유자를 기록해둔다.
+     * 이번 분석 실행을 접수한다. 소유자를 기록하고, 같은 jobId에 남아 있던 지난 결과를 걷어낸다.
      *
      * <p>소유자를 남기지 못하면 이 분석 결과는 사용자로 되찾을 수 없어 면접 질문 재작성이
      * 예전 결과를 집어 든다. 그래서 실패를 조용히 넘기지 않고 반드시 로그로 남긴다.
      *
-     * <p>다만 이 시점에는 분석 서버가 이미 작업을 접수한 뒤다. 소유자 기록이 실패했다고 요청
-     * 전체를 실패시키면 클라이언트가 jobId를 받지 못해 결과를 영영 조회할 수 없게 되므로,
-     * 기록 실패는 예외로 번지지 않게 막는다.
+     * <p>소유자를 확인하지 못했더라도 접수 자체는 한다. 지난 결과를 걷어내지 않으면 구독이
+     * 붙는 순간 분석 서버의 콜백보다 먼저 옛 결과가 완료 이벤트로 나가기 때문이다.
+     *
+     * <p>다만 이 시점에는 분석 서버가 이미 작업을 접수한 뒤다. 기록이 실패했다고 요청 전체를
+     * 실패시키면 클라이언트가 jobId를 받지 못해 결과를 영영 조회할 수 없게 되므로, 기록 실패는
+     * 예외로 번지지 않게 막는다.
      */
-    private void registerJobOwner(String authorization, GenerateResponse response) {
+    private void registerJob(String authorization, GenerateResponse response, LocalDateTime requestedAt) {
         if (response == null || response.getJob_id() == null) {
             // jobId가 없으면 구독도 조회도 할 수 없다. 성공으로 돌려주면 원인을 찾을 수 없다.
             log.error("분석 서버 응답에 job_id가 없습니다. status={}, message={}",
@@ -138,15 +152,22 @@ public class AiMetaDataController {
             throw new ExternalApiException("분석 서버가 작업 번호를 돌려주지 않았습니다.", null, null);
         }
 
+        Long userId = null;
         try {
             UserResponse user = authServerClient.getUser(authorization);
             if (user == null || user.getId() == null) {
                 log.error("분석 작업의 소유자를 확인하지 못했습니다. jobId={}", response.getJob_id());
-                return;
+            } else {
+                userId = user.getId();
             }
-            aiMetaDataService.registerJob(response.getJob_id(), user.getId());
         } catch (RuntimeException e) {
-            log.error("분석 작업의 소유자를 기록하지 못했습니다. jobId={}", response.getJob_id(), e);
+            log.error("분석 작업의 소유자를 확인하지 못했습니다. jobId={}", response.getJob_id(), e);
+        }
+
+        try {
+            aiMetaDataService.registerJob(response.getJob_id(), userId, requestedAt);
+        } catch (RuntimeException e) {
+            log.error("분석 작업을 접수하지 못했습니다. jobId={}", response.getJob_id(), e);
         }
     }
 
@@ -177,6 +198,12 @@ public class AiMetaDataController {
     }
 
     private void sendCompletionEvent(SseEmitter emitter, String jobId, CallbackSuccessResponse response) {
+        // 이 구독을 먼저 걷어낸 쪽만 보낸다. 콜백과 구독 시점 되짚기가 겹쳐도 이벤트는 한 번만 나가고,
+        // 이미 끝난 연결에 다시 쓰는 일이 없다.
+        if (!sseEmitterRepository.remove(jobId, emitter)) {
+            return;
+        }
+
         String eventName = "succeeded".equalsIgnoreCase(response.getStatus())
                 ? "question-generated"
                 : "question-generation-failed";
@@ -187,9 +214,8 @@ public class AiMetaDataController {
                     .data(response));
             emitter.complete();
         } catch (IOException e) {
+            log.warn("분석 결과를 구독에 흘려보내지 못했습니다. jobId={}", jobId, e);
             emitter.completeWithError(e);
-        } finally {
-            sseEmitterRepository.remove(jobId);
         }
     }
 
