@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest;
 import repit.repit_api_server.domain.userdata.persona.dto.response.PersonaResponse;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.global.exception.BusinessException;
@@ -29,6 +30,7 @@ public class PersonaService {
                 .personaName(request.getPersonaName())
                 .role(role)
                 .type(request.getType())
+                .level(request.getLevel() == null ? Level.NORMAL : request.getLevel())
                 .major(role == Role.TECH ? request.getMajor() : null)
                 .career(request.getCareer())
                 .gender(request.getGender())
