@@ -26,7 +26,7 @@ public class PersonaRequest {
 
     private Type type;
 
-    // 비우면 NORMAL로 만든다.
+    // 필수. EASY / NORMAL / HARD.
     private Level level;
 
     private int career;

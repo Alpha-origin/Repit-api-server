@@ -27,7 +27,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 직책은 저장되고 나면 되돌릴 근거가 없다. 요청에 있는 값이 그대로 남는지 확인한다. */
+/** 직책과 난이도는 저장되고 나면 되돌릴 근거가 없다. 요청에 있는 값이 그대로 남는지 확인한다. */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class PersonaServiceCreateTest {
@@ -52,6 +52,7 @@ class PersonaServiceCreateTest {
         request.setPersonaName("면접관");
         request.setRole(role);
         request.setMajor(major);
+        request.setLevel(Level.HARD);
         request.setType(Type.FRIENDLY);
         request.setCareer(5);
         request.setGender(Gender.FEMALE);
@@ -97,10 +98,23 @@ class PersonaServiceCreateTest {
     }
 
     @Test
-    void 난이도는_안_보내면_NORMAL이다() {
+    void 요청한_난이도가_그대로_저장된다() {
         service.createPersona(request(Role.CEO, null));
 
         verify(personaRepository).save(saved.capture());
-        assertThat(saved.getValue().getLevel()).isEqualTo(Level.NORMAL);
+        assertThat(saved.getValue().getLevel()).isEqualTo(Level.HARD);
+    }
+
+    @Test
+    void 난이도를_안_보내면_422다() {
+        PersonaRequest request = request(Role.CEO, null);
+        request.setLevel(null);
+
+        assertThatThrownBy(() -> service.createPersona(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+
+        verify(personaRepository, never()).save(any());
     }
 }

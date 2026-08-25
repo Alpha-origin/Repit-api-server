@@ -39,11 +39,10 @@ public class PersonaEntity {
     @Column(nullable = false)
     private Type type;
 
-    // 난이도. 안 보내던 기존 요청과 기존 행은 전부 NORMAL이다.
+    // 난이도. 직책과 마찬가지로 기본값을 두지 않는다.
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    @Builder.Default
-    private Level level = Level.NORMAL;
+    private Level level;
 
     @Column(nullable = false)
     private int career;
