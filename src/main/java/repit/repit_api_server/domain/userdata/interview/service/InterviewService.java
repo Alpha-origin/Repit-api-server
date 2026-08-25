@@ -8,8 +8,12 @@ import repit.repit_api_server.domain.userdata.interview.dto.response.ChatIntervi
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewPrepareResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
@@ -22,12 +26,21 @@ import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.response.UserResponse;
 
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class InterviewService {
+
+    // N:1 면접은 직책마다 한 명씩, 이 순서로 진행한다.
+    private static final List<Role> MULTI_ROLES = List.of(Role.TECH, Role.HR, Role.CEO);
 
     private final InterviewRepository interviewRepository;
     private final QuestionRepository questionRepository;
@@ -36,13 +49,20 @@ public class InterviewService {
     private final AnswerRepository answerRepository;
     private final PersonaRepository personaRepository;
     private final QuestionTailorService questionTailorService;
+    private final InterviewPersonaRepository interviewPersonaRepository;
 
     public InterviewResponse createInterview(String authorization, CreateInterviewRequest request) {
         UserResponse user = currentUser(authorization);
+
+        if (request.getPersonaIds() != null && !request.getPersonaIds().isEmpty()) {
+            return createMultiInterview(user, request.getPersonaIds());
+        }
+
         PersonaEntity persona = findPersona(request);
 
         InterviewEntity interview = InterviewEntity.builder()
                 .userId(user.getId())
+                .mode(InterviewMode.SOLO)
                 .personaId(persona.getPersonaId())
                 .status(Status.IN_PROGRESS)
                 .sessionId(UUID.randomUUID().toString())
@@ -50,6 +70,67 @@ public class InterviewService {
 
         InterviewEntity saved = interviewRepository.save(interview);
         return InterviewResponse.from(saved);
+    }
+
+    /**
+     * N:1 면접 생성. 면접관은 기술·인사·CEO 한 명씩이다.
+     *
+     * <p>진행 순서는 요청 순서가 아니라 직책 순서로 정한다. 질문 배열도 이 순서를 따르고,
+     * 꼬리질문이 부모 질문 바로 뒤에 삽입되므로 한 면접관의 질문 묶음이 끝나야 다음 면접관으로 넘어간다.
+     */
+    private InterviewResponse createMultiInterview(UserResponse user, List<Long> requestedIds) {
+        List<Long> personaIds = new ArrayList<>(new LinkedHashSet<>(requestedIds));
+        if (personaIds.size() != requestedIds.size()) {
+            throw BusinessException.unprocessable("같은 면접관을 두 번 지정할 수 없습니다.");
+        }
+
+        Map<Long, PersonaEntity> personas = personaRepository.findAllById(personaIds).stream()
+                .collect(Collectors.toMap(PersonaEntity::getPersonaId, Function.identity()));
+        for (Long personaId : personaIds) {
+            if (!personas.containsKey(personaId)) {
+                throw BusinessException.notFound("페르소나를 찾을 수 없습니다: " + personaId);
+            }
+        }
+
+        List<PersonaEntity> ordered = orderByRole(personas.values());
+
+        InterviewEntity saved = interviewRepository.save(InterviewEntity.builder()
+                .userId(user.getId())
+                .mode(InterviewMode.MULTI)
+                .status(Status.IN_PROGRESS)
+                .sessionId(UUID.randomUUID().toString())
+                .build());
+
+        List<InterviewPersonaEntity> members = new ArrayList<>();
+        for (int order = 0; order < ordered.size(); order++) {
+            members.add(InterviewPersonaEntity.builder()
+                    .interviewId(saved.getInterviewId())
+                    .personaId(ordered.get(order).getPersonaId())
+                    .personaOrder(order)
+                    .build());
+        }
+        interviewPersonaRepository.saveAll(members);
+
+        return InterviewResponse.from(saved, ordered.stream().map(PersonaEntity::getPersonaId).toList());
+    }
+
+    /** 직책이 하나라도 비거나 겹치면 면접이 성립하지 않으므로 생성 시점에 막는다. */
+    private List<PersonaEntity> orderByRole(Iterable<PersonaEntity> personas) {
+        Map<Role, List<PersonaEntity>> byRole = new EnumMap<>(Role.class);
+        for (PersonaEntity persona : personas) {
+            byRole.computeIfAbsent(persona.getRole(), role -> new ArrayList<>()).add(persona);
+        }
+
+        List<PersonaEntity> ordered = new ArrayList<>();
+        for (Role role : MULTI_ROLES) {
+            List<PersonaEntity> matched = byRole.get(role);
+            if (matched == null || matched.size() != 1) {
+                throw BusinessException.unprocessable(
+                        "N:1 면접은 기술·인사·CEO 면접관을 한 명씩 지정해야 합니다.");
+            }
+            ordered.add(matched.getFirst());
+        }
+        return ordered;
     }
 
     /**
@@ -93,6 +174,11 @@ public class InterviewService {
         if (!user.getId().equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 시작할 수 있습니다.");
         }
+        // N:1은 질문 재작성이 아니라 신규 생성이 섞인 multi tailor를 써야 한다. 분석 서버 스펙이 확정되기 전까지는
+        // 1:1용 재작성을 태우면 인사·CEO 질문 없이 면접이 열리므로 아예 막는다.
+        if (interview.getMode() == InterviewMode.MULTI) {
+            throw BusinessException.unprocessable("N:1 면접 시작은 아직 준비 중입니다.");
+        }
 
         QuestionTailorEntity tailor = questionTailorService.requestTailor(interview, user);
         return InterviewPrepareResponse.of(tailor, interview.getSessionId(), prepareMessage(tailor));
@@ -111,13 +197,26 @@ public class InterviewService {
     public List<InterviewResponse> getAllInterviewsByUserId(String authorization) {
         UserResponse user = authServerClient.getUser(authorization);
 
-        return interviewRepository.findAllByUserId(user.getId());
+        return interviewRepository.findAllByUserId(user.getId()).stream()
+                .map(interview -> InterviewResponse.from(interview, personaIdsOf(interview)))
+                .toList();
     }
 
     public InterviewResponse getInterviewById(Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
         assert interview != null;
-        return InterviewResponse.from(interview);
+        return InterviewResponse.from(interview, personaIdsOf(interview));
+    }
+
+    /** N:1 면접관 목록. 1:1은 interview.personaId 하나로 끝나므로 조회하지 않는다. */
+    private List<Long> personaIdsOf(InterviewEntity interview) {
+        if (interview.getMode() != InterviewMode.MULTI) {
+            return List.of();
+        }
+        return interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(interview.getInterviewId())
+                .stream()
+                .map(InterviewPersonaEntity::getPersonaId)
+                .toList();
     }
 
     public ChatInterviewAllResponse getChatInterview(Long interviewId) {

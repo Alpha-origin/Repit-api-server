@@ -33,7 +33,8 @@ public class AnswerEntity {
     @Column(nullable = false)
     private int responseTime;
 
-    @Column(nullable = false)
+    // 모의면접 답변은 길다. 255자로 자르면 그대로 피드백 품질이 깎인다.
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
     @CreationTimestamp
