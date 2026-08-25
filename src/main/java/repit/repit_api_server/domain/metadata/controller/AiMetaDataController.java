@@ -48,6 +48,16 @@ public class AiMetaDataController {
     @GetMapping("/subscribe/{jobId}")
     public SseEmitter subscribe(@PathVariable String jobId) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
+
+        // 콜백이 구독보다 먼저 도착했을 수 있다. 그때는 붙는 즉시 결과를 돌려주고 끝낸다.
+        // 되짚어주지 않으면 이미 끝난 작업을 구독한 클라이언트는 아무것도 받지 못한 채 타임아웃까지
+        // 매달려 있고, EventSource가 그때마다 다시 붙어 재연결만 반복한다.
+        CallbackSuccessResponse finished = aiMetaDataService.findFinished(jobId);
+        if (finished != null) {
+            sendCompletionEvent(emitter, jobId, finished);
+            return emitter;
+        }
+
         sseEmitterRepository.save(jobId, emitter);
 
         emitter.onCompletion(() -> sseEmitterRepository.remove(jobId));
@@ -160,9 +170,13 @@ public class AiMetaDataController {
     private void sendCompletionEvent(String jobId, CallbackSuccessResponse response) {
         SseEmitter emitter = sseEmitterRepository.get(jobId);
         if (emitter == null) {
+            // 아직 아무도 구독하지 않았다. 결과는 DB에 있으니 구독이 붙을 때 되짚어 보낸다.
             return;
         }
+        sendCompletionEvent(emitter, jobId, response);
+    }
 
+    private void sendCompletionEvent(SseEmitter emitter, String jobId, CallbackSuccessResponse response) {
         String eventName = "succeeded".equalsIgnoreCase(response.getStatus())
                 ? "question-generated"
                 : "question-generation-failed";
