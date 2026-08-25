@@ -26,11 +26,10 @@ public class PersonaEntity {
     @Column(name = "name", nullable = false,  unique = true)
     private String personaName;
 
-    // 직책. 기존 페르소나는 전부 기술 면접관이라 기본값이 TECH다.
+    // 직책. 기본값을 두지 않는다 — 안 채우고 저장하면 TECH로 묻히는 대신 NOT NULL로 걸린다.
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    @Builder.Default
-    private Role role = Role.TECH;
+    private Role role;
 
     // 기술 면접관의 세부 전공. 인사팀·CEO에게는 해당 값이 없어 비어 있다.
     @Enumerated(EnumType.STRING)

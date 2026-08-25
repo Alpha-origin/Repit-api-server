@@ -19,8 +19,12 @@ public class PersonaService {
     private final PersonaRepository personaRepository;
 
     public PersonaResponse createPersona(PersonaRequest request) {
-        // 직책을 안 보내던 기존 요청은 전부 기술 면접관이었다.
-        Role role = request.getRole() == null ? Role.TECH : request.getRole();
+        // 비어 있으면 TECH로 뭉개지 않고 거부한다. 조용히 기본값을 넣으면
+        // 인사·CEO 면접관이 기술 면접관으로 저장되고, 저장된 뒤에는 구분할 방법이 없다.
+        if (request.getRole() == null) {
+            throw BusinessException.unprocessable("면접관 직책(role)을 지정해주세요.");
+        }
+        Role role = request.getRole();
         // 전공은 기술 면접관에게만 있는 값이다. DB CHECK와 같은 규칙을 여기서 먼저 걸러 메시지를 남긴다.
         if (role == Role.TECH && request.getMajor() == null) {
             throw BusinessException.unprocessable("기술 면접관에게는 전공(major)이 필요합니다.");
