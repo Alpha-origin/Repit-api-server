@@ -5,7 +5,9 @@ import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest;
 import repit.repit_api_server.domain.userdata.persona.dto.response.PersonaResponse;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.global.exception.BusinessException;
 
 import java.util.List;
 
@@ -16,10 +18,26 @@ public class PersonaService {
     private final PersonaRepository personaRepository;
 
     public PersonaResponse createPersona(PersonaRequest request) {
+        // 직책과 난이도에는 기본값을 두지 않는다. 조용히 채워 넣으면 인사·CEO 면접관이
+        // 기술 면접관으로 저장되고, 저장된 뒤에는 무엇이 요청값이고 무엇이 기본값인지 구분할 방법이 없다.
+        if (request.getRole() == null) {
+            throw BusinessException.unprocessable("면접관 직책(role)을 지정해주세요.");
+        }
+        if (request.getLevel() == null) {
+            throw BusinessException.unprocessable("면접 난이도(level)를 지정해주세요.");
+        }
+        Role role = request.getRole();
+        // 전공은 기술 면접관에게만 있는 값이다. DB CHECK와 같은 규칙을 여기서 먼저 걸러 메시지를 남긴다.
+        if (role == Role.TECH && request.getMajor() == null) {
+            throw BusinessException.unprocessable("기술 면접관에게는 전공(major)이 필요합니다.");
+        }
+
         PersonaEntity persona = PersonaEntity.builder()
                 .personaName(request.getPersonaName())
+                .role(role)
                 .type(request.getType())
-                .major(request.getMajor())
+                .level(request.getLevel())
+                .major(role == Role.TECH ? request.getMajor() : null)
                 .career(request.getCareer())
                 .gender(request.getGender())
                 .build();

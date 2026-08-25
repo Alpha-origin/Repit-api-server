@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackPersonaEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStatus;
 
 import java.time.LocalDateTime;
@@ -34,10 +35,15 @@ public class FeedbackResponse {
     // 실패한 경우에만 채워진다.
     private String errorMessage;
 
+    // 면접관별 종합. N:1 면접에만 채워지고 1:1은 비어 있다.
+    private List<FeedbackPersonaResponse> personas;
+
     private List<FeedbackItemResponse> feedbacks;
     private LocalDateTime createdAt;
 
-    public static FeedbackResponse of(FeedbackEntity feedback, List<FeedbackItemEntity> items) {
+    public static FeedbackResponse of(FeedbackEntity feedback,
+                                      List<FeedbackPersonaEntity> personas,
+                                      List<FeedbackItemEntity> items) {
         return FeedbackResponse.builder()
                 .feedbackId(feedback.getFeedbackId())
                 .interviewId(feedback.getInterviewId())
@@ -53,6 +59,7 @@ public class FeedbackResponse {
                 .answeredCount(feedback.getAnsweredCount())
                 .questionCount(feedback.getQuestionCount())
                 .errorMessage(feedback.getErrorMessage())
+                .personas(personas.stream().map(FeedbackPersonaResponse::from).toList())
                 .feedbacks(items.stream().map(FeedbackItemResponse::from).toList())
                 .createdAt(feedback.getCreatedAt())
                 .build();

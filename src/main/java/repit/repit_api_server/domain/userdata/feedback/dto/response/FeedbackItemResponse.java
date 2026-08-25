@@ -14,6 +14,7 @@ import java.util.List;
 @AllArgsConstructor
 public class FeedbackItemResponse {
     private String questionId;
+    private Long personaId;
     private String questionContent;
     private String intention;
     private String userAnswer;
@@ -25,6 +26,7 @@ public class FeedbackItemResponse {
     public static FeedbackItemResponse from(FeedbackItemEntity item) {
         return FeedbackItemResponse.builder()
                 .questionId(item.getQuestionId())
+                .personaId(item.getPersonaId())
                 .questionContent(item.getQuestionContent())
                 .intention(item.getIntention())
                 .userAnswer(item.getUserAnswer())

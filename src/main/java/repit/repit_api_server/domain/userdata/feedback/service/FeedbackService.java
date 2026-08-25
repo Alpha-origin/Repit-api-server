@@ -12,8 +12,10 @@ import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcce
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackPersonaEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStatus;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRepository;
+import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackPersonaRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackRepository;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatAnswerResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewAllResponse;
@@ -48,6 +50,7 @@ public class FeedbackService {
 
     private final FeedbackRepository feedbackRepository;
     private final FeedbackItemRepository feedbackItemRepository;
+    private final FeedbackPersonaRepository feedbackPersonaRepository;
     private final InterviewRepository interviewRepository;
     private final ChatServerClient chatServerClient;
     private final AiServerClient aiServerClient;
@@ -238,10 +241,33 @@ public class FeedbackService {
                 return byJobId;
             }
         }
-        if (request.getSessionId() != null) {
-            return feedbackRepository.findTopBySessionIdOrderByCreatedAtDesc(request.getSessionId()).orElse(null);
+        if (request.getSessionId() == null) {
+            return null;
         }
-        return null;
+
+        FeedbackEntity bySession =
+                feedbackRepository.findTopBySessionIdOrderByCreatedAtDesc(request.getSessionId()).orElse(null);
+        if (bySession != null) {
+            return bySession;
+        }
+        return createFromSession(request.getSessionId());
+    }
+
+    /**
+     * N:1 면접은 채팅 서버가 면접 종료 시점에 분석 서버를 직접 호출한다.
+     * 이 서버는 요청을 접수한 적이 없어 대응하는 행이 없으므로, 세션으로 면접을 찾아 그때 만든다.
+     */
+    private FeedbackEntity createFromSession(String sessionId) {
+        InterviewEntity interview = interviewRepository.findBySessionId(sessionId).orElse(null);
+        if (interview == null) {
+            return null;
+        }
+        return feedbackRepository.save(FeedbackEntity.builder()
+                .interviewId(interview.getInterviewId())
+                .userId(interview.getUserId())
+                .sessionId(sessionId)
+                .status(FeedbackStatus.PENDING)
+                .build());
     }
 
     private void applySuccess(FeedbackEntity feedback, FeedbackCallbackRequest.Result result) {
@@ -261,8 +287,11 @@ public class FeedbackService {
         feedback.setErrorStatusCode(null);
         feedback.setErrorMessage(null);
 
-        // 콜백이 재전송되어도 문항이 중복되지 않도록 기존 것을 지우고 다시 넣는다.
+        // 콜백이 재전송되어도 문항·면접관이 중복되지 않도록 기존 것을 지우고 다시 넣는다.
+        feedbackPersonaRepository.deleteAllByFeedbackId(feedback.getFeedbackId());
         feedbackItemRepository.deleteAllByFeedbackId(feedback.getFeedbackId());
+
+        savePersonas(feedback, result.getPersonas());
 
         List<FeedbackCallbackRequest.Item> items = result.getFeedbacks() == null ? List.of() : result.getFeedbacks();
         List<FeedbackItemEntity> entities = new ArrayList<>();
@@ -272,6 +301,7 @@ public class FeedbackService {
                     .feedbackId(feedback.getFeedbackId())
                     .questionId(Objects.toString(item.getQuestionId(), ""))
                     .sortOrder(i)
+                    .personaId(item.getPersonaId())
                     .questionContent(item.getQuestionContent())
                     .intention(item.getIntention())
                     .userAnswer(item.getUserAnswer())
@@ -282,6 +312,31 @@ public class FeedbackService {
                     .build());
         }
         feedbackItemRepository.saveAll(entities);
+    }
+
+    /** 1:1 콜백에는 personas가 없다. 없으면 아무것도 저장하지 않는다. */
+    private void savePersonas(FeedbackEntity feedback, List<FeedbackCallbackRequest.Persona> personas) {
+        if (personas == null || personas.isEmpty()) {
+            return;
+        }
+
+        List<FeedbackPersonaEntity> entities = new ArrayList<>();
+        for (int i = 0; i < personas.size(); i++) {
+            FeedbackCallbackRequest.Persona persona = personas.get(i);
+            entities.add(FeedbackPersonaEntity.builder()
+                    .feedbackId(feedback.getFeedbackId())
+                    .personaId(persona.getPersonaId())
+                    .personaRole(persona.getPersonaRole())
+                    .sortOrder(i)
+                    .score(persona.getScore())
+                    .comment(persona.getComment())
+                    .strengths(persona.getStrengths())
+                    .improvements(persona.getImprovements())
+                    .answeredCount(persona.getAnsweredCount())
+                    .questionCount(persona.getQuestionCount())
+                    .build());
+        }
+        feedbackPersonaRepository.saveAll(entities);
     }
 
     private void applyFailure(FeedbackEntity feedback, FeedbackCallbackRequest.Error error) {
@@ -303,9 +358,11 @@ public class FeedbackService {
         // 폴링하는 클라이언트가 PENDING에 갇히지 않도록 조회 시점에도 판정한다.
         expireIfTimedOut(feedback);
 
+        List<FeedbackPersonaEntity> personas =
+                feedbackPersonaRepository.findAllByFeedbackIdOrderBySortOrderAsc(feedback.getFeedbackId());
         List<FeedbackItemEntity> items =
                 feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(feedback.getFeedbackId());
 
-        return FeedbackResponse.of(feedback, items);
+        return FeedbackResponse.of(feedback, personas, items);
     }
 }

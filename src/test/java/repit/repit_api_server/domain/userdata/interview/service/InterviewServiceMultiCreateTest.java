@@ -3,6 +3,8 @@ package repit.repit_api_server.domain.userdata.interview.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -12,11 +14,14 @@ import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository
 import repit.repit_api_server.domain.userdata.interview.dto.request.CreateInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
@@ -26,20 +31,21 @@ import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.response.UserResponse;
 
-import java.util.Optional;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyIterable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 면접이 고르는 것은 페르소나 하나다. id 우선, 이름 폴백이 지켜지는지 확인한다. */
+/** N:1 면접은 기술·인사·CEO 한 명씩이고, 진행 순서는 요청 순서가 아니라 직책 순서다. */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
-class InterviewServiceCreateTest {
+class InterviewServiceMultiCreateTest {
 
     @Mock
     private InterviewRepository interviewRepository;
@@ -58,6 +64,9 @@ class InterviewServiceCreateTest {
     @Mock
     private InterviewPersonaRepository interviewPersonaRepository;
 
+    @Captor
+    private ArgumentCaptor<List<InterviewPersonaEntity>> savedMembers;
+
     private InterviewService service;
 
     @BeforeEach
@@ -70,70 +79,93 @@ class InterviewServiceCreateTest {
         when(user.getId()).thenReturn(7L);
         when(authServerClient.getUser("Bearer t")).thenReturn(user);
 
-        when(personaRepository.findById(1L)).thenReturn(Optional.of(persona()));
-        when(personaRepository.findByPersonaName("압박 면접관")).thenReturn(Optional.of(persona()));
-        when(interviewRepository.save(any(InterviewEntity.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(interviewRepository.save(any(InterviewEntity.class))).thenAnswer(invocation -> {
+            InterviewEntity interview = invocation.getArgument(0);
+            interview.setInterviewId(3L);
+            return interview;
+        });
     }
 
-    private PersonaEntity persona() {
+    private PersonaEntity persona(long id, Role role) {
         return PersonaEntity.builder()
-                .personaId(1L)
-                .personaName("압박 면접관")
-                .major(Major.BACKEND)
-                .type(Type.STRESS)
-                .career(10)
-                .gender(Gender.MALE)
+                .personaId(id)
+                .personaName("면접관 " + id)
+                .role(role)
+                .major(role == Role.TECH ? Major.BACKEND : null)
+                .type(Type.NEUTRAL)
+                .career(8)
+                .gender(Gender.FEMALE)
                 .build();
     }
 
     @Test
-    void personaId가_있으면_이름은_보지_않는다() {
-        InterviewResponse response = service.createInterview("Bearer t",
-                new CreateInterviewRequest(1L, "무시되는 이름", null));
+    void 면접관은_직책_순서로_배치된다() {
+        // 요청은 CEO -> 기술 -> 인사 순서로 왔다.
+        when(personaRepository.findAllById(List.of(13L, 11L, 12L))).thenReturn(List.of(
+                persona(13L, Role.CEO), persona(11L, Role.TECH), persona(12L, Role.HR)));
 
-        assertThat(response.getPersonaId()).isEqualTo(1L);
-        assertThat(response.getUserId()).isEqualTo(7L);
-        verify(personaRepository, never()).findByPersonaName(any());
+        InterviewResponse response = service.createInterview("Bearer t",
+                new CreateInterviewRequest(null, null, List.of(13L, 11L, 12L)));
+
+        assertThat(response.getMode()).isEqualTo(InterviewMode.MULTI);
+        // 면접관이 여럿이라 단일 personaId는 비워 둔다.
+        assertThat(response.getPersonaId()).isNull();
+        assertThat(response.getPersonaIds()).containsExactly(11L, 12L, 13L);
+
+        verify(interviewPersonaRepository).saveAll(savedMembers.capture());
+        assertThat(savedMembers.getValue()).extracting(InterviewPersonaEntity::getPersonaId)
+                .containsExactly(11L, 12L, 13L);
+        assertThat(savedMembers.getValue()).extracting(InterviewPersonaEntity::getPersonaOrder)
+                .containsExactly(0, 1, 2);
+        assertThat(savedMembers.getValue().getFirst().getInterviewId()).isEqualTo(3L);
     }
 
     @Test
-    void personaId가_없으면_이름으로_찾는다() {
-        InterviewResponse response = service.createInterview("Bearer t",
-                new CreateInterviewRequest(null, "압박 면접관", null));
+    void 직책이_빠지면_422다() {
+        when(personaRepository.findAllById(List.of(11L, 12L))).thenReturn(List.of(
+                persona(11L, Role.TECH), persona(12L, Role.HR)));
 
-        assertThat(response.getPersonaId()).isEqualTo(1L);
-        verify(personaRepository).findByPersonaName("압박 면접관");
-    }
-
-    @Test
-    void 페르소나를_아예_지정하지_않으면_422다() {
         assertThatThrownBy(() -> service.createInterview("Bearer t",
-                new CreateInterviewRequest(null, "  ", null)))
+                new CreateInterviewRequest(null, null, List.of(11L, 12L))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+
+        verify(interviewRepository, never()).save(any());
+    }
+
+    @Test
+    void 같은_직책이_둘이면_422다() {
+        when(personaRepository.findAllById(List.of(11L, 14L, 12L))).thenReturn(List.of(
+                persona(11L, Role.TECH), persona(14L, Role.TECH), persona(12L, Role.HR)));
+
+        assertThatThrownBy(() -> service.createInterview("Bearer t",
+                new CreateInterviewRequest(null, null, List.of(11L, 14L, 12L))))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     }
 
     @Test
-    void 없는_페르소나를_지정하면_404다() {
-        when(personaRepository.findByPersonaName("없는 면접관")).thenReturn(Optional.empty());
-
+    void 같은_면접관을_두_번_지정하면_422다() {
         assertThatThrownBy(() -> service.createInterview("Bearer t",
-                new CreateInterviewRequest(null, "없는 면접관", null)))
+                new CreateInterviewRequest(null, null, List.of(11L, 11L, 12L))))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
-                .isEqualTo(HttpStatus.NOT_FOUND);
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+
+        verify(personaRepository, never()).findAllById(anyIterable());
     }
 
     @Test
-    void 사용자를_확인할_수_없으면_401이다() {
-        when(authServerClient.getUser("Bearer bad")).thenReturn(null);
+    void 없는_면접관을_지정하면_404다() {
+        when(personaRepository.findAllById(List.of(11L, 12L, 99L))).thenReturn(List.of(
+                persona(11L, Role.TECH), persona(12L, Role.HR)));
 
-        assertThatThrownBy(() -> service.createInterview("Bearer bad",
-                new CreateInterviewRequest(1L, null, null)))
+        assertThatThrownBy(() -> service.createInterview("Bearer t",
+                new CreateInterviewRequest(null, null, List.of(11L, 12L, 99L))))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
-                .isEqualTo(HttpStatus.UNAUTHORIZED);
+                .isEqualTo(HttpStatus.NOT_FOUND);
     }
 }

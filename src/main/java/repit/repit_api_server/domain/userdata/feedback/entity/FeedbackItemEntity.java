@@ -31,6 +31,9 @@ public class FeedbackItemEntity {
     @Column(nullable = false)
     private Integer sortOrder;
 
+    // 이 질문을 던진 면접관. 1:1 피드백에는 값이 없다.
+    private Long personaId;
+
     @Column(columnDefinition = "TEXT")
     private String questionContent;
 

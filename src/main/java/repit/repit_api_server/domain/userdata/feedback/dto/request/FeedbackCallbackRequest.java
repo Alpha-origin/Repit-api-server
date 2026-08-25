@@ -25,6 +25,8 @@ public class FeedbackCallbackRequest {
     @AllArgsConstructor
     public static class Result {
         private Overall overall;
+        // N:1 면접에만 실린다. 1:1 콜백에는 없다.
+        private List<Persona> personas;
         private List<Item> feedbacks;
     }
 
@@ -43,11 +45,28 @@ public class FeedbackCallbackRequest {
         private Integer questionCount;
     }
 
+    /** 면접관별 종합. 문항이 2~3개뿐이라 점수는 하나만 온다. */
+    @Getter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Persona {
+        private Long personaId;
+        private String personaRole;
+        private Integer score;
+        private String comment;
+        private List<String> strengths;
+        private List<String> improvements;
+        private Integer answeredCount;
+        private Integer questionCount;
+    }
+
     @Getter
     @NoArgsConstructor
     @AllArgsConstructor
     public static class Item {
         private String questionId;
+        // N:1에서 이 질문을 던진 면접관. 1:1 콜백에는 없다.
+        private Long personaId;
         private String questionContent;
         private String intention;
         private String userAnswer;

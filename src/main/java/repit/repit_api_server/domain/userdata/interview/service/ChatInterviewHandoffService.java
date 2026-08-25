@@ -55,6 +55,7 @@ public class ChatInterviewHandoffService {
                 .personaName(persona.getPersonaName())
                 .major(persona.getMajor())
                 .type(persona.getType())
+                .level(persona.getLevel())
                 .career(persona.getCareer())
                 .gender(persona.getGender())
                 .build();

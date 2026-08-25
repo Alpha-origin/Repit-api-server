@@ -29,6 +29,9 @@ public class QuestionEntity {
     @Column()
     private Long parentId;
 
+    // 이 질문을 던진 면접관. 1:1은 면접관이 하나뿐이라 비어 있다.
+    private Long personaId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Type type;
