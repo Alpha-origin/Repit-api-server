@@ -11,6 +11,7 @@ import repit.repit_api_server.domain.metadata.dto.response.ResultResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.global.exception.BusinessException;
 
 @Service
 @RequiredArgsConstructor
@@ -20,6 +21,7 @@ public class AiMetaDataService {
 
     private static final String STATUS_SUCCEEDED = "succeeded";
     private static final String STATUS_FAILED = "failed";
+    private static final String STATUS_PENDING = "pending";
 
     private final AnalysisDataRepository analysisDataRepository;
 
@@ -99,7 +101,7 @@ public class AiMetaDataService {
                 .filter(data -> data.getStatus() != AnalysisStatus.PENDING)
                 .map(data -> CallbackSuccessResponse.builder()
                         .job_id(data.getJobId())
-                        .status(data.getStatus() == AnalysisStatus.SUCCEEDED ? STATUS_SUCCEEDED : STATUS_FAILED)
+                        .status(statusName(data.getStatus()))
                         .result(data.getResult())
                         .error(toError(data))
                         .build())
@@ -127,10 +129,35 @@ public class AiMetaDataService {
      * 저장된 분석 결과를 원형 그대로 돌려준다.
      * 면접에 쓸 질문은 재작성이 끝나는 시점에 이 서버가 채팅 서버로 직접 넘기므로,
      * 여기서 재작성본을 끼워넣지 않는다.
+     *
+     * <p>모르는 jobId를 빈 결과로 돌려주지 않는다. 그러면 호출자는 "아직 끝나지 않은 분석"과
+     * "존재하지 않는 작업"을 똑같은 {@code result: null}로 받아, 잘못된 jobId로 조회하고 있다는
+     * 사실을 알 수 없다. 아직 결과가 없는 경우도 상태를 함께 실어 이유가 드러나게 한다.
      */
+    @Transactional(readOnly = true)
     public ResultResponse getResult(String jobId) {
-        return new ResultResponse(analysisDataRepository.findById(jobId)
-                .map(AnalysisDataEntity::getResult)
-                .orElse(null));
+        AnalysisDataEntity data = analysisDataRepository.findById(jobId)
+                .orElseThrow(() -> BusinessException.notFound("분석 결과를 찾을 수 없습니다. jobId=" + jobId));
+
+        if (data.getResult() == null) {
+            log.warn("결과가 아직 없는 분석을 조회했습니다. jobId={}, status={}", jobId, data.getStatus());
+        }
+
+        return ResultResponse.builder()
+                .jobId(data.getJobId())
+                .status(statusName(data.getStatus()))
+                .result(data.getResult())
+                .error(toError(data))
+                .build();
+    }
+
+    private String statusName(AnalysisStatus status) {
+        if (status == AnalysisStatus.SUCCEEDED) {
+            return STATUS_SUCCEEDED;
+        }
+        if (status == AnalysisStatus.FAILED) {
+            return STATUS_FAILED;
+        }
+        return STATUS_PENDING;
     }
 }

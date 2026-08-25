@@ -9,6 +9,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
+import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.userdata.interview.dto.request.ChatInterviewPrepareRequest;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
@@ -23,11 +25,16 @@ import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQues
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
 import repit.repit_api_server.global.client.ChatServerClient;
+import repit.repit_api_server.global.exception.BusinessException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,6 +48,8 @@ class ChatInterviewHandoffServiceTest {
     @Mock
     private PersonaRepository personaRepository;
     @Mock
+    private AnalysisDataRepository analysisDataRepository;
+    @Mock
     private ChatServerClient chatServerClient;
 
     @Captor
@@ -50,7 +59,8 @@ class ChatInterviewHandoffServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ChatInterviewHandoffService(interviewRepository, personaRepository, chatServerClient);
+        service = new ChatInterviewHandoffService(
+                interviewRepository, personaRepository, analysisDataRepository, chatServerClient);
 
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()
                 .interviewId(3L)
@@ -120,6 +130,41 @@ class ChatInterviewHandoffServiceTest {
         assertThat(question.getOriginalQuestion()).isEqualTo("왜 Redis 를 썼나요?");
         assertThat(question.getExpectedAnswer()).isEqualTo("선택 근거와 대안 비교");
         assertThat(question.getBasedOn()).containsExactly("order-api/src/cache.py");
+    }
+
+    /** 분석 jobId 없이 넘기면 채팅 서버의 결과 조회가 통째로 result: null이 된다. */
+    @Test
+    void 분석_jobId가_비어있으면_최근_분석으로_채워_넘긴다() {
+        when(analysisDataRepository.findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(7L))
+                .thenReturn(Optional.of(AnalysisDataEntity.builder()
+                        .jobId("analysis-latest")
+                        .userId(7L)
+                        .result(Map.of("interview", List.of()))
+                        .build()));
+
+        QuestionTailorEntity tailor = tailor(true);
+        tailor.setAnalysisJobId(null);
+
+        service.deliver(tailor);
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        assertThat(sentRequest.getValue().getJobId()).isEqualTo("analysis-latest");
+        // 다음 전달에서 다시 찾지 않도록 재작성 건에도 남긴다.
+        assertThat(tailor.getAnalysisJobId()).isEqualTo("analysis-latest");
+    }
+
+    @Test
+    void 채울_분석조차_없으면_빈_jobId로_넘기지_않는다() {
+        when(analysisDataRepository.findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(7L))
+                .thenReturn(Optional.empty());
+
+        QuestionTailorEntity tailor = tailor(true);
+        tailor.setAnalysisJobId("  ");
+
+        assertThatThrownBy(() -> service.deliver(tailor))
+                .isInstanceOf(BusinessException.class);
+
+        verify(chatServerClient, never()).prepareInterview(any());
     }
 
     @Test

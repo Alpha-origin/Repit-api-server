@@ -1,7 +1,11 @@
 package repit.repit_api_server.domain.userdata.interview.service;
 
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
+import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.userdata.interview.dto.request.ChatInterviewPrepareRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
@@ -27,8 +31,11 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ChatInterviewHandoffService {
 
+    private static final Logger log = LoggerFactory.getLogger(ChatInterviewHandoffService.class);
+
     private final InterviewRepository interviewRepository;
     private final PersonaRepository personaRepository;
+    private final AnalysisDataRepository analysisDataRepository;
     private final ChatServerClient chatServerClient;
 
     public ChatInterviewResponse deliver(QuestionTailorEntity tailor) {
@@ -42,11 +49,41 @@ public class ChatInterviewHandoffService {
                 .interviewId(interview.getInterviewId())
                 .userId(interview.getUserId())
                 .status(interview.getStatus())
-                .jobId(tailor.getAnalysisJobId())
+                .jobId(resolveAnalysisJobId(tailor))
                 .persona(toPersona(persona))
                 .tailored(Boolean.TRUE.equals(tailor.getTailored()))
                 .questions(toQuestions(tailor))
                 .build());
+    }
+
+    /**
+     * 채팅 서버가 분석 결과를 되찾는 유일한 키다. 이 값이 비면 채팅 서버의 결과 조회가 통째로
+     * 빈손(result = null)이 되므로, 넘기기 전에 반드시 채워둔다.
+     *
+     * <p>analysis_job_id 컬럼이 생기기 전에 만들어진 재작성 건에는 이 값이 없다. 그런 건도
+     * 면접 시작을 다시 누르면 그대로 채팅 서버로 넘어가므로, 사용자의 가장 최근 완료 분석으로
+     * 메워 넣는다. 원질문 자체가 그 분석에서 나왔으니 같은 작업을 가리킨다.
+     *
+     * <p>메울 것조차 없으면 빈 jobId로 넘기지 않고 전달을 멈춘다. 넘겨봐야 채팅 서버가
+     * 결과를 못 찾고, 그 실패는 이쪽 로그에 남지 않아 원인을 좇을 수 없다.
+     */
+    private String resolveAnalysisJobId(QuestionTailorEntity tailor) {
+        String analysisJobId = tailor.getAnalysisJobId();
+        if (analysisJobId != null && !analysisJobId.isBlank()) {
+            return analysisJobId;
+        }
+
+        String recovered = analysisDataRepository
+                .findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(tailor.getUserId())
+                .map(AnalysisDataEntity::getJobId)
+                .orElseThrow(() -> BusinessException.unprocessable(
+                        "채팅 서버에 넘길 분석 작업을 찾을 수 없습니다. 포트폴리오 분석을 먼저 진행해주세요."));
+
+        log.warn("재작성 건에 분석 작업 id가 없어 최근 분석으로 채웁니다. tailorId={}, interviewId={}, jobId={}",
+                tailor.getTailorId(), tailor.getInterviewId(), recovered);
+        // 호출자가 전달 결과와 함께 저장한다. 다음 전달부터는 이 값을 그대로 쓴다.
+        tailor.setAnalysisJobId(recovered);
+        return recovered;
     }
 
     private ChatInterviewPrepareRequest.Persona toPersona(PersonaEntity persona) {
