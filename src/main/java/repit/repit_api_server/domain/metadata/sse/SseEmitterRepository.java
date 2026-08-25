@@ -10,16 +10,28 @@ import java.util.concurrent.ConcurrentMap;
 public class SseEmitterRepository {
     private final ConcurrentMap<String, SseEmitter> emitters = new ConcurrentHashMap<>();
 
+    /**
+     * 구독을 등록하고, 같은 작업에 이미 붙어 있던 구독이 있으면 그것을 돌려준다.
+     * 밀려난 구독은 흘려보낼 곳이 없으니 호출자가 끊어준다.
+     */
     public SseEmitter save(String jobId, SseEmitter emitter) {
-        emitters.put(jobId, emitter);
-        return emitter;
+        return emitters.put(jobId, emitter);
     }
 
     public SseEmitter get(String jobId) {
         return emitters.get(jobId);
     }
 
-    public void remove(String jobId) {
-        emitters.remove(jobId);
+    /**
+     * 자기 자신이 등록돼 있을 때만 걷어내고, 걷어냈는지를 돌려준다.
+     *
+     * <p>jobId만 보고 지우면 뒤늦게 끝난 예전 구독의 정리 콜백이 방금 붙은 구독을 밀어내,
+     * 정작 콜백이 도착했을 때 흘려보낼 곳이 사라진다.
+     *
+     * <p>돌려주는 값은 "이 구독을 내가 차지했다"는 표시이기도 하다. 콜백과 구독 시점 되짚기가
+     * 겹쳐도 먼저 걷어낸 쪽만 이벤트를 보내면 같은 연결에 두 번 쓰는 일이 없다.
+     */
+    public boolean remove(String jobId, SseEmitter emitter) {
+        return emitters.remove(jobId, emitter);
     }
 }
