@@ -15,6 +15,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
@@ -63,6 +64,7 @@ class ChatInterviewHandoffServiceTest {
                 .personaName("압박 면접관")
                 .major(Major.BACKEND)
                 .type(Type.STRESS)
+                .level(Level.HARD)
                 .career(10)
                 .gender(Gender.MALE)
                 .build()));
@@ -108,6 +110,8 @@ class ChatInterviewHandoffServiceTest {
 
         assertThat(sent.getPersona().getPersonaName()).isEqualTo("압박 면접관");
         assertThat(sent.getPersona().getType()).isEqualTo(Type.STRESS);
+        // 난이도를 안 넘기면 채팅 서버가 꼬리질문 깊이를 판단할 근거가 없다.
+        assertThat(sent.getPersona().getLevel()).isEqualTo(Level.HARD);
         assertThat(sent.getPersona().getCareer()).isEqualTo(10);
 
         ChatInterviewPrepareRequest.Question question = sent.getQuestions().getFirst();

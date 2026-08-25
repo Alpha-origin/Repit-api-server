@@ -6,6 +6,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 
@@ -41,6 +42,8 @@ public class ChatInterviewPrepareRequest {
         private String personaName;
         private Major major;
         private Type type;
+        // 난이도. 채팅 서버가 꼬리질문을 얼마나 깊게 파고들지 정할 때 쓴다.
+        private Level level;
         private int career;
         private Gender gender;
     }
