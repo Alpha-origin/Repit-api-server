@@ -23,6 +23,8 @@ import repit.repit_api_server.domain.userdata.interview.dto.response.ChatIntervi
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatQuestionResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
@@ -52,6 +54,7 @@ public class FeedbackService {
     private final FeedbackItemRepository feedbackItemRepository;
     private final FeedbackPersonaRepository feedbackPersonaRepository;
     private final InterviewRepository interviewRepository;
+    private final PersonaRepository personaRepository;
     private final ChatServerClient chatServerClient;
     private final AiServerClient aiServerClient;
     private final AuthServerClient authServerClient;
@@ -120,7 +123,9 @@ public class FeedbackService {
             ChatAnswerResponse answer = qnA.getAnswer();
             if (answer != null) {
                 answers.add(FeedbackSoloRequest.Answer.builder()
-                        .answerId(String.valueOf(answer.getAnswerId()))
+                        // 채팅 서버는 답변에 번호를 매기지 않는다. 분석 서버는 값을 요구하지만
+                        // 채점은 questionId로만 맞추므로 질문 번호를 그대로 쓴다.
+                        .answerId(String.valueOf(question.getQuestionId()))
                         .questionId(String.valueOf(question.getQuestionId()))
                         .content(answer.getAnswerContent())
                         .createdAt(toUtc(answer.getAnswerCreatedAt()))
@@ -143,7 +148,7 @@ public class FeedbackService {
                 .sessionId(interview.getSessionId())
                 .interviewId(String.valueOf(interview.getInterviewId()))
                 .userId(String.valueOf(interview.getUserId()))
-                .personaType(chatInterview.getPersonaType() == null ? null : chatInterview.getPersonaType().name())
+                .personaType(personaTypeOf(interview))
                 .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
                 .questions(questions)
                 .answers(answers)
@@ -201,12 +206,31 @@ public class FeedbackService {
         }
     }
 
-    // 채팅 서버는 오프셋이 붙은 시각을 주므로 같은 순간을 UTC 표기로만 바꿔서 분석 서버에 넘긴다.
-    private OffsetDateTime toUtc(OffsetDateTime createdAt) {
+    /**
+     * 면접관 성향. 채팅 서버는 이 값을 모른다 — 면접을 열 때 넘기지 않으므로 돌려받을 수도 없다.
+     * 우리 DB가 원본이라 여기서 직접 읽는다.
+     *
+     * <p>N:1 면접은 면접관이 여럿이라 interview.personaId가 비어 있다. 그때는 성향 없이 보낸다.
+     */
+    private String personaTypeOf(InterviewEntity interview) {
+        if (interview.getPersonaId() == null) {
+            return null;
+        }
+        return personaRepository.findById(interview.getPersonaId())
+                .map(PersonaEntity::getType)
+                .map(Enum::name)
+                .orElse(null);
+    }
+
+    /**
+     * 채팅 서버는 오프셋 없는 시각을 준다. 두 서버 모두 컨테이너에 TZ를 두지 않아 JVM 기본
+     * 시간대가 UTC이므로 그대로 UTC로 읽는다. 한쪽 배포에 TZ가 붙으면 여기서부터 어긋난다.
+     */
+    private OffsetDateTime toUtc(LocalDateTime createdAt) {
         if (createdAt == null) {
             return null;
         }
-        return createdAt.withOffsetSameInstant(ZoneOffset.UTC);
+        return createdAt.atOffset(ZoneOffset.UTC);
     }
 
     /**
