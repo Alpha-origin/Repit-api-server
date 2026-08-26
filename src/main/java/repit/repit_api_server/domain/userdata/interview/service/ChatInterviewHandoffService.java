@@ -1,25 +1,17 @@
 package repit.repit_api_server.domain.userdata.interview.service;
 
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
-import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.userdata.interview.dto.request.ChatInterviewPrepareRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
-import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
-import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQuestionResponse;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 질문 재작성이 끝난 뒤, DB에 모인 면접 데이터를 채팅 서버로 넘긴다.
@@ -31,78 +23,44 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ChatInterviewHandoffService {
 
-    private static final Logger log = LoggerFactory.getLogger(ChatInterviewHandoffService.class);
-
     private final InterviewRepository interviewRepository;
-    private final PersonaRepository personaRepository;
-    private final AnalysisDataRepository analysisDataRepository;
     private final ChatServerClient chatServerClient;
 
     public ChatInterviewResponse deliver(QuestionTailorEntity tailor) {
         InterviewEntity interview = interviewRepository.findById(tailor.getInterviewId())
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
-        PersonaEntity persona = personaRepository.findById(interview.getPersonaId())
-                .orElseThrow(() -> BusinessException.notFound("페르소나가 없습니다"));
 
         return chatServerClient.prepareInterview(ChatInterviewPrepareRequest.builder()
                 .sessionId(interview.getSessionId())
                 .interviewId(interview.getInterviewId())
                 .userId(interview.getUserId())
                 .status(interview.getStatus())
-                .jobId(resolveAnalysisJobId(tailor))
-                .persona(toPersona(persona))
-                .tailored(Boolean.TRUE.equals(tailor.getTailored()))
-                .questions(toQuestions(tailor))
+                .questions(toQuestions(tailor, personaIdOf(interview)))
                 .build());
     }
 
     /**
-     * 채팅 서버가 분석 결과를 되찾는 유일한 키다. 이 값이 비면 채팅 서버의 결과 조회가 통째로
-     * 빈손(result = null)이 되므로, 넘기기 전에 반드시 채워둔다.
+     * 질문을 던질 면접관. 채팅 서버는 질문마다 이 값을 필수로 받는다.
      *
-     * <p>analysis_job_id 컬럼이 생기기 전에 만들어진 재작성 건에는 이 값이 없다. 그런 건도
-     * 면접 시작을 다시 누르면 그대로 채팅 서버로 넘어가므로, 사용자의 가장 최근 완료 분석으로
-     * 메워 넣는다. 원질문 자체가 그 분석에서 나왔으니 같은 작업을 가리킨다.
-     *
-     * <p>메울 것조차 없으면 빈 jobId로 넘기지 않고 전달을 멈춘다. 넘겨봐야 채팅 서버가
-     * 결과를 못 찾고, 그 실패는 이쪽 로그에 남지 않아 원인을 좇을 수 없다.
+     * <p>N:1 면접은 면접관이 여럿이라 {@code interview.persona_id}가 비어 있다. 그대로 넘기면
+     * 채팅 서버가 본문을 통째로 반려하고, 그 실패는 여기 로그에 이유 없이 남는다. 어느 면접관의
+     * 질문인지 가릴 수 있게 되기 전까지는 넘기기 전에 막는다.
      */
-    private String resolveAnalysisJobId(QuestionTailorEntity tailor) {
-        String analysisJobId = tailor.getAnalysisJobId();
-        if (analysisJobId != null && !analysisJobId.isBlank()) {
-            return analysisJobId;
+    private Long personaIdOf(InterviewEntity interview) {
+        Long personaId = interview.getPersonaId();
+        if (personaId == null) {
+            throw BusinessException.unprocessable("면접에 면접관이 지정되어 있지 않습니다.");
         }
-
-        String recovered = analysisDataRepository
-                .findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(tailor.getUserId())
-                .map(AnalysisDataEntity::getJobId)
-                .orElseThrow(() -> BusinessException.unprocessable(
-                        "채팅 서버에 넘길 분석 작업을 찾을 수 없습니다. 포트폴리오 분석을 먼저 진행해주세요."));
-
-        log.warn("재작성 건에 분석 작업 id가 없어 최근 분석으로 채웁니다. tailorId={}, interviewId={}, jobId={}",
-                tailor.getTailorId(), tailor.getInterviewId(), recovered);
-        // 호출자가 전달 결과와 함께 저장한다. 다음 전달부터는 이 값을 그대로 쓴다.
-        tailor.setAnalysisJobId(recovered);
-        return recovered;
-    }
-
-    private ChatInterviewPrepareRequest.Persona toPersona(PersonaEntity persona) {
-        return ChatInterviewPrepareRequest.Persona.builder()
-                .personaId(persona.getPersonaId())
-                .personaName(persona.getPersonaName())
-                .major(persona.getMajor())
-                .type(persona.getType())
-                .level(persona.getLevel())
-                .career(persona.getCareer())
-                .gender(persona.getGender())
-                .build();
+        return personaId;
     }
 
     /**
-     * 최종 질문에 원질문 본문을 짝지어 넘긴다.
-     * 폴백이면 두 값이 같지만, 채팅 서버가 분기하지 않도록 형태는 항상 같게 유지한다.
+     * 면접에 실제로 쓸 질문만 넘긴다. 재작성이 실패한 건은 폴백으로 원질문이 들어와 있어
+     * 어느 쪽이든 같은 형태로 나간다.
+     *
+     * <p>id와 본문은 채팅 서버의 필수값이라, 하나라도 비면 반려당하기 전에 여기서 멈춘다.
      */
-    private List<ChatInterviewPrepareRequest.Question> toQuestions(QuestionTailorEntity tailor) {
+    private List<ChatInterviewPrepareRequest.Question> toQuestions(QuestionTailorEntity tailor, Long personaId) {
         List<TailoredQuestionResponse> finalQuestions = tailor.getQuestions() == null
                 ? tailor.getSourceQuestions()
                 : tailor.getQuestions();
@@ -110,22 +68,18 @@ public class ChatInterviewHandoffService {
             throw BusinessException.unprocessable("채팅 서버에 넘길 질문이 없습니다.");
         }
 
-        Map<Integer, String> originals = new HashMap<>();
-        if (tailor.getSourceQuestions() != null) {
-            for (TailoredQuestionResponse question : tailor.getSourceQuestions()) {
-                originals.put(question.getId(), question.getQuestion());
-            }
-        }
-
         return finalQuestions.stream()
-                .map(question -> ChatInterviewPrepareRequest.Question.builder()
-                        .id(question.getId())
-                        .category(question.getCategory())
-                        .question(question.getQuestion())
-                        .originalQuestion(originals.getOrDefault(question.getId(), question.getQuestion()))
-                        .expectedAnswer(question.getExpectedAnswer())
-                        .basedOn(question.getBasedOn())
-                        .build())
+                .map(question -> {
+                    if (question.getId() == null || question.getQuestion() == null || question.getQuestion().isBlank()) {
+                        throw BusinessException.unprocessable("채팅 서버에 넘길 수 없는 질문이 있습니다. id=" + question.getId());
+                    }
+                    return ChatInterviewPrepareRequest.Question.builder()
+                            .id(question.getId().longValue())
+                            .category(question.getCategory())
+                            .question(question.getQuestion())
+                            .personaId(personaId)
+                            .build();
+                })
                 .toList();
     }
 }

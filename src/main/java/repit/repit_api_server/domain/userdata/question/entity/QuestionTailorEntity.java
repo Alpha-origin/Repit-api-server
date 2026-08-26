@@ -16,7 +16,7 @@ import java.util.List;
  * 면접 시작 요청 한 건에 대응하는 질문 재작성 작업.
  * 콜백은 재작성된 본문만 돌려주므로, 나머지 필드를 복원하려면 요청에 실어보낸 원질문이 필요하다.
  * 그래서 원질문(sourceQuestions)과 면접에 쓸 최종 질문(questions)을 함께 남긴다.
- * 이 두 벌이 그대로 채팅 서버로 넘어간다.
+ * 이 중 최종 질문이 채팅 서버로 넘어간다.
  */
 @Entity
 @Table(name = "question_tailor")
@@ -41,7 +41,8 @@ public class QuestionTailorEntity {
     @Column(length = 64)
     private String jobId;
 
-    // 원질문이 나온 /generate 작업 id. 채팅 서버는 이 id로만 질문을 조회하므로 병합 키가 된다.
+    // 원질문이 나온 /generate 작업 id. 재작성본이 어느 분석에서 비롯됐는지 되짚는 데만 쓴다.
+    // 채팅 서버는 이 값을 받지 않는다.
     @Column(length = 64)
     private String analysisJobId;
 
