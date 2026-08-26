@@ -8,6 +8,7 @@ import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResp
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
+import repit.repit_api_server.global.exception.BusinessException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -43,8 +44,8 @@ public class QuestionService {
     }
 
     public List<QuestionResponse> getAllByInterview(Long interviewId) {
-        InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
-        assert interview != null;
+        InterviewEntity interview = interviewRepository.findById(interviewId)
+                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
         List<QuestionEntity> questions = questionRepository.findAllByInterviewId(interview.getInterviewId());
         return questions.stream()
                 .map(QuestionResponse::from)
