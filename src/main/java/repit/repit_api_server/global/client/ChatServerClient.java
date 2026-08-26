@@ -11,7 +11,7 @@ import repit.repit_api_server.domain.userdata.interview.dto.response.ChatIntervi
 @RequiredArgsConstructor
 public class ChatServerClient {
 
-    private static final String SERVER_NAME = "채팅";
+    public static final String SERVER_NAME = "채팅";
 
     private final ChatServerApi chatServerApi;
     private final ExternalApiExecutor executor;

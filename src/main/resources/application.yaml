@@ -16,10 +16,12 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    show-sql: true
+    # show-sql은 System.out으로 직접 찍혀 추적 id도 레벨도 붙지 않는다.
+    # 아래 logging.level.org.hibernate.SQL로 로거를 태워 다른 로그와 같은 흐름에서 읽는다.
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
 
   flyway:
     enabled: true
@@ -59,6 +61,17 @@ app:
   question-tailor:
     # 면접 시작 직전에 도는 작업이라 오래 기다릴 수 없다. 넘기면 원질문으로 면접을 연다.
     pending-timeout: 2m
+  http-logging:
+    enabled: true
+    # 본문까지 남긴다. 끄면 요청선과 상태 코드, 소요 시간만 남는다.
+    include-body: true
+    # 본문 한 건에서 남길 최대 글자 수. 넘치면 잘라내고 원본 크기를 덧붙인다.
+    max-body-length: 2000
+    exclude-path-patterns:
+      - /actuator/**
+      - /swagger-ui/**
+      - /v3/api-docs/**
+      - /favicon.ico
 
 management:
   endpoints:
@@ -68,3 +81,10 @@ management:
   endpoint:
     health:
       show-details: never
+
+logging:
+  level:
+    # 어떤 쿼리가 나갔는지까지 흐름에 포함시킨다. 소음이 크면 이 줄만 지우면 된다.
+    org.hibernate.SQL: debug
+    # 쿼리에 실제로 바인딩된 값까지 보려면 아래 주석을 푼다. 개인정보가 그대로 찍히니 운영에서는 끈다.
+    # org.hibernate.orm.jdbc.bind: trace

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- %clr(색), %wEx(스택트레이스) 같은 스프링 부트 전용 변환 규칙과 소음이 큰 로거의 기본 레벨을 가져온다. -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!--
+      로그 한 줄의 구성: 시각 | 레벨 | 추적 id | 클래스 | 메시지
+      추적 id는 RequestLoggingFilter가 요청마다 발급해 MDC에 넣는다.
+      같은 id를 세로로 훑으면 요청 진입부터 외부 서버 호출, 응답까지가 한 흐름으로 읽힌다.
+      요청 밖(스케줄러, 기동 로그)에서 남는 줄은 자리를 비워 정렬만 맞춘다.
+    -->
+    <property name="TRACED_LOG_PATTERN"
+              value="%clr(%d{HH:mm:ss.SSS}){faint} %clr(%-5p){} %clr([%-8X{traceId}]){magenta} %clr(%-40.40logger{0}){cyan} %clr(:){faint} %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${TRACED_LOG_PATTERN}</pattern>
+            <charset>${CONSOLE_LOG_CHARSET}</charset>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>
