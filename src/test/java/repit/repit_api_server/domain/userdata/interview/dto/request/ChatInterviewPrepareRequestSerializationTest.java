@@ -1,7 +1,7 @@
 package repit.repit_api_server.domain.userdata.interview.dto.request;
 
 import org.junit.jupiter.api.Test;
-import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.JsonNode;
 
@@ -23,26 +23,27 @@ class ChatInterviewPrepareRequestSerializationTest {
                 .sessionId("sess-1")
                 .interviewId(1L)
                 .userId(1L)
-                .personaId(1L)
-                .personaType(Type.STRESS)
+                .status(Status.IN_PROGRESS)
                 .questions(List.of(ChatInterviewPrepareRequest.Question.builder()
-                        .questionId(1L)
-                        .intention("선택 근거와 대안 비교")
-                        .content("왜 Redis 를 썼나요?")
+                        .id(1L)
+                        .category("선택 근거와 대안 비교")
+                        .question("왜 Redis 를 썼나요?")
+                        .personaId(9L)
                         .build()))
                 .build();
 
         JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(request));
 
         assertThat(json.propertyNames()).containsExactlyInAnyOrder(
-                "sessionId", "interviewId", "userId", "personaId", "personaType", "questions");
-        assertThat(json.get("personaType").asString()).isEqualTo("STRESS");
+                "sessionId", "interviewId", "userId", "status", "questions");
+        assertThat(json.get("status").asString()).isEqualTo("IN_PROGRESS");
 
         JsonNode question = json.get("questions").get(0);
         assertThat(question.propertyNames()).containsExactlyInAnyOrder(
-                "questionId", "intention", "content");
-        assertThat(question.get("questionId").asLong()).isEqualTo(1L);
-        assertThat(question.get("intention").asString()).isEqualTo("선택 근거와 대안 비교");
-        assertThat(question.get("content").asString()).isEqualTo("왜 Redis 를 썼나요?");
+                "id", "category", "question", "personaId");
+        assertThat(question.get("id").asLong()).isEqualTo(1L);
+        assertThat(question.get("category").asString()).isEqualTo("선택 근거와 대안 비교");
+        assertThat(question.get("question").asString()).isEqualTo("왜 Redis 를 썼나요?");
+        assertThat(question.get("personaId").asLong()).isEqualTo(9L);
     }
 }

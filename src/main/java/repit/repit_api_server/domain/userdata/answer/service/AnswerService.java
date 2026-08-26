@@ -12,6 +12,7 @@ import repit.repit_api_server.domain.userdata.question.repository.QuestionReposi
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.response.UserResponse;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @CrossOrigin(origins = "http://localhost:5173")
@@ -34,6 +35,7 @@ public class AnswerService {
                 .userId(user.getId())
                 .responseTime(request.getResponseTime())
                 .content(request.getContent())
+                .createdAt(LocalDateTime.now())
                 .build();
         answerRepository.save(answer);
 

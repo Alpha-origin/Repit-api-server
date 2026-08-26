@@ -21,9 +21,11 @@ import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
+import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
-import repit.repit_api_server.global.client.ChatServerClient;
 
 import java.util.List;
 import java.util.Optional;
@@ -53,7 +55,11 @@ class FeedbackServiceMultiCallbackTest {
     @Mock
     private InterviewRepository interviewRepository;
     @Mock
-    private ChatServerClient chatServerClient;
+    private PersonaRepository personaRepository;
+    @Mock
+    private QuestionRepository questionRepository;
+    @Mock
+    private AnswerRepository answerRepository;
     @Mock
     private AiServerClient aiServerClient;
     @Mock
@@ -69,7 +75,8 @@ class FeedbackServiceMultiCallbackTest {
     @BeforeEach
     void setUp() {
         service = new FeedbackService(feedbackRepository, feedbackItemRepository, feedbackPersonaRepository,
-                interviewRepository, chatServerClient, aiServerClient, authServerClient);
+                interviewRepository, personaRepository, questionRepository, answerRepository,
+                aiServerClient, authServerClient);
 
         when(feedbackRepository.save(any(FeedbackEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));

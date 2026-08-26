@@ -17,16 +17,18 @@ import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStat
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackPersonaRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackRepository;
-import repit.repit_api_server.domain.userdata.interview.dto.response.ChatAnswerResponse;
-import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewAllResponse;
-import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewQnAResponse;
-import repit.repit_api_server.domain.userdata.interview.dto.response.ChatQuestionResponse;
+import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
+import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
+import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
-import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.response.UserResponse;
 
@@ -37,6 +39,8 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -47,12 +51,15 @@ public class FeedbackService {
     private static final String CALLBACK_PATH = "/api/feedbacks/callback";
     private static final int MAX_QUESTIONS = 50;
     private static final String STATUS_SUCCEEDED = "succeeded";
+    private static final String INTENTION_MISSING = "질문 의도가 기록되지 않았습니다.";
 
     private final FeedbackRepository feedbackRepository;
     private final FeedbackItemRepository feedbackItemRepository;
     private final FeedbackPersonaRepository feedbackPersonaRepository;
     private final InterviewRepository interviewRepository;
-    private final ChatServerClient chatServerClient;
+    private final PersonaRepository personaRepository;
+    private final QuestionRepository questionRepository;
+    private final AnswerRepository answerRepository;
     private final AiServerClient aiServerClient;
     private final AuthServerClient authServerClient;
 
@@ -86,8 +93,7 @@ public class FeedbackService {
             }
         }
 
-        ChatInterviewAllResponse chatInterview = chatServerClient.getInterview(interview.getSessionId());
-        FeedbackSoloRequest request = toSoloRequest(interview, chatInterview);
+        FeedbackSoloRequest request = toSoloRequest(interview);
 
         FeedbackAcceptedResponse accepted = aiServerClient.requestSoloFeedback(request);
 
@@ -102,30 +108,48 @@ public class FeedbackService {
         return accepted;
     }
 
-    private FeedbackSoloRequest toSoloRequest(InterviewEntity interview, ChatInterviewAllResponse chatInterview) {
-        List<ChatInterviewQnAResponse> qnAs = chatInterview == null || chatInterview.getQnAResponses() == null
-                ? List.of()
-                : chatInterview.getQnAResponses();
+    /**
+     * 분석 서버에 보낼 채점 요청을 만든다.
+     *
+     * <p>면접 내용은 채팅 서버가 아니라 우리 DB에서 읽는다. 채팅 서버는 면접이 끝나면 결과를
+     * 이 서버로 넘기고 곧바로 세션을 지우므로, 피드백을 요청하는 시점에는 물어볼 상대가 없다.
+     * 우리 DB가 그때부터 유일한 원본이다.
+     */
+    private FeedbackSoloRequest toSoloRequest(InterviewEntity interview) {
+        Long interviewId = interview.getInterviewId();
 
-        List<FeedbackSoloRequest.Question> questions = new ArrayList<>();
+        List<QuestionEntity> questionEntities =
+                questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(interviewId);
+        List<AnswerEntity> answerEntities =
+                answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(interviewId);
+
+        // 면접이 끝나야 채팅 서버가 기록을 넘겨준다. 그 전에는 채점할 것이 없다.
+        if (questionEntities.isEmpty() && interview.getStatus() == Status.IN_PROGRESS) {
+            throw BusinessException.unprocessable("면접이 아직 끝나지 않았습니다. 면접을 마친 뒤 다시 요청해주세요.");
+        }
+
+        List<FeedbackSoloRequest.Question> questions = questionEntities.stream()
+                .map(this::toQuestion)
+                .toList();
+
+        Set<Long> questionIds = questionEntities.stream()
+                .map(QuestionEntity::getQuestionId)
+                .collect(Collectors.toSet());
+
         List<FeedbackSoloRequest.Answer> answers = new ArrayList<>();
-
-        for (ChatInterviewQnAResponse qnA : qnAs) {
-            ChatQuestionResponse question = qnA.getQuestion();
-            if (question == null) {
+        for (AnswerEntity answer : answerEntities) {
+            if (!questionIds.contains(answer.getQuestionId())) {
+                // 질문 없는 답변을 실어 보내면 분석 서버가 요청 전체를 거부한다.
+                log.warn("답변에 대응하는 질문이 없어 채점에서 제외합니다. interviewId={}, questionId={}",
+                        interviewId, answer.getQuestionId());
                 continue;
             }
-            questions.add(toQuestion(question));
-
-            ChatAnswerResponse answer = qnA.getAnswer();
-            if (answer != null) {
-                answers.add(FeedbackSoloRequest.Answer.builder()
-                        .answerId(String.valueOf(answer.getAnswerId()))
-                        .questionId(String.valueOf(question.getQuestionId()))
-                        .content(answer.getAnswerContent())
-                        .createdAt(toUtc(answer.getAnswerCreatedAt()))
-                        .build());
-            }
+            answers.add(FeedbackSoloRequest.Answer.builder()
+                    .answerId(String.valueOf(answer.getAnswerId()))
+                    .questionId(String.valueOf(answer.getQuestionId()))
+                    .content(answer.getContent())
+                    .createdAt(toUtc(answer.getCreatedAt()))
+                    .build());
         }
 
         // 아래 조건은 분석 서버가 422로 즉시 거부하는 항목이라 요청 전에 걸러낸다.
@@ -141,29 +165,43 @@ public class FeedbackService {
 
         return FeedbackSoloRequest.builder()
                 .sessionId(interview.getSessionId())
-                .interviewId(String.valueOf(interview.getInterviewId()))
+                .interviewId(String.valueOf(interviewId))
                 .userId(String.valueOf(interview.getUserId()))
-                .personaType(chatInterview.getPersonaType() == null ? null : chatInterview.getPersonaType().name())
+                .personaType(personaTypeOf(interview))
                 .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
                 .questions(questions)
                 .answers(answers)
                 .build();
     }
 
-    private FeedbackSoloRequest.Question toQuestion(ChatQuestionResponse question) {
+    private FeedbackSoloRequest.Question toQuestion(QuestionEntity question) {
         // ORIGINAL에 parentId가 실려 있거나 FOLLOW에 없으면 분석 서버가 요청 전체를 422로 거부한다.
-        String parentId = question.getQuestionType() == Type.FOLLOW && question.getParentId() != null
+        String parentId = question.getType() == Type.FOLLOW && question.getParentId() != null
                 ? String.valueOf(question.getParentId())
                 : null;
 
         return FeedbackSoloRequest.Question.builder()
                 .questionId(String.valueOf(question.getQuestionId()))
                 .parentId(parentId)
-                .type(question.getQuestionType())
-                .intention(question.getQuestionIntention())
-                .content(question.getQuestionContent())
-                .createdAt(toUtc(question.getQuestionCreatedAt()))
+                .type(question.getType())
+                .intention(intentionOf(question))
+                .content(question.getContent())
+                .createdAt(toUtc(question.getCreatedAt()))
                 .build();
+    }
+
+    /**
+     * 질문 의도. 분석 서버는 이 값을 채점의 유일한 기준으로 삼아 빈 값을 받지 않는다.
+     *
+     * <p>채팅 서버가 만드는 꼬리질문은 의도가 비어 올 수 있다. 그 한 건 때문에 면접 전체가
+     * 채점되지 않는 편보다는, 비었다고 알리고 나머지를 채점받는 편이 낫다.
+     */
+    private String intentionOf(QuestionEntity question) {
+        if (question.getIntention() != null && !question.getIntention().isBlank()) {
+            return question.getIntention();
+        }
+        log.warn("질문 의도가 비어 있어 채점 기준 없이 보냅니다. questionId={}", question.getQuestionId());
+        return INTENTION_MISSING;
     }
 
     /**
@@ -201,12 +239,31 @@ public class FeedbackService {
         }
     }
 
-    // 채팅 서버는 오프셋이 붙은 시각을 주므로 같은 순간을 UTC 표기로만 바꿔서 분석 서버에 넘긴다.
-    private OffsetDateTime toUtc(OffsetDateTime createdAt) {
+    /**
+     * 면접관 성향. 채팅 서버는 이 값을 모른다 — 면접을 열 때 넘기지 않으므로 돌려받을 수도 없다.
+     * 우리 DB가 원본이라 여기서 직접 읽는다.
+     *
+     * <p>N:1 면접은 면접관이 여럿이라 interview.personaId가 비어 있다. 그때는 성향 없이 보낸다.
+     */
+    private String personaTypeOf(InterviewEntity interview) {
+        if (interview.getPersonaId() == null) {
+            return null;
+        }
+        return personaRepository.findById(interview.getPersonaId())
+                .map(PersonaEntity::getType)
+                .map(Enum::name)
+                .orElse(null);
+    }
+
+    /**
+     * 채팅 서버는 오프셋 없는 시각을 준다. 두 서버 모두 컨테이너에 TZ를 두지 않아 JVM 기본
+     * 시간대가 UTC이므로 그대로 UTC로 읽는다. 한쪽 배포에 TZ가 붙으면 여기서부터 어긋난다.
+     */
+    private OffsetDateTime toUtc(LocalDateTime createdAt) {
         if (createdAt == null) {
             return null;
         }
-        return createdAt.withOffsetSameInstant(ZoneOffset.UTC);
+        return createdAt.atOffset(ZoneOffset.UTC);
     }
 
     /**

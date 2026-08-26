@@ -38,9 +38,8 @@ public class ChatInterviewHandoffService {
                 .sessionId(interview.getSessionId())
                 .interviewId(interview.getInterviewId())
                 .userId(interview.getUserId())
-                .personaId(persona.getPersonaId())
-                .personaType(persona.getType())
-                .questions(toQuestions(tailor))
+                .status(interview.getStatus())
+                .questions(toQuestions(tailor, persona.getPersonaId()))
                 .build());
     }
 
@@ -63,9 +62,11 @@ public class ChatInterviewHandoffService {
      * 면접에 실제로 쓸 질문만 넘긴다. 재작성이 실패한 건은 폴백으로 원질문이 들어와 있어
      * 어느 쪽이든 같은 형태로 나간다.
      *
+     * <p>채팅 서버는 질문마다 면접관을 달아 두므로, 1:1 면접에서는 모든 질문에 같은 면접관을 붙인다.
+     *
      * <p>id와 본문이 비면 채팅 서버가 질문을 다룰 수 없으므로 넘기기 전에 멈춘다.
      */
-    private List<ChatInterviewPrepareRequest.Question> toQuestions(QuestionTailorEntity tailor) {
+    private List<ChatInterviewPrepareRequest.Question> toQuestions(QuestionTailorEntity tailor, Long personaId) {
         List<TailoredQuestionResponse> finalQuestions = tailor.getQuestions() == null
                 ? tailor.getSourceQuestions()
                 : tailor.getQuestions();
@@ -79,16 +80,18 @@ public class ChatInterviewHandoffService {
                         throw BusinessException.unprocessable("채팅 서버에 넘길 수 없는 질문이 있습니다. id=" + question.getId());
                     }
                     return ChatInterviewPrepareRequest.Question.builder()
-                            .questionId(question.getId().longValue())
-                            .intention(intentionOf(question))
-                            .content(question.getQuestion())
+                            .id(question.getId().longValue())
+                            .category(intentionOf(question))
+                            .question(question.getQuestion())
+                            .personaId(personaId)
                             .build();
                 })
                 .toList();
     }
 
     /**
-     * 이 질문으로 무엇을 확인하려는지.
+     * 이 질문으로 무엇을 확인하려는지. 채팅 서버는 {@code category} 필드에 담긴 이 값을
+     * 질문의 의도로 읽는다.
      *
      * <p>분석 서버는 의도를 따로 주지 않는다. 대신 질문마다 붙는 기대 답변이 곧 확인하려는
      * 것이라 그것을 쓴다.

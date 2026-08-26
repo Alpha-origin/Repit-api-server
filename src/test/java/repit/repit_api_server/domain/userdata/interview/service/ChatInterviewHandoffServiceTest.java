@@ -112,15 +112,16 @@ class ChatInterviewHandoffServiceTest {
         assertThat(sent.getSessionId()).isEqualTo("sess-1");
         assertThat(sent.getInterviewId()).isEqualTo(3L);
         assertThat(sent.getUserId()).isEqualTo(7L);
-        assertThat(sent.getPersonaId()).isEqualTo(1L);
-        // 면접관 성향을 안 넘기면 채팅 서버가 면접의 어조를 정할 근거가 없다.
-        assertThat(sent.getPersonaType()).isEqualTo(Type.STRESS);
+        // 상태가 비면 채팅 서버가 본문을 통째로 반려한다.
+        assertThat(sent.getStatus()).isEqualTo(Status.IN_PROGRESS);
 
         ChatInterviewPrepareRequest.Question question = sent.getQuestions().getFirst();
-        assertThat(question.getQuestionId()).isEqualTo(1L);
-        assertThat(question.getContent()).isEqualTo("다시 쓴 Redis 질문");
-        // 의도는 면접이 끝난 뒤 피드백 요청에 그대로 실려 분석 서버로 돌아간다.
-        assertThat(question.getIntention()).isEqualTo("선택 근거와 대안 비교");
+        assertThat(question.getId()).isEqualTo(1L);
+        assertThat(question.getQuestion()).isEqualTo("다시 쓴 Redis 질문");
+        // 질문마다 면접관이 붙는다. 1:1은 모든 질문이 같은 면접관이다.
+        assertThat(question.getPersonaId()).isEqualTo(1L);
+        // 의도는 채팅 서버가 category로 읽어 두었다가, 피드백 요청에 실어 분석 서버로 돌려보낸다.
+        assertThat(question.getCategory()).isEqualTo("선택 근거와 대안 비교");
     }
 
     @Test
@@ -130,8 +131,8 @@ class ChatInterviewHandoffServiceTest {
         verify(chatServerClient).prepareInterview(sentRequest.capture());
         ChatInterviewPrepareRequest.Question question = sentRequest.getValue().getQuestions().getFirst();
 
-        assertThat(question.getContent()).isEqualTo("왜 Redis 를 썼나요?");
-        assertThat(question.getIntention()).isEqualTo("선택 근거와 대안 비교");
+        assertThat(question.getQuestion()).isEqualTo("왜 Redis 를 썼나요?");
+        assertThat(question.getCategory()).isEqualTo("선택 근거와 대안 비교");
     }
 
     /** 의도가 비면 피드백 단계에서 되찾을 길이 없다. 분류라도 넘긴다. */
@@ -147,7 +148,7 @@ class ChatInterviewHandoffServiceTest {
         service.deliver(tailor);
 
         verify(chatServerClient).prepareInterview(sentRequest.capture());
-        assertThat(sentRequest.getValue().getQuestions().getFirst().getIntention()).isEqualTo("tech_choice");
+        assertThat(sentRequest.getValue().getQuestions().getFirst().getCategory()).isEqualTo("tech_choice");
     }
 
     @Test
