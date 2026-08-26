@@ -245,9 +245,19 @@ public class QuestionTailorService {
      * <p>아직 PENDING이면 넘길 최종 질문이 없으므로 넘어간다. 이미 넘긴 건은 콜백이 재전송돼도
      * 다시 넘기지 않는다. 전달에 실패해도 콜백 자체는 성공 처리한다 — 여기서 예외를 던지면
      * 분석 서버가 결과를 재전송하다 폐기해버려 재작성본까지 잃는다.
+     *
+     * <p>이 메서드는 콜백과 면접 시작, 준비 상태 조회 세 곳에서 불리고 모두 트랜잭션 밖이다.
+     * 읽어둔 값만 보고 판단하면 콜백이 넘기는 중에 들어온 조회가 한 번 더 넘겨, 채팅 서버에
+     * 같은 면접을 여는 요청이 두 번 도착한다. 그래서 넘기기 전에 권리를 차지하고, 차지한
+     * 쪽만 넘긴다.
      */
     private void deliverToChatServer(QuestionTailorEntity tailor) {
         if (tailor.getStatus() == TailorStatus.PENDING || Boolean.TRUE.equals(tailor.getChatDelivered())) {
+            return;
+        }
+
+        // 차지하지 못했다면 다른 쪽이 이미 넘겼거나 넘기는 중이다. 그 결과는 다음 조회에서 읽힌다.
+        if (questionTailorRepository.claimChatDelivery(tailor.getTailorId()) == 0) {
             return;
         }
 
@@ -258,6 +268,7 @@ public class QuestionTailorService {
         } catch (RuntimeException e) {
             log.error("면접 데이터를 채팅 서버로 넘기지 못했습니다. tailorId={}, interviewId={}",
                     tailor.getTailorId(), tailor.getInterviewId(), e);
+            // 차지했던 것을 놓아준다. 그대로 두면 넘어간 적이 없는데도 넘긴 것으로 남아 다시 시도하지 못한다.
             tailor.setChatDelivered(false);
             tailor.setChatErrorMessage(e.getMessage());
         }
