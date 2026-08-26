@@ -128,13 +128,13 @@ public class FeedbackService {
             throw BusinessException.unprocessable("면접이 아직 끝나지 않았습니다. 면접을 마친 뒤 다시 요청해주세요.");
         }
 
-        List<FeedbackSoloRequest.Question> questions = questionEntities.stream()
-                .map(this::toQuestion)
-                .toList();
-
         Set<Long> questionIds = questionEntities.stream()
                 .map(QuestionEntity::getQuestionId)
                 .collect(Collectors.toSet());
+
+        List<FeedbackSoloRequest.Question> questions = questionEntities.stream()
+                .map(question -> toQuestion(question, questionIds))
+                .toList();
 
         List<FeedbackSoloRequest.Answer> answers = new ArrayList<>();
         for (AnswerEntity answer : answerEntities) {
@@ -174,20 +174,40 @@ public class FeedbackService {
                 .build();
     }
 
-    private FeedbackSoloRequest.Question toQuestion(QuestionEntity question) {
+    private FeedbackSoloRequest.Question toQuestion(QuestionEntity question, Set<Long> questionIds) {
+        Type type = typeOf(question, questionIds);
+
         // ORIGINAL에 parentId가 실려 있거나 FOLLOW에 없으면 분석 서버가 요청 전체를 422로 거부한다.
-        String parentId = question.getType() == Type.FOLLOW && question.getParentId() != null
-                ? String.valueOf(question.getParentId())
-                : null;
+        String parentId = type == Type.FOLLOW ? String.valueOf(question.getParentId()) : null;
 
         return FeedbackSoloRequest.Question.builder()
                 .questionId(String.valueOf(question.getQuestionId()))
                 .parentId(parentId)
-                .type(question.getType())
+                .type(type)
                 .intention(intentionOf(question))
                 .content(question.getContent())
                 .createdAt(toUtc(question.getCreatedAt()))
                 .build();
+    }
+
+    /**
+     * 질문 종류. 부모를 가리키지 못하는 꼬리질문은 홑질문으로 낮춰 보낸다.
+     *
+     * <p>결과 저장은 부모를 못 찾아도 질문을 남긴다 — 거기서 막으면 면접 기록이 통째로
+     * 사라지기 때문이다. 그렇게 남은 한 건을 FOLLOW인 채로 보내면 분석 서버가 요청 전체를
+     * 422로 거부해, 이번에는 면접 전체가 채점되지 않는다.
+     */
+    private Type typeOf(QuestionEntity question, Set<Long> questionIds) {
+        if (question.getType() != Type.FOLLOW) {
+            return Type.ORIGINAL;
+        }
+        if (question.getParentId() != null && questionIds.contains(question.getParentId())) {
+            return Type.FOLLOW;
+        }
+
+        log.warn("꼬리질문의 부모를 찾을 수 없어 단독 질문으로 보냅니다. questionId={}, parentId={}",
+                question.getQuestionId(), question.getParentId());
+        return Type.ORIGINAL;
     }
 
     /**

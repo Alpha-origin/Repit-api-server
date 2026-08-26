@@ -210,6 +210,29 @@ class InterviewServiceSaveResultTest {
     }
 
     @Test
+    void 세션이_비어_오면_기존_세션을_유지한다() {
+        service.saveInterview(new SaveInterviewRequest(null, 3L, 7L, Status.COMPLETED,
+                LocalDateTime.parse("2026-08-18T01:00:00"), List.of()));
+
+        // session_id 는 not null 이다. null 로 덮으면 저장이 통째로 실패하고, 그 500 이
+        // 채팅 서버의 완료 처리를 끊어 면접 기록을 되찾을 길이 사라진다.
+        ArgumentCaptor<InterviewEntity> saved = ArgumentCaptor.forClass(InterviewEntity.class);
+        verify(interviewRepository).save(saved.capture());
+        assertThat(saved.getValue().getSessionId()).isEqualTo("sess-1");
+    }
+
+    @Test
+    void 상태가_비어_오면_끝난_것으로_본다() {
+        service.saveInterview(new SaveInterviewRequest("sess-1", 3L, 7L, null,
+                LocalDateTime.parse("2026-08-18T01:00:00"), List.of()));
+
+        // 기록을 넘겼다는 것 자체가 면접이 끝났다는 뜻이다.
+        ArgumentCaptor<InterviewEntity> saved = ArgumentCaptor.forClass(InterviewEntity.class);
+        verify(interviewRepository).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(Status.COMPLETED);
+    }
+
+    @Test
     void 없는_면접이면_저장하지_않고_알린다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.empty());
 

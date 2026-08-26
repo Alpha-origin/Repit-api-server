@@ -7,7 +7,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.userdata.interview.dto.request.CreateInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatAnswerResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewAllResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewQnAResponse;
+import repit.repit_api_server.domain.userdata.interview.dto.response.ChatQuestionResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewPrepareResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
@@ -229,15 +232,82 @@ public class InterviewService {
     }
 
     /**
-     * 진행 중인 면접의 현재 상태. 채팅 서버 세션을 그대로 읽는다.
+     * 면접의 전체 기록. 어디서 읽을지는 면접이 끝났는지에 달려 있다.
      *
-     * <p>면접이 끝나면 채팅 서버가 세션을 지우므로 이 조회는 실패한다. 끝난 면접의 기록은
-     * /api/interviews/result로 넘어와 우리 DB에 남아 있으니 그쪽에서 읽어야 한다.
+     * <p>채팅 서버는 면접이 끝나면 기록을 /api/interviews/result로 넘기고 곧바로 세션을 지운다.
+     * 그때부터 우리 DB가 유일한 원본이라, 저장된 기록이 있으면 그쪽에서 읽는다. 채팅 서버에
+     * 물으면 이미 없는 세션이라 실패한다.
+     *
+     * <p>진행 중인 면접은 아직 우리 DB에 아무것도 없다. 채팅 면접 질문은 결과가 넘어올 때
+     * 한꺼번에 들어오기 때문이다. 그 사이에는 채팅 서버 세션이 현재 상태를 들고 있다.
      */
     public ChatInterviewAllResponse getChatInterview(Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+
+        List<QuestionEntity> questions =
+                questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(interviewId);
+        if (!questions.isEmpty()) {
+            return fromStored(interview, questions);
+        }
+
         return chatServerClient.getInterview(interview.getSessionId());
+    }
+
+    /**
+     * 저장된 기록을 채팅 서버가 내려주던 형태로 되돌린다.
+     *
+     * <p>질문 번호는 채팅 서버 번호가 아니라 우리 PK로 내려간다. 채팅 서버 번호는 면접 안에서만
+     * 유일해 밖에서는 가리키는 것이 없고, 피드백 문항도 우리 PK로 매겨져 결과 화면에서 둘을
+     * 맞춰봐야 하기 때문이다.
+     */
+    private ChatInterviewAllResponse fromStored(InterviewEntity interview, List<QuestionEntity> questions) {
+        Map<Long, AnswerEntity> answerByQuestionId =
+                answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(interview.getInterviewId()).stream()
+                        .collect(Collectors.toMap(AnswerEntity::getQuestionId, Function.identity(),
+                                // 한 질문에 답변이 둘일 이유는 없지만, 있다면 나중 것이 최종 답변이다.
+                                (first, second) -> second));
+
+        List<ChatInterviewQnAResponse> qnAs = questions.stream()
+                .map(question -> new ChatInterviewQnAResponse(
+                        toChatQuestion(question),
+                        toChatAnswer(interview, question, answerByQuestionId.get(question.getQuestionId()))))
+                .toList();
+
+        return new ChatInterviewAllResponse(
+                interview.getSessionId(),
+                interview.getInterviewId(),
+                interview.getUserId(),
+                interview.getStatus(),
+                // 끝난 면접이라 진행 위치는 마지막 질문 다음이다.
+                questions.size(),
+                interview.getCreatedAt(),
+                qnAs);
+    }
+
+    private ChatQuestionResponse toChatQuestion(QuestionEntity question) {
+        return new ChatQuestionResponse(
+                question.getQuestionId(),
+                question.getParentId(),
+                question.getType(),
+                question.getIntention(),
+                question.getContent(),
+                question.getPersonaId(),
+                question.getCreatedAt());
+    }
+
+    /** 답하지 않고 넘어간 질문은 답변이 비어 있다. 채팅 서버도 그 자리를 비워서 내려준다. */
+    private ChatAnswerResponse toChatAnswer(InterviewEntity interview, QuestionEntity question, AnswerEntity answer) {
+        if (answer == null) {
+            return null;
+        }
+        return new ChatAnswerResponse(
+                interview.getInterviewId(),
+                question.getQuestionId(),
+                answer.getUserId(),
+                answer.getResponseTime(),
+                answer.getContent(),
+                answer.getCreatedAt());
     }
 
     /**
@@ -251,8 +321,13 @@ public class InterviewService {
         InterviewEntity interview = interviewRepository.findById(request.getInterviewId())
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
 
-        interview.setSessionId(request.getSessionId());
-        interview.setStatus(request.getStatus());
+        // 세션과 상태는 비어 오면 덮어쓰지 않는다. 둘 다 not null 컬럼이라 null을 넣으면 저장이
+        // 통째로 실패하고, 그 500이 채팅 서버의 완료 처리까지 끊어 세션을 남긴 채로 끝난다.
+        if (request.getSessionId() != null && !request.getSessionId().isBlank()) {
+            interview.setSessionId(request.getSessionId());
+        }
+        // 기록을 넘겼다는 것 자체가 면접이 끝났다는 뜻이다. 상태가 비어 와도 진행 중으로 두지 않는다.
+        interview.setStatus(request.getStatus() == null ? Status.COMPLETED : request.getStatus());
         interviewRepository.save(interview);
 
         answerRepository.deleteAllByInterviewId(interview.getInterviewId());
