@@ -127,11 +127,34 @@ public class AiMetaDataService {
      */
     @Transactional(readOnly = true)
     public CallbackSuccessResponse findFinished(String jobId) {
-        return analysisDataRepository.findById(jobId)
-                .filter(data -> data.getStatus() == AnalysisStatus.SUCCEEDED
-                        || data.getStatus() == AnalysisStatus.FAILED)
-                .map(this::toResponse)
-                .orElse(null);
+        AnalysisDataEntity data = analysisDataRepository.findById(jobId).orElse(null);
+        if (data == null || !isFinished(data)) {
+            return null;
+        }
+
+        // 되짚기가 언제 무엇을 보고 나갔는지 남긴다. 구독이 붙자마자 완료가 나갔다면 이 줄이
+        // 근거를 보여주고, 같은 줄이 몇 초 간격으로 되풀이되면 클라이언트가 완료를 받고도
+        // 구독을 닫지 않아 다시 붙고 있다는 뜻이다.
+        log.info("구독 시점에 이미 끝나 있어 저장된 결과를 되짚어 보냅니다. jobId={}, status={}, 결과있음={}, 완료시각={}",
+                jobId, data.getStatus(), data.getResult() != null, data.getCompletedAt());
+
+        return toResponse(data);
+    }
+
+    /**
+     * 구독에 흘려보낼 만큼 끝났는지.
+     *
+     * <p>성공은 result가 실제로 있어야 끝난 것으로 본다. status만 보면 결과가 저장된 적 없는
+     * 행까지 완료로 나가, 클라이언트는 분석이 끝난 줄 알고 조회했다가 빈손이 된다.
+     *
+     * <p>실패는 result 없이도 내보낸다. 실패는 결과가 없다는 것이 확정된 상태다. 여기서 막으면
+     * 실패한 분석을 구독한 클라이언트는 타임아웃까지 아무것도 받지 못한 채 매달린다.
+     */
+    private boolean isFinished(AnalysisDataEntity data) {
+        if (data.getStatus() == AnalysisStatus.SUCCEEDED) {
+            return data.getResult() != null;
+        }
+        return data.getStatus() == AnalysisStatus.FAILED;
     }
 
     /**
