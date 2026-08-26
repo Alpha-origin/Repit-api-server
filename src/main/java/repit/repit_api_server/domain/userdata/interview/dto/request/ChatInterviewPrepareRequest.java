@@ -4,7 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 
 import java.util.List;
 
@@ -24,20 +24,26 @@ public class ChatInterviewPrepareRequest {
     private String sessionId;
     private Long interviewId;
     private Long userId;
-    private Status status;
+    // 면접관. 채팅 서버는 이 둘로 면접의 어조와 꼬리질문 방향을 정한다.
+    private Long personaId;
+    private Type personaType;
     private List<Question> questions;
 
-    /** 면접 질문 한 건. 채팅 서버는 세 값 모두를 필수로 받는다. */
+    /**
+     * 면접 질문 한 건.
+     *
+     * <p>채팅 서버가 면접 내내 들고 다니는 모양이다. 면접이 끝나고 피드백을 요청할 때
+     * 이 세 값이 그대로 분석 서버로 넘어가므로, 여기서 비워 보내면 되찾을 길이 없다.
+     */
     @Getter
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
     public static class Question {
-        private Long id;
-        private String category;
+        private Long questionId;
+        // 이 질문으로 무엇을 확인하려는지.
+        private String intention;
         // 면접에서 실제로 물을 본문. 재작성본이거나, 폴백이면 원질문과 같다.
-        private String question;
-        // 이 질문을 던질 면접관.
-        private Long personaId;
+        private String content;
     }
 }
