@@ -13,6 +13,12 @@ import repit.repit_api_server.domain.userdata.interview.dto.request.ChatIntervie
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
+import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQuestionResponse;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
@@ -37,6 +43,8 @@ class ChatInterviewHandoffServiceTest {
     @Mock
     private InterviewRepository interviewRepository;
     @Mock
+    private PersonaRepository personaRepository;
+    @Mock
     private ChatServerClient chatServerClient;
 
     @Captor
@@ -46,9 +54,18 @@ class ChatInterviewHandoffServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ChatInterviewHandoffService(interviewRepository, chatServerClient);
+        service = new ChatInterviewHandoffService(interviewRepository, personaRepository, chatServerClient);
 
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(1L)));
+        when(personaRepository.findById(1L)).thenReturn(Optional.of(PersonaEntity.builder()
+                .personaId(1L)
+                .personaName("압박 면접관")
+                .major(Major.BACKEND)
+                .type(Type.STRESS)
+                .level(Level.HARD)
+                .career(10)
+                .gender(Gender.MALE)
+                .build()));
     }
 
     private InterviewEntity interview(Long personaId) {
@@ -95,14 +112,15 @@ class ChatInterviewHandoffServiceTest {
         assertThat(sent.getSessionId()).isEqualTo("sess-1");
         assertThat(sent.getInterviewId()).isEqualTo(3L);
         assertThat(sent.getUserId()).isEqualTo(7L);
-        assertThat(sent.getStatus()).isEqualTo(Status.IN_PROGRESS);
+        assertThat(sent.getPersonaId()).isEqualTo(1L);
+        // 면접관 성향을 안 넘기면 채팅 서버가 면접의 어조를 정할 근거가 없다.
+        assertThat(sent.getPersonaType()).isEqualTo(Type.STRESS);
 
         ChatInterviewPrepareRequest.Question question = sent.getQuestions().getFirst();
-        assertThat(question.getId()).isEqualTo(1L);
-        assertThat(question.getCategory()).isEqualTo("tech_choice");
-        assertThat(question.getQuestion()).isEqualTo("다시 쓴 Redis 질문");
-        // 질문마다 면접관이 붙지 않으면 채팅 서버가 본문을 받지 않는다.
-        assertThat(question.getPersonaId()).isEqualTo(1L);
+        assertThat(question.getQuestionId()).isEqualTo(1L);
+        assertThat(question.getContent()).isEqualTo("다시 쓴 Redis 질문");
+        // 의도는 면접이 끝난 뒤 피드백 요청에 그대로 실려 분석 서버로 돌아간다.
+        assertThat(question.getIntention()).isEqualTo("선택 근거와 대안 비교");
     }
 
     @Test
@@ -112,8 +130,34 @@ class ChatInterviewHandoffServiceTest {
         verify(chatServerClient).prepareInterview(sentRequest.capture());
         ChatInterviewPrepareRequest.Question question = sentRequest.getValue().getQuestions().getFirst();
 
-        assertThat(question.getQuestion()).isEqualTo("왜 Redis 를 썼나요?");
-        assertThat(question.getPersonaId()).isEqualTo(1L);
+        assertThat(question.getContent()).isEqualTo("왜 Redis 를 썼나요?");
+        assertThat(question.getIntention()).isEqualTo("선택 근거와 대안 비교");
+    }
+
+    /** 의도가 비면 피드백 단계에서 되찾을 길이 없다. 분류라도 넘긴다. */
+    @Test
+    void 기대_답변이_비면_분류를_의도로_넘긴다() {
+        QuestionTailorEntity tailor = tailor(true);
+        tailor.setQuestions(List.of(TailoredQuestionResponse.builder()
+                .id(1)
+                .category("tech_choice")
+                .question("왜 Redis 를 썼나요?")
+                .build()));
+
+        service.deliver(tailor);
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        assertThat(sentRequest.getValue().getQuestions().getFirst().getIntention()).isEqualTo("tech_choice");
+    }
+
+    @Test
+    void 페르소나를_찾지_못하면_넘기지_않는다() {
+        when(personaRepository.findById(1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.deliver(tailor(true)))
+                .isInstanceOf(BusinessException.class);
+
+        verify(chatServerClient, never()).prepareInterview(any());
     }
 
     /** N:1 면접은 면접관이 여럿이라 interview.personaId가 비어 있다. */

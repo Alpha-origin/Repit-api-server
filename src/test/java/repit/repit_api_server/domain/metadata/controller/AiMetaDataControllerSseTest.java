@@ -15,7 +15,7 @@ import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
 import repit.repit_api_server.domain.metadata.sse.SseEmitterRepository;
 import repit.repit_api_server.global.client.AiServerClient;
-import repit.repit_api_server.global.client.AuthServerClient;
+import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 
 import java.io.IOException;
 import java.util.List;
@@ -44,7 +44,7 @@ class AiMetaDataControllerSseTest {
     @Mock
     private AiServerClient aiServerClient;
     @Mock
-    private AuthServerClient authServerClient;
+    private AnalysisLaunchService analysisLaunchService;
 
     private SseEmitterRepository sseEmitterRepository;
     private AiMetaDataController controller;
@@ -53,7 +53,7 @@ class AiMetaDataControllerSseTest {
     void setUp() {
         sseEmitterRepository = new SseEmitterRepository();
         controller = new AiMetaDataController(
-                metaService, aiMetaDataService, sseEmitterRepository, aiServerClient, authServerClient);
+                metaService, aiMetaDataService, sseEmitterRepository, aiServerClient, analysisLaunchService);
     }
 
     @Test

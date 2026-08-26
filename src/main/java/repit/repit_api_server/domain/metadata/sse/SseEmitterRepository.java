@@ -1,13 +1,15 @@
 package repit.repit_api_server.domain.metadata.sse;
 
-import org.springframework.stereotype.Repository;
+import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.BiConsumer;
 
-@Repository
+// 메모리에만 사는 구독 보관소다. @Repository를 달면 JPA 예외 번역 프록시가 걸려,
+// 여기서 난 IllegalStateException이 엉뚱한 DB 예외로 둔갑해 원인을 가린다.
+@Component
 public class SseEmitterRepository {
     private final ConcurrentMap<String, SseEmitter> emitters = new ConcurrentHashMap<>();
 

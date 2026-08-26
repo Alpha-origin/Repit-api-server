@@ -6,6 +6,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -70,6 +71,46 @@ class SseHeartbeatTest {
 
         assertThat(repository.get("job-4")).isNull();
         assertThat(repository.get("job-5")).isSameAs(alive);
+        verify(alive).send(any(SseEmitter.SseEventBuilder.class));
+    }
+
+    /**
+     * 이미 에러로 끝난 구독은 닫는 것조차 거부당한다. 톰캣이 에러 처리가 끝난 AsyncContext를
+     * 다시 쓰지 못하게 막기 때문이다. 그 거부가 새어나가면 순회가 멈춰 뒤 구독들이 ping을 잃는다.
+     */
+    @Test
+    void 닫는_것마저_거부당해도_나머지는_계속_흐른다() throws IOException {
+        SseEmitter dead = mock(SseEmitter.class);
+        doThrow(new IllegalStateException("ResponseBodyEmitter has already completed"))
+                .when(dead).send(any(SseEmitter.SseEventBuilder.class));
+        doThrow(new IllegalStateException(
+                "A non-container (application) thread attempted to use the AsyncContext"))
+                .when(dead).complete();
+        SseEmitter alive = mock(SseEmitter.class);
+        repository.save("job-6", dead);
+        repository.save("job-7", alive);
+
+        // 순회 순서는 보장되지 않는다. 어느 순서로 돌든 밖으로 새어나가는 것이 없어야 한다.
+        assertThatCode(heartbeat::ping).doesNotThrowAnyException();
+
+        assertThat(repository.get("job-6")).isNull();
+        assertThat(repository.get("job-7")).isSameAs(alive);
+        verify(alive).send(any(SseEmitter.SseEventBuilder.class));
+    }
+
+    /** send가 IOException도 IllegalStateException도 아닌 것으로 터져도 순회는 이어져야 한다. */
+    @Test
+    void 예상하지_못한_실패도_순회를_멈추지_않는다() throws IOException {
+        SseEmitter broken = mock(SseEmitter.class);
+        doThrow(new RuntimeException("예상 못 한 실패"))
+                .when(broken).send(any(SseEmitter.SseEventBuilder.class));
+        SseEmitter alive = mock(SseEmitter.class);
+        repository.save("job-8", broken);
+        repository.save("job-9", alive);
+
+        assertThatCode(heartbeat::ping).doesNotThrowAnyException();
+
+        assertThat(repository.get("job-8")).isNull();
         verify(alive).send(any(SseEmitter.SseEventBuilder.class));
     }
 }

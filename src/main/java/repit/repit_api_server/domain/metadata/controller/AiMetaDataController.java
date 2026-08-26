@@ -3,30 +3,26 @@ package repit.repit_api_server.domain.metadata.controller;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
-import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.dto.response.ResultResponse;
 import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
+import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
 import repit.repit_api_server.domain.metadata.sse.SseEmitterRepository;
+import repit.repit_api_server.domain.metadata.sse.SseEmitters;
 import repit.repit_api_server.global.client.AiServerClient;
-import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.common.ApiResponse;
-import repit.repit_api_server.global.exception.ExternalApiException;
-import repit.repit_api_server.global.response.UserResponse;
 
 import java.io.IOException;
-import java.time.LocalDateTime;
 
 @RestController
 @RequiredArgsConstructor
@@ -41,15 +37,12 @@ public class AiMetaDataController {
     // 예외가 몇 겹으로 싸여 있어도 원인 사슬은 이 깊이까지만 따라간다.
     private static final int MAX_CAUSE_DEPTH = 10;
 
-    @Value("${app.callback-base-url}")
-    private String callbackBaseUrl;
-
     private final MetaService metaService;
     private final AiMetaDataService aiMetaDataService;
     private final SseEmitterRepository sseEmitterRepository;
 
     private final AiServerClient aiServerClient;
-    private final AuthServerClient authServerClient;
+    private final AnalysisLaunchService analysisLaunchService;
 
     // 응답 타입을 못박아 둔다. 정하지 않으면 협상 결과에 따라 다른 타입으로 나갈 수 있고,
     // 그러면 중간의 프록시가 이벤트 스트림인 줄 모르고 버퍼에 모았다가 한꺼번에 흘려보낸다.
@@ -87,7 +80,7 @@ public class AiMetaDataController {
                     .data("connected"));
         } catch (IOException e) {
             sseEmitterRepository.remove(jobId, emitter);
-            emitter.complete();
+            SseEmitters.completeQuietly(emitter);
         }
 
         return emitter;
@@ -105,22 +98,13 @@ public class AiMetaDataController {
         return ResponseEntity.ok(response);
     }
 
+    // 이미 올려둔 자료로 분석만 다시 요청한다. 자료를 올리는 길과 같은 접수를 거친다.
     @PostMapping("/generate")
     public ResponseEntity<GenerateResponse> generate(
             @RequestHeader("Authorization") String authorization
     ) {
         MetaDataResponse forRequest = metaService.getMetaData(authorization);
-        GenerateRequest request = GenerateRequest.builder()
-                .portfolio_url(forRequest.getFileUrl())
-                .github_urls(forRequest.getGitUrls())
-                .callback_url(callbackBaseUrl + "/api/v1/ai/callback")
-                .build();
-
-        // 분석 서버에 넘기기 직전 시각. 이 작업에 남아 있는 결과가 지난 실행의 것인지 가르는 기준이다.
-        LocalDateTime requestedAt = LocalDateTime.now();
-        GenerateResponse response = aiServerClient.generate(request);
-        registerJob(authorization, response, requestedAt);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(analysisLaunchService.launch(authorization, forRequest));
     }
 
     @PostMapping("/generate-mock")
@@ -128,57 +112,7 @@ public class AiMetaDataController {
             @RequestHeader("Authorization") String authorization
     ) {
         MetaDataResponse forRequest = metaService.getMetaData(authorization);
-        GenerateRequest request = GenerateRequest.builder()
-                .portfolio_url(forRequest.getFileUrl())
-                .github_urls(forRequest.getGitUrls())
-                .callback_url(callbackBaseUrl + "/api/v1/ai/callback")
-                .build();
-
-        LocalDateTime requestedAt = LocalDateTime.now();
-        GenerateResponse response = aiServerClient.generateMock(request);
-        registerJob(authorization, response, requestedAt);
-        return ResponseEntity.ok(response);
-    }
-
-    /**
-     * 이번 분석 실행을 접수한다. 소유자를 기록하고, 같은 jobId에 남아 있던 지난 결과를 걷어낸다.
-     *
-     * <p>소유자를 남기지 못하면 이 분석 결과는 사용자로 되찾을 수 없어 면접 질문 재작성이
-     * 예전 결과를 집어 든다. 그래서 실패를 조용히 넘기지 않고 반드시 로그로 남긴다.
-     *
-     * <p>소유자를 확인하지 못했더라도 접수 자체는 한다. 지난 결과를 걷어내지 않으면 구독이
-     * 붙는 순간 분석 서버의 콜백보다 먼저 옛 결과가 완료 이벤트로 나가기 때문이다.
-     *
-     * <p>다만 이 시점에는 분석 서버가 이미 작업을 접수한 뒤다. 기록이 실패했다고 요청 전체를
-     * 실패시키면 클라이언트가 jobId를 받지 못해 결과를 영영 조회할 수 없게 되므로, 기록 실패는
-     * 예외로 번지지 않게 막는다.
-     */
-    private void registerJob(String authorization, GenerateResponse response, LocalDateTime requestedAt) {
-        if (response == null || response.getJob_id() == null) {
-            // jobId가 없으면 구독도 조회도 할 수 없다. 성공으로 돌려주면 원인을 찾을 수 없다.
-            log.error("분석 서버 응답에 job_id가 없습니다. status={}, message={}",
-                    response == null ? null : response.getStatus(),
-                    response == null ? null : response.getMessage());
-            throw new ExternalApiException("분석 서버가 작업 번호를 돌려주지 않았습니다.", null, null);
-        }
-
-        Long userId = null;
-        try {
-            UserResponse user = authServerClient.getUser(authorization);
-            if (user == null || user.getId() == null) {
-                log.error("분석 작업의 소유자를 확인하지 못했습니다. jobId={}", response.getJob_id());
-            } else {
-                userId = user.getId();
-            }
-        } catch (RuntimeException e) {
-            log.error("분석 작업의 소유자를 확인하지 못했습니다. jobId={}", response.getJob_id(), e);
-        }
-
-        try {
-            aiMetaDataService.registerJob(response.getJob_id(), userId, requestedAt);
-        } catch (RuntimeException e) {
-            log.error("분석 작업을 접수하지 못했습니다. jobId={}", response.getJob_id(), e);
-        }
+        return ResponseEntity.ok(analysisLaunchService.launchMock(authorization, forRequest));
     }
 
     /**
@@ -237,11 +171,11 @@ public class AiMetaDataController {
                 // 구독자가 이미 떠났다. 결과는 DB에 남아 있어, 다시 붙으면 그때 되짚어 나간다.
                 log.info("구독이 끊겨 분석 결과를 흘려보내지 못했습니다. jobId={}, 이유={}",
                         jobId, rootCauseMessage(e));
-                emitter.complete();
+                SseEmitters.completeQuietly(emitter);
                 return;
             }
             log.warn("분석 결과를 구독에 흘려보내지 못했습니다. jobId={}", jobId, e);
-            emitter.completeWithError(e);
+            SseEmitters.completeWithErrorQuietly(emitter, e);
         }
     }
 

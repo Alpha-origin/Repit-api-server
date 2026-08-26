@@ -37,7 +37,8 @@ public class HttpInterfaceConfig {
     public AiServerApi aiServerApi(RestClient.Builder restClientBuilder,
                                     @Value("${ai-server.base-url}") String aiServerBaseUrl,
                                     @Value("${external-api.connect-timeout:3s}") String connectTimeout,
-                                    @Value("${external-api.read-timeout:5s}") String readTimeout) {
+                                    // 분석 서버만 따로 둔다. 접수 응답이 다른 서버보다 훨씬 늦게 온다.
+                                    @Value("${ai-server.read-timeout:60s}") String readTimeout) {
         return buildClient(restClientBuilder, AiServerClient.SERVER_NAME, aiServerBaseUrl, connectTimeout, readTimeout, AiServerApi.class);
     }
 
