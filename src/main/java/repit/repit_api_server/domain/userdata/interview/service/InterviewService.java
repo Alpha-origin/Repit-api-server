@@ -228,9 +228,15 @@ public class InterviewService {
                 .toList();
     }
 
+    /**
+     * 진행 중인 면접의 현재 상태. 채팅 서버 세션을 그대로 읽는다.
+     *
+     * <p>면접이 끝나면 채팅 서버가 세션을 지우므로 이 조회는 실패한다. 끝난 면접의 기록은
+     * /api/interviews/result로 넘어와 우리 DB에 남아 있으니 그쪽에서 읽어야 한다.
+     */
     public ChatInterviewAllResponse getChatInterview(Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
-                .orElseThrow(() -> new RuntimeException("면접을 찾을 수 없습니다"));
+                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
         return chatServerClient.getInterview(interview.getSessionId());
     }
 
