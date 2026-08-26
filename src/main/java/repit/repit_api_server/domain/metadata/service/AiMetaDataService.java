@@ -65,17 +65,23 @@ public class AiMetaDataService {
     }
 
     /**
-     * 분석 결과 콜백을 저장한다. 재전송이 있을 수 있어 두 번 받아도 안전해야 한다.
+     * 분석 결과 콜백을 저장하고, 저장된 상태를 돌려준다. 재전송이 있을 수 있어 두 번 받아도 안전해야 한다.
      *
      * <p>실패 콜백에는 result가 없다. status를 보지 않고 그대로 덮어쓰면 먼저 받아둔 성공
      * 결과까지 지워지므로, 성공 콜백일 때만 결과를 저장한다.
+     *
+     * <p>돌려주는 값은 요청을 되비춘 것이 아니라 DB에 남은 것이다. 이 메서드는 요청을 여러 갈래로
+     * 걸러내므로, 요청을 그대로 흘려보내면 저장이 걸러낸 값까지 구독으로 새어나간다. 클라이언트는
+     * DB에 없는 성공을 받아들고 결과를 조회하다 빈손이 된다.
+     *
+     * <p>저장하지 못했으면 아무것도 돌려주지 않는다. 흘려보낼 상태가 없다는 뜻이다.
      */
     @Transactional
-    public void saveResult(CallbackSuccessRequest request) {
+    public CallbackSuccessResponse saveResult(CallbackSuccessRequest request) {
         String jobId = request.getJob_id();
         if (jobId == null) {
             log.warn("job_id 없는 분석 콜백을 받았습니다. status={}", request.getStatus());
-            return;
+            return null;
         }
 
         // registerJob으로 이미 저장된 행이 있으면 userId를 유지한 채 결과만 채운다.
@@ -88,15 +94,15 @@ public class AiMetaDataService {
             data.setErrorStatusCode(null);
             data.setErrorMessage(null);
             data.setCompletedAt(LocalDateTime.now());
-            analysisDataRepository.save(data);
-            return;
+            return toResponse(analysisDataRepository.save(data));
         }
 
         // 이미 결과를 받아둔 작업이라면 뒤늦은 실패 콜백에 그 결과를 잃을 이유가 없다.
         if (data.getStatus() == AnalysisStatus.SUCCEEDED) {
             log.warn("이미 성공한 분석에 실패 콜백이 도착해 무시합니다. jobId={}, error={}",
                     jobId, describeError(request.getError()));
-            return;
+            // 지켜낸 성공을 그대로 돌려준다. 흘려보낼 것이 있다면 그건 이 실패가 아니라 저 성공이다.
+            return toResponse(data);
         }
 
         log.warn("분석에 실패했습니다. jobId={}, status={}, error={}",
@@ -107,7 +113,7 @@ public class AiMetaDataService {
             data.setErrorMessage(request.getError().getMessage());
         }
         data.setCompletedAt(LocalDateTime.now());
-        analysisDataRepository.save(data);
+        return toResponse(analysisDataRepository.save(data));
     }
 
     /**
@@ -124,13 +130,23 @@ public class AiMetaDataService {
         return analysisDataRepository.findById(jobId)
                 .filter(data -> data.getStatus() == AnalysisStatus.SUCCEEDED
                         || data.getStatus() == AnalysisStatus.FAILED)
-                .map(data -> CallbackSuccessResponse.builder()
-                        .job_id(data.getJobId())
-                        .status(statusName(data.getStatus()))
-                        .result(data.getResult())
-                        .error(toError(data))
-                        .build())
+                .map(this::toResponse)
                 .orElse(null);
+    }
+
+    /**
+     * 저장된 행을 구독으로 흘려보낼 모양으로 옮긴다.
+     *
+     * <p>콜백 전송과 구독 시점 되짚기가 같은 변환을 거치게 해, 어느 경로로 받든 클라이언트가
+     * 보는 내용이 같도록 한다.
+     */
+    private CallbackSuccessResponse toResponse(AnalysisDataEntity data) {
+        return CallbackSuccessResponse.builder()
+                .job_id(data.getJobId())
+                .status(statusName(data.getStatus()))
+                .result(data.getResult())
+                .error(toError(data))
+                .build();
     }
 
     private CallbackSuccessRequest.Error toError(AnalysisDataEntity data) {

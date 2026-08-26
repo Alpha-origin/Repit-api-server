@@ -178,21 +178,30 @@ public class AiMetaDataController {
         }
     }
 
+    /**
+     * 분석 서버가 결과를 보내오는 콜백.
+     *
+     * <p>흘려보내는 것은 요청이 아니라 저장된 결과다. 저장은 요청을 여러 갈래로 걸러내므로
+     * — 결과 없는 성공 콜백은 실패로, 이미 성공한 작업에 온 실패 콜백은 무시로 — 요청을 그대로
+     * 내보내면 DB에 없는 완료가 구독으로 새어나간다. 클라이언트는 성공을 받아들고 결과를
+     * 조회하다 빈손이 된다.
+     *
+     * <p>저장이 끝난 뒤에야 전송한다. {@code saveResult}가 돌아왔다는 것은 커밋까지 끝났다는
+     * 뜻이라, 구독이 받은 완료는 곧바로 조회해도 DB에 있다.
+     */
     @PostMapping("/callback")
     public ApiResponse<CallbackSuccessResponse> callback(
             @RequestBody CallbackSuccessRequest request
             ) {
-        aiMetaDataService.saveResult(request);
-        CallbackSuccessResponse response = CallbackSuccessResponse.builder()
-                .job_id(request.getJob_id())
-                .status(request.getStatus())
-                .result(request.getResult())
-                .error(request.getError())
-                .build();
+        CallbackSuccessResponse saved = aiMetaDataService.saveResult(request);
+        if (saved == null) {
+            // 어느 작업의 결과인지 알 수 없어 저장하지 못했다. 흘려보낼 구독도 찾을 수 없다.
+            return ApiResponse.success(null);
+        }
 
-        sendCompletionEvent(request.getJob_id(), response);
+        sendCompletionEvent(saved.getJob_id(), saved);
 
-        return ApiResponse.success(response);
+        return ApiResponse.success(saved);
     }
 
     private void sendCompletionEvent(String jobId, CallbackSuccessResponse response) {
