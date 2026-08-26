@@ -9,6 +9,7 @@ import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -26,6 +27,7 @@ public class QuestionService {
                 .type(response.getType())
                 .intention(response.getIntention())
                 .content(response.getContent())
+                .createdAt(LocalDateTime.now())
                 .build();
         questionRepository.save(question);
         return response;

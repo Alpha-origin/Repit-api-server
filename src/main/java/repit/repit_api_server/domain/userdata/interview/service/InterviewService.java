@@ -1,7 +1,10 @@
 package repit.repit_api_server.domain.userdata.interview.service;
 
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.userdata.interview.dto.request.CreateInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewAllResponse;
@@ -16,7 +19,9 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
+import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
@@ -26,8 +31,10 @@ import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.response.UserResponse;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +45,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class InterviewService {
+
+    private static final Logger log = LoggerFactory.getLogger(InterviewService.class);
 
     // N:1 면접은 직책마다 한 명씩, 이 순서로 진행한다.
     private static final List<Role> MULTI_ROLES = List.of(Role.TECH, Role.HR, Role.CEO);
@@ -225,14 +234,100 @@ public class InterviewService {
         return chatServerClient.getInterview(interview.getSessionId());
     }
 
+    /**
+     * 채팅 서버가 면접을 마치고 넘겨주는 전체 기록을 저장한다.
+     *
+     * <p>채팅 서버는 이 요청을 보낸 직후 세션을 지운다. 여기가 마지막 기회라 실패하면 면접
+     * 내용이 사라진다. 콜백이 두 번 와도 같은 결과가 되도록 기존 기록을 지우고 다시 넣는다.
+     */
+    @Transactional
     public void saveInterview(SaveInterviewRequest request) {
-        InterviewEntity interview = interviewRepository.findById(request.getInterviewId()).orElse(null);
-        assert interview != null;
+        InterviewEntity interview = interviewRepository.findById(request.getInterviewId())
+                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+
         interview.setSessionId(request.getSessionId());
         interview.setStatus(request.getStatus());
         interviewRepository.save(interview);
 
-        answerRepository.saveAll(answerRepository.findAllById(request.getAnswers()));
-        questionRepository.saveAll(questionRepository.findAllById(request.getQuestions()));
+        answerRepository.deleteAllByInterviewId(interview.getInterviewId());
+        questionRepository.deleteAllByInterviewId(interview.getInterviewId());
+
+        List<SaveInterviewRequest.QnA> qnAs = request.getQnaRequests() == null
+                ? List.of()
+                : request.getQnaRequests();
+
+        Map<Long, Long> questionIdByChatId = saveQuestions(interview, qnAs);
+        saveAnswers(interview, qnAs, questionIdByChatId);
+    }
+
+    /**
+     * 질문을 저장하고 채팅 서버 번호 -> 우리 PK 매핑을 돌려준다.
+     *
+     * <p>채팅 서버 번호는 PK로 쓸 수 없다. ORIGINAL은 분석 결과 안의 지역 번호(1..N)라 면접이
+     * 다르면 같은 번호가 다시 나오고, FOLLOW는 채팅 서버가 만든 랜덤 값이다.
+     *
+     * <p>꼬리질문의 부모는 목록에서 늘 앞서 나오므로 한 번 훑으면서 부모를 우리 PK로 옮길 수
+     * 있다. 그래서 saveAll로 묶지 않고 한 건씩 저장해 매핑을 채운다.
+     */
+    private Map<Long, Long> saveQuestions(InterviewEntity interview, List<SaveInterviewRequest.QnA> qnAs) {
+        Map<Long, Long> questionIdByChatId = new HashMap<>();
+
+        for (SaveInterviewRequest.QnA qnA : qnAs) {
+            SaveInterviewRequest.Question question = qnA.getQuestion();
+            if (question == null || question.getQuestionId() == null) {
+                continue;
+            }
+
+            QuestionEntity saved = questionRepository.save(QuestionEntity.builder()
+                    .interviewId(interview.getInterviewId())
+                    .chatQuestionId(question.getQuestionId())
+                    .parentId(questionIdByChatId.get(question.getParentId()))
+                    .personaId(question.getPersonaId())
+                    .type(question.getQuestionType())
+                    .intention(question.getQuestionIntention())
+                    .content(question.getQuestionContent())
+                    .createdAt(orNow(question.getQuestionCreatedAt()))
+                    .build());
+
+            questionIdByChatId.put(question.getQuestionId(), saved.getQuestionId());
+        }
+
+        return questionIdByChatId;
+    }
+
+    // 시각이 비어 와도 저장까지 실패하지는 않게 한다. 여기서 막히면 면접 기록이 통째로 사라진다.
+    private LocalDateTime orNow(LocalDateTime createdAt) {
+        return createdAt == null ? LocalDateTime.now() : createdAt;
+    }
+
+    private void saveAnswers(InterviewEntity interview, List<SaveInterviewRequest.QnA> qnAs,
+                             Map<Long, Long> questionIdByChatId) {
+        List<AnswerEntity> answers = new ArrayList<>();
+
+        for (SaveInterviewRequest.QnA qnA : qnAs) {
+            SaveInterviewRequest.Answer answer = qnA.getAnswer();
+            if (answer == null) {
+                continue;
+            }
+
+            Long questionId = questionIdByChatId.get(answer.getQuestionId());
+            if (questionId == null) {
+                // 질문 없는 답변은 어디에도 매달 수 없다. 나머지는 저장해야 하므로 이 건만 건너뛴다.
+                log.warn("답변에 대응하는 질문이 없어 저장하지 않습니다. interviewId={}, chatQuestionId={}",
+                        interview.getInterviewId(), answer.getQuestionId());
+                continue;
+            }
+
+            answers.add(AnswerEntity.builder()
+                    .interviewId(interview.getInterviewId())
+                    .questionId(questionId)
+                    .userId(interview.getUserId())
+                    .responseTime(answer.getResponseTime())
+                    .content(answer.getAnswerContent())
+                    .createdAt(orNow(answer.getAnswerCreatedAt()))
+                    .build());
+        }
+
+        answerRepository.saveAll(answers);
     }
 }
