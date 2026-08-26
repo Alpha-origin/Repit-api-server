@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
@@ -14,9 +15,14 @@ import repit.repit_api_server.domain.metadata.sse.SseEmitterRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
 
+import java.io.IOException;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -106,5 +112,47 @@ class AiMetaDataControllerSseTest {
         // 새 구독이 되짚음을 받고 걷혔을 뿐, 맵에 엉뚱한 구독이 남아 있으면 안 된다.
         assertThat(emitter).isNotSameAs(other);
         assertThat(sseEmitterRepository.get("job-4")).isNull();
+    }
+
+    /**
+     * 구독자가 먼저 떠나면 완료 이벤트를 쓸 때 broken pipe가 난다. 새로고침으로도 나는 일이라
+     * 서버 오류로 다루지 않는다. 결과는 이미 DB에 있어 다시 붙으면 되짚어 나간다.
+     */
+    @Test
+    void 이미_떠난_구독은_오류로_닫지_않는다() throws IOException {
+        SseEmitter gone = mock(SseEmitter.class);
+        doThrow(new AsyncRequestNotUsableException(
+                "ServletResponse failed to flushBuffer", new IOException("Broken pipe")))
+                .when(gone).send(any(SseEmitter.SseEventBuilder.class));
+        sseEmitterRepository.save("job-5", gone);
+
+        controller.callback(CallbackSuccessRequest.builder()
+                .job_id("job-5")
+                .status("succeeded")
+                .result(Map.of("project_summary", "요약"))
+                .build());
+
+        assertThat(sseEmitterRepository.get("job-5")).isNull();
+        verify(gone).complete();
+        verify(gone, never()).completeWithError(any());
+    }
+
+    /** 클라이언트 사정이 아닌 실패까지 묻으면 손봐야 할 것을 못 본다. */
+    @Test
+    void 그_밖의_실패는_오류로_닫는다() throws IOException {
+        SseEmitter broken = mock(SseEmitter.class);
+        IOException failure = new IOException("직렬화 실패");
+        doThrow(failure).when(broken).send(any(SseEmitter.SseEventBuilder.class));
+        sseEmitterRepository.save("job-6", broken);
+
+        controller.callback(CallbackSuccessRequest.builder()
+                .job_id("job-6")
+                .status("succeeded")
+                .result(Map.of("project_summary", "요약"))
+                .build());
+
+        assertThat(sseEmitterRepository.get("job-6")).isNull();
+        verify(broken).completeWithError(failure);
+        verify(broken, never()).complete();
     }
 }
