@@ -46,6 +46,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     // 이보다 큰 본문은 로그를 위해 메모리에 통째로 올리지 않는다.
     private static final long MAX_CACHEABLE_BODY_BYTES = 256 * 1024L;
 
+    // 끝나지 않고 계속 흘러가는 응답. 로그를 위해 감쌌다가는 이벤트가 캐시에 갇힌다.
+    private static final String SSE_PATH_PREFIX = "/api/v1/ai/subscribe/";
+
     private final HttpLoggingProperties properties;
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
@@ -240,11 +243,27 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         return request.getContentLengthLong() <= MAX_CACHEABLE_BODY_BYTES;
     }
 
+    /**
+     * 응답 본문을 로그에 남기려고 감쌀지.
+     *
+     * <p>SSE 응답은 감싸면 안 된다. {@code ContentCachingResponseWrapper}는 써 나가는 바이트를
+     * 캐시에 모아두었다가 {@code copyBodyToResponse}에서야 내보내므로, 이벤트가 흘러가지 않고
+     * 갇힌다. 구독은 필터를 빠져나간 뒤에도 계속 살아 있어, 갇힌 이벤트가 엉뚱한 시점에 한꺼번에
+     * 나가거나 아예 도달하지 못한다.
+     *
+     * <p>Accept 헤더만으로는 가릴 수 없다. 그 값은 클라이언트와 중간 프록시가 정하는 것이라
+     * 비어 있거나 {@code *}로 바뀐 채 도착할 수 있다. 우리가 아는 구독 경로는 헤더와 무관하게
+     * 비켜간다.
+     */
     private boolean shouldCacheResponseBody(HttpServletRequest request) {
         if (!properties.includeBody()) {
             return false;
         }
-        // SSE 응답을 감싸면 이벤트가 캐시에 쌓인 채 클라이언트로 흘러가지 않는다.
+
+        if (request.getRequestURI().startsWith(SSE_PATH_PREFIX)) {
+            return false;
+        }
+
         String accept = request.getHeader(HttpHeaders.ACCEPT);
         return accept == null || !accept.toLowerCase().contains(MediaType.TEXT_EVENT_STREAM_VALUE);
     }

@@ -106,7 +106,7 @@ public class QuestionTailorService {
                 .interviewId(interview.getInterviewId())
                 .userId(interview.getUserId())
                 .jobId(accepted == null ? null : accepted.getJobId())
-                // 재작성본이 어느 분석 결과에서 나왔는지. 채팅 서버로 함께 넘긴다.
+                // 재작성본이 어느 분석 결과에서 나왔는지 되짚을 수 있게 남긴다.
                 .analysisJobId(source.analysisJobId())
                 .status(TailorStatus.PENDING)
                 .sourceQuestions(sourceQuestions)
@@ -124,7 +124,7 @@ public class QuestionTailorService {
                 .build();
     }
 
-    /** 원질문과 그 질문이 나온 분석 작업. 채팅 서버에 어느 분석 결과인지 알려줄 때 jobId가 필요하다. */
+    /** 원질문과 그 질문이 나온 분석 작업. 재작성 건에 출처를 남겨두려고 jobId를 함께 들고 다닌다. */
     private record SourceQuestions(String analysisJobId, List<TailoredQuestionResponse> questions) {
     }
 

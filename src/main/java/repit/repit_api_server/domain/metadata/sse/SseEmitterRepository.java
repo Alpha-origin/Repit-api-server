@@ -5,6 +5,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.BiConsumer;
 
 @Repository
 public class SseEmitterRepository {
@@ -33,5 +34,15 @@ public class SseEmitterRepository {
      */
     public boolean remove(String jobId, SseEmitter emitter) {
         return emitters.remove(jobId, emitter);
+    }
+
+    /**
+     * 붙어 있는 구독을 하나씩 훑는다. 훑는 동안 다른 구독이 붙거나 걷혀도 안전하다.
+     *
+     * <p>맵을 밖으로 내보내지 않는 것은, 걷어내는 일이 {@link #remove}의 "자기 자신일 때만"
+     * 규약을 거치게 하기 위해서다. 밖에서 jobId만 보고 지우면 방금 붙은 구독이 밀려난다.
+     */
+    public void forEach(BiConsumer<String, SseEmitter> action) {
+        emitters.forEach(action);
     }
 }

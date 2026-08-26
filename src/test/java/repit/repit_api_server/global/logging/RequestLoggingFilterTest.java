@@ -117,6 +117,42 @@ class RequestLoggingFilterTest {
         assertThat(responseSeenByHandler.get()).isNotInstanceOf(ContentCachingResponseWrapper.class);
     }
 
+    /**
+     * Accept는 클라이언트와 중간 프록시가 정하는 값이라 비어 있거나 바뀐 채 도착할 수 있다.
+     * 헤더만 보고 가리면 그때 구독 응답이 캐시에 갇혀 이벤트가 흘러가지 않는다.
+     */
+    @Test
+    void 구독_경로는_Accept가_없어도_감싸지_않는다() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/ai/subscribe/job-1");
+        AtomicReference<Object> responseSeenByHandler = new AtomicReference<>();
+
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> responseSeenByHandler.set(res));
+
+        assertThat(responseSeenByHandler.get()).isNotInstanceOf(ContentCachingResponseWrapper.class);
+    }
+
+    @Test
+    void 구독_경로는_Accept가_모든_타입이어도_감싸지_않는다() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/ai/subscribe/job-1");
+        request.addHeader(HttpHeaders.ACCEPT, MediaType.ALL_VALUE);
+        AtomicReference<Object> responseSeenByHandler = new AtomicReference<>();
+
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> responseSeenByHandler.set(res));
+
+        assertThat(responseSeenByHandler.get()).isNotInstanceOf(ContentCachingResponseWrapper.class);
+    }
+
+    /** 구독이 아닌 요청까지 놓치면 본문 로그가 통째로 사라진다. */
+    @Test
+    void 구독이_아닌_요청의_응답은_그대로_감싼다() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/ai?jobId=job-1");
+        AtomicReference<Object> responseSeenByHandler = new AtomicReference<>();
+
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> responseSeenByHandler.set(res));
+
+        assertThat(responseSeenByHandler.get()).isInstanceOf(ContentCachingResponseWrapper.class);
+    }
+
     @Test
     void 서버_오류는_error로_클라이언트_오류는_warn으로_남는다() throws Exception {
         filter.doFilter(new MockHttpServletRequest("GET", "/api/question"), new MockHttpServletResponse(),

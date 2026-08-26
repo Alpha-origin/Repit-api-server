@@ -61,6 +61,9 @@ app:
   question-tailor:
     # 면접 시작 직전에 도는 작업이라 오래 기다릴 수 없다. 넘기면 원질문으로 면접을 연다.
     pending-timeout: 2m
+  sse:
+    # 구독에 빈 줄을 흘려보내는 간격(ms). 이보다 오래 조용하면 중간의 프록시가 연결을 끊는다.
+    heartbeat-interval-ms: 15000
   http-logging:
     enabled: true
     # 본문까지 남긴다. 끄면 요청선과 상태 코드, 소요 시간만 남는다.
