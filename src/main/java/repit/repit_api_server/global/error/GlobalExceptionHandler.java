@@ -18,12 +18,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ErrorResponse> handleBusinessException(BusinessException e) {
+        // 상태 코드만으로는 어느 규칙에 걸렸는지 알 수 없어 한 줄 남긴다. 예상된 흐름이라 스택트레이스는 붙이지 않는다.
+        log.warn("업무 규칙에 걸려 요청을 중단했습니다. status={}, message={}", e.getStatus(), e.getMessage());
         return ResponseEntity.status(e.getStatus()).body(new ErrorResponse(e.getMessage()));
     }
 
     @ExceptionHandler(ExternalApiException.class)
     public ResponseEntity<ErrorResponse> handleExternalApiException(ExternalApiException e) {
         HttpStatusCode status = e.getStatusCode() != null ? e.getStatusCode() : HttpStatus.BAD_GATEWAY;
+        // 재시도까지 간 실패는 ExternalApiExecutor가 이미 남겼다. 여기서는 그 실패가 어떤 응답으로 나갔는지만 잇는다.
+        log.warn("외부 서버 호출 실패를 {}로 응답합니다. message={}", status, e.getMessage());
         return ResponseEntity.status(status).body(new ErrorResponse(e.getMessage()));
     }
 

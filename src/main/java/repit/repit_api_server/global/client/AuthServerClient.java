@@ -12,7 +12,7 @@ import repit.repit_api_server.global.response.UserResponse;
 @RequiredArgsConstructor
 public class AuthServerClient {
 
-    private static final String SERVER_NAME = "인증";
+    public static final String SERVER_NAME = "인증";
 
     private final AuthServerApi authServerApi;
     private final ExternalApiExecutor executor;

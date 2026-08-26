@@ -18,7 +18,7 @@ import repit.repit_api_server.global.common.ApiResponse;
 @RequiredArgsConstructor
 public class AiServerClient {
 
-    private static final String SERVER_NAME = "AI";
+    public static final String SERVER_NAME = "AI";
 
     private final AiServerApi aiServerApi;
     private final ExternalApiExecutor executor;
