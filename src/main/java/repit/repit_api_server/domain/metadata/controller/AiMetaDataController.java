@@ -18,6 +18,7 @@ import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
 import repit.repit_api_server.domain.metadata.sse.SseEmitterRepository;
+import repit.repit_api_server.domain.metadata.sse.SseEmitters;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.common.ApiResponse;
 
@@ -79,7 +80,7 @@ public class AiMetaDataController {
                     .data("connected"));
         } catch (IOException e) {
             sseEmitterRepository.remove(jobId, emitter);
-            emitter.complete();
+            SseEmitters.completeQuietly(emitter);
         }
 
         return emitter;
@@ -170,11 +171,11 @@ public class AiMetaDataController {
                 // 구독자가 이미 떠났다. 결과는 DB에 남아 있어, 다시 붙으면 그때 되짚어 나간다.
                 log.info("구독이 끊겨 분석 결과를 흘려보내지 못했습니다. jobId={}, 이유={}",
                         jobId, rootCauseMessage(e));
-                emitter.complete();
+                SseEmitters.completeQuietly(emitter);
                 return;
             }
             log.warn("분석 결과를 구독에 흘려보내지 못했습니다. jobId={}", jobId, e);
-            emitter.completeWithError(e);
+            SseEmitters.completeWithErrorQuietly(emitter, e);
         }
     }
 
