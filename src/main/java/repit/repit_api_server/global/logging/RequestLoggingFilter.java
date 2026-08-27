@@ -202,10 +202,14 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
                     String message = RESPONSE_ARROW + request.getMethod() + ' ' + request.getRequestURI()
                             + "  " + statusText(response.getStatus())
                             + "  비동기 " + result + " (" + elapsedMillis(startedAt) + "ms)";
-                    if (throwable != null) {
-                        log.warn("{}  원인: {}", message, throwable.toString());
-                    } else {
+                    if (throwable == null) {
                         log.info(message);
+                    } else if (ClientDisconnect.isClientGone(throwable)) {
+                        // 구독자가 떠나서 끝난 것이다. SSE 구독은 몇 분씩 열려 있어 이렇게 끝나는
+                        // 편이 오히려 흔하다. 실패로 남기면 손볼 것 없는 줄이 로그를 메운다.
+                        log.info("{}  이유: {}", message, ClientDisconnect.rootCauseMessage(throwable));
+                    } else {
+                        log.warn("{}  원인: {}", message, throwable.toString());
                     }
                 } catch (IOException e) {
                     log.warn("비동기 응답 본문을 되돌려주지 못했습니다. uri={}", request.getRequestURI(), e);

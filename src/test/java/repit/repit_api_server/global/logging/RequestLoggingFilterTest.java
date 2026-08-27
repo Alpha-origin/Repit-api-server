@@ -3,6 +3,9 @@ package repit.repit_api_server.global.logging;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import jakarta.servlet.AsyncEvent;
+import jakarta.servlet.AsyncListener;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,11 +13,14 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockAsyncContext;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.util.StreamUtils;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -243,5 +249,47 @@ class RequestLoggingFilterTest {
 
     private List<String> messages() {
         return capturedLogs.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+    }
+
+    /**
+     * SSE 구독은 분석부터 면접 준비까지를 한 연결로 덮어 몇 분씩 열려 있다. 그동안 사용자가
+     * 새로고침하거나 탭을 닫으면 broken pipe로 끝나는데, 이건 사고가 아니라 흔한 끝맺음이다.
+     * 실패로 남기면 손볼 것 없는 줄이 로그를 메워 정작 봐야 할 실패가 묻힌다.
+     */
+    @Test
+    void 구독자가_떠나서_끝난_비동기_요청은_실패로_남기지_않는다() throws Exception {
+        fireAsyncError(new AsyncRequestNotUsableException(
+                "ServletResponse failed to flushBuffer", new IOException("Broken pipe")));
+
+        assertThat(capturedLogs.list).anySatisfy(event -> {
+            assertThat(event.getFormattedMessage()).contains("비동기 오류");
+            assertThat(event.getFormattedMessage()).contains("Broken pipe");
+            assertThat(event.getLevel().levelStr).isEqualTo("INFO");
+        });
+    }
+
+    /** 클라이언트 사정이 아닌 실패까지 묻으면 손봐야 할 것을 못 본다. */
+    @Test
+    void 그_밖의_비동기_실패는_경고로_남는다() throws Exception {
+        fireAsyncError(new IllegalStateException("직렬화 실패"));
+
+        assertThat(capturedLogs.list).anySatisfy(event -> {
+            assertThat(event.getFormattedMessage()).contains("비동기 오류");
+            assertThat(event.getLevel().levelStr).isEqualTo("WARN");
+        });
+    }
+
+    /** 필터를 빠져나간 뒤에 끝나는 요청이라, 완료 로그는 컨테이너가 부르는 리스너에서 난다. */
+    private void fireAsyncError(Throwable failure) throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/ai/subscribe/job-1");
+        request.setAsyncSupported(true);
+
+        filter.doFilter(request, new MockHttpServletResponse(),
+                (req, res) -> ((HttpServletRequest) req).startAsync());
+
+        MockAsyncContext asyncContext = (MockAsyncContext) request.getAsyncContext();
+        for (AsyncListener listener : asyncContext.getListeners()) {
+            listener.onError(new AsyncEvent(asyncContext, failure));
+        }
     }
 }
