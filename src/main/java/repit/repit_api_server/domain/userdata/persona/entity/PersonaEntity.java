@@ -50,4 +50,12 @@ public class PersonaEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Gender gender;
+
+    // 카드에 쓰는 사진. 값이 없으면 프론트가 기본 이미지를 쓴다.
+    @Column(length = 2083)
+    private String imageUrl;
+
+    // 카드에 쓰는 한 줄 소개. 없으면 프론트가 비워둔다.
+    @Column(columnDefinition = "TEXT")
+    private String description;
 }

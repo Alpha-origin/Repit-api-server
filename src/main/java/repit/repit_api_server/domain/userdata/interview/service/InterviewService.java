@@ -36,11 +36,12 @@ import repit.repit_api_server.global.response.UserResponse;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -51,8 +52,9 @@ public class InterviewService {
 
     private static final Logger log = LoggerFactory.getLogger(InterviewService.class);
 
-    // N:1 면접은 직책마다 한 명씩, 이 순서로 진행한다.
-    private static final List<Role> MULTI_ROLES = List.of(Role.TECH, Role.HR, Role.CEO);
+    // 기술 면접관 한 명은 반드시 있어야 한다. 원질문을 다시 쓰는 몫이 그 자리라 대신할 면접관이 없다.
+    // 나머지 직책은 이만큼까지 붙일 수 있다 — 분석 서버 otherPersonas가 최대 4명이다.
+    private static final int MAX_OTHER_PERSONAS = 4;
 
     private final InterviewRepository interviewRepository;
     private final QuestionRepository questionRepository;
@@ -85,10 +87,11 @@ public class InterviewService {
     }
 
     /**
-     * N:1 면접 생성. 면접관은 기술·인사·CEO 한 명씩이다.
+     * N:1 면접 생성. 기술 면접관 한 명에 다른 직책이 한 명씩 더 붙는다.
      *
-     * <p>진행 순서는 요청 순서가 아니라 직책 순서로 정한다. 질문 배열도 이 순서를 따르고,
-     * 꼬리질문이 부모 질문 바로 뒤에 삽입되므로 한 면접관의 질문 묶음이 끝나야 다음 면접관으로 넘어간다.
+     * <p>진행 순서는 기술 면접관이 먼저고, 나머지는 요청에 담긴 순서를 그대로 따른다. 질문 배열도
+     * 이 순서를 따르고, 꼬리질문이 부모 질문 바로 뒤에 삽입되므로 한 면접관의 질문 묶음이 끝나야
+     * 다음 면접관으로 넘어간다.
      */
     private InterviewResponse createMultiInterview(UserResponse user, List<Long> requestedIds) {
         List<Long> personaIds = new ArrayList<>(new LinkedHashSet<>(requestedIds));
@@ -104,7 +107,7 @@ public class InterviewService {
             }
         }
 
-        List<PersonaEntity> ordered = orderByRole(personas.values());
+        List<PersonaEntity> ordered = orderForMulti(personaIds.stream().map(personas::get).toList());
 
         InterviewEntity saved = interviewRepository.save(InterviewEntity.builder()
                 .userId(user.getId())
@@ -126,22 +129,38 @@ public class InterviewService {
         return InterviewResponse.from(saved, ordered.stream().map(PersonaEntity::getPersonaId).toList());
     }
 
-    /** 직책이 하나라도 비거나 겹치면 면접이 성립하지 않으므로 생성 시점에 막는다. */
-    private List<PersonaEntity> orderByRole(Iterable<PersonaEntity> personas) {
-        Map<Role, List<PersonaEntity>> byRole = new EnumMap<>(Role.class);
-        for (PersonaEntity persona : personas) {
-            byRole.computeIfAbsent(persona.getRole(), role -> new ArrayList<>()).add(persona);
+    /**
+     * 진행 순서를 정한다. 기술 면접관이 맨 앞이고 나머지는 요청 순서 그대로다.
+     *
+     * <p>기술 면접관이 없으면 다시 쓸 원질문을 맡을 사람이 없고, 같은 직책이 둘이면 슬롯이
+     * 겹쳐 면접이 성립하지 않는다. 둘 다 생성 시점에 막는다.
+     */
+    private List<PersonaEntity> orderForMulti(List<PersonaEntity> personas) {
+        List<PersonaEntity> tech = personas.stream()
+                .filter(persona -> persona.getRole() == Role.TECH)
+                .toList();
+        if (tech.size() != 1) {
+            throw BusinessException.unprocessable("N:1 면접에는 기술 면접관을 한 명 지정해야 합니다.");
+        }
+
+        List<PersonaEntity> others = personas.stream()
+                .filter(persona -> persona.getRole() != Role.TECH)
+                .toList();
+        if (others.isEmpty() || others.size() > MAX_OTHER_PERSONAS) {
+            throw BusinessException.unprocessable(
+                    "N:1 면접에는 기술 외 면접관을 1~" + MAX_OTHER_PERSONAS + "명 지정해야 합니다.");
+        }
+
+        Set<Role> seen = EnumSet.noneOf(Role.class);
+        for (PersonaEntity persona : others) {
+            if (!seen.add(persona.getRole())) {
+                throw BusinessException.unprocessable("같은 직책의 면접관을 두 명 지정할 수 없습니다.");
+            }
         }
 
         List<PersonaEntity> ordered = new ArrayList<>();
-        for (Role role : MULTI_ROLES) {
-            List<PersonaEntity> matched = byRole.get(role);
-            if (matched == null || matched.size() != 1) {
-                throw BusinessException.unprocessable(
-                        "N:1 면접은 기술·인사·CEO 면접관을 한 명씩 지정해야 합니다.");
-            }
-            ordered.add(matched.getFirst());
-        }
+        ordered.add(tech.getFirst());
+        ordered.addAll(others);
         return ordered;
     }
 
@@ -186,12 +205,7 @@ public class InterviewService {
         if (!user.getId().equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 시작할 수 있습니다.");
         }
-        // N:1은 질문 재작성이 아니라 신규 생성이 섞인 multi tailor를 써야 한다. 분석 서버 스펙이 확정되기 전까지는
-        // 1:1용 재작성을 태우면 인사·CEO 질문 없이 면접이 열리므로 아예 막는다.
-        if (interview.getMode() == InterviewMode.MULTI) {
-            throw BusinessException.unprocessable("N:1 면접 시작은 아직 준비 중입니다.");
-        }
-
+        // N:1은 질문 재작성이 아니라 신규 생성이 섞인 multi tailor로 간다. 갈림길은 서비스 안에 있다.
         QuestionTailorEntity tailor = questionTailorService.requestTailor(interview, user);
         return InterviewPrepareResponse.of(tailor, interview.getSessionId(), prepareMessage(tailor));
     }
@@ -202,6 +216,12 @@ public class InterviewService {
         }
         if (Boolean.TRUE.equals(tailor.getChatDelivered())) {
             return "면접 준비가 끝났습니다.";
+        }
+        // N:1은 실패하면 폴백 없이 질문이 비어 있다. 전달 실패와 구분해서 알려야 재시도 여부가 갈린다.
+        if (tailor.getQuestions() == null || tailor.getQuestions().isEmpty()) {
+            return tailor.getErrorMessage() == null
+                    ? "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요."
+                    : tailor.getErrorMessage();
         }
         return "질문은 준비됐지만 채팅 서버에 전달하지 못했습니다. 잠시 후 다시 시도해주세요.";
     }

@@ -15,8 +15,8 @@ class SseEmitterRepositoryTest {
 
     @Test
     void 예전_구독의_정리는_새로_붙은_구독을_밀어내지_않는다() {
-        SseEmitter old = new SseEmitter();
-        SseEmitter fresh = new SseEmitter();
+        SseSubscription old = new SseSubscription(null);
+        SseSubscription fresh = new SseSubscription(null);
 
         repository.save("job-1", old);
         repository.save("job-1", fresh);
@@ -27,7 +27,7 @@ class SseEmitterRepositoryTest {
 
     @Test
     void 자기_자신은_걷어낸다() {
-        SseEmitter emitter = new SseEmitter();
+        SseSubscription emitter = new SseSubscription(null);
         repository.save("job-2", emitter);
 
         assertThat(repository.remove("job-2", emitter)).isTrue();
@@ -37,7 +37,7 @@ class SseEmitterRepositoryTest {
     // 먼저 걷어낸 쪽만 이벤트를 보내도록, 두 번째 시도는 실패해야 한다.
     @Test
     void 한_번_걷어낸_구독은_다시_차지할_수_없다() {
-        SseEmitter emitter = new SseEmitter();
+        SseSubscription emitter = new SseSubscription(null);
         repository.save("job-3", emitter);
 
         assertThat(repository.remove("job-3", emitter)).isTrue();
@@ -46,8 +46,8 @@ class SseEmitterRepositoryTest {
 
     @Test
     void 겹친_구독은_밀려난_쪽을_돌려준다() {
-        SseEmitter old = new SseEmitter();
-        SseEmitter fresh = new SseEmitter();
+        SseSubscription old = new SseSubscription(null);
+        SseSubscription fresh = new SseSubscription(null);
 
         assertThat(repository.save("job-4", old)).isNull();
         assertThat(repository.save("job-4", fresh)).isSameAs(old);

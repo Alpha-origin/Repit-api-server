@@ -42,7 +42,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** N:1 면접은 기술·인사·CEO 한 명씩이고, 진행 순서는 요청 순서가 아니라 직책 순서다. */
+/** N:1 면접은 기술 면접관 한 명에 다른 직책이 한 명씩 붙고, 진행 순서는 기술이 먼저다. */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class InterviewServiceMultiCreateTest {
@@ -99,7 +99,7 @@ class InterviewServiceMultiCreateTest {
     }
 
     @Test
-    void 면접관은_직책_순서로_배치된다() {
+    void 기술_면접관이_먼저고_나머지는_요청_순서를_따른다() {
         // 요청은 CEO -> 기술 -> 인사 순서로 왔다.
         when(personaRepository.findAllById(List.of(13L, 11L, 12L))).thenReturn(List.of(
                 persona(13L, Role.CEO), persona(11L, Role.TECH), persona(12L, Role.HR)));
@@ -110,28 +110,52 @@ class InterviewServiceMultiCreateTest {
         assertThat(response.getMode()).isEqualTo(InterviewMode.MULTI);
         // 면접관이 여럿이라 단일 personaId는 비워 둔다.
         assertThat(response.getPersonaId()).isNull();
-        assertThat(response.getPersonaIds()).containsExactly(11L, 12L, 13L);
+        // 기술 면접관이 원질문을 맡아 맨 앞이고, 나머지는 사용자가 고른 순서 그대로다.
+        assertThat(response.getPersonaIds()).containsExactly(11L, 13L, 12L);
 
         verify(interviewPersonaRepository).saveAll(savedMembers.capture());
         assertThat(savedMembers.getValue()).extracting(InterviewPersonaEntity::getPersonaId)
-                .containsExactly(11L, 12L, 13L);
+                .containsExactly(11L, 13L, 12L);
         assertThat(savedMembers.getValue()).extracting(InterviewPersonaEntity::getPersonaOrder)
                 .containsExactly(0, 1, 2);
         assertThat(savedMembers.getValue().getFirst().getInterviewId()).isEqualTo(3L);
     }
 
     @Test
-    void 직책이_빠지면_422다() {
+    void 기술_외_면접관은_한_명만_있어도_된다() {
         when(personaRepository.findAllById(List.of(11L, 12L))).thenReturn(List.of(
                 persona(11L, Role.TECH), persona(12L, Role.HR)));
 
+        InterviewResponse response = service.createInterview("Bearer t",
+                new CreateInterviewRequest(null, null, List.of(11L, 12L)));
+
+        assertThat(response.getPersonaIds()).containsExactly(11L, 12L);
+    }
+
+    @Test
+    void 기술_면접관이_없으면_422다() {
+        // 원질문을 다시 쓸 자리가 기술 면접관뿐이라, 없으면 질문을 구성할 수 없다.
+        when(personaRepository.findAllById(List.of(12L, 13L))).thenReturn(List.of(
+                persona(12L, Role.HR), persona(13L, Role.CEO)));
+
         assertThatThrownBy(() -> service.createInterview("Bearer t",
-                new CreateInterviewRequest(null, null, List.of(11L, 12L))))
+                new CreateInterviewRequest(null, null, List.of(12L, 13L))))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
 
         verify(interviewRepository, never()).save(any());
+    }
+
+    @Test
+    void 기술_면접관만_있으면_422다() {
+        when(personaRepository.findAllById(List.of(11L))).thenReturn(List.of(persona(11L, Role.TECH)));
+
+        assertThatThrownBy(() -> service.createInterview("Bearer t",
+                new CreateInterviewRequest(null, null, List.of(11L))))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
     }
 
     @Test

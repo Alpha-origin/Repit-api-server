@@ -7,8 +7,10 @@ import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorAcceptedResponse;
@@ -55,9 +57,21 @@ public class AiServerClient {
                 this::resolveMessage, false);
     }
 
+    public FeedbackAcceptedResponse requestMultiFeedback(FeedbackMultiRequest request) {
+        return executor.execute(SERVER_NAME,
+                () -> aiServerApi.requestMultiFeedback(request),
+                this::resolveMessage, false);
+    }
+
     public QuestionTailorAcceptedResponse tailorQuestions(QuestionTailorRequest request) {
         return executor.execute(SERVER_NAME,
                 () -> aiServerApi.tailorQuestions(request),
+                this::resolveMessage, false);
+    }
+
+    public QuestionTailorAcceptedResponse tailorQuestionsMulti(QuestionTailorMultiRequest request) {
+        return executor.execute(SERVER_NAME,
+                () -> aiServerApi.tailorQuestionsMulti(request),
                 this::resolveMessage, false);
     }
 

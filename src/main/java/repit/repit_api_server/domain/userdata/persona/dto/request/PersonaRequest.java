@@ -33,4 +33,9 @@ public class PersonaRequest {
 
     private Gender gender;
 
+    // 카드 사진·설명. 없으면 비워 보낸다.
+    private String imageUrl;
+
+    private String description;
+
 }

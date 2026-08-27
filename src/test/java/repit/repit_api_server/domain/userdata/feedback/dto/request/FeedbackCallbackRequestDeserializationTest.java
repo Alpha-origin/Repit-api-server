@@ -8,7 +8,12 @@ import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** N:1 콜백은 1:1과 같은 엔드포인트로 들어온다. 늘어난 personas 계층이 그대로 읽히는지 확인한다. */
+/**
+ * N:1 콜백은 1:1과 같은 엔드포인트로 들어온다. 늘어난 personas 계층이 그대로 읽히는지 확인한다.
+ *
+ * <p>면접관 직책은 분석 서버가 {@code role}로 보낸다. 우리 저장 이름은 persona_role이라 이름이
+ * 어긋나 있는데, 여기서 놓치면 직책이 통째로 비어 결과 화면에서 면접관 구분이 사라진다.
+ */
 class FeedbackCallbackRequestDeserializationTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
@@ -34,7 +39,7 @@ class FeedbackCallbackRequestDeserializationTest {
                 "personas": [
                   {
                     "personaId": 11,
-                    "personaRole": "TECH",
+                    "role": "TECH",
                     "score": 78,
                     "comment": "선택 근거는 분명하나 대안 검토가 얕습니다.",
                     "strengths": ["측정값을 근거로 제시함"],
@@ -42,8 +47,8 @@ class FeedbackCallbackRequestDeserializationTest {
                     "answeredCount": 3,
                     "questionCount": 3
                   },
-                  { "personaId": 12, "personaRole": "HR", "score": 70 },
-                  { "personaId": 13, "personaRole": "CEO", "score": 64 }
+                  { "personaId": 12, "role": "HR", "score": 70 },
+                  { "personaId": 13, "role": "CEO", "score": 64 }
                 ],
                 "feedbacks": [
                   {
@@ -58,6 +63,23 @@ class FeedbackCallbackRequestDeserializationTest {
                     "comment": "선택 이유는 설득력 있으나 운영 시 부작용까지는 못 짚었습니다."
                   }
                 ]
+              }
+            }
+            """;
+
+    /**
+     * 분석 서버는 personaId를 문자열로 받는다(FeedbackPersonaRequest.personaId: string).
+     * 그대로 되돌려주는 값이라 콜백에도 문자열로 실려 올 수 있다.
+     */
+    private static final String STRING_PERSONA_ID_CALLBACK = """
+            {
+              "jobId": "job-3",
+              "sessionId": "sess-3",
+              "status": "succeeded",
+              "result": {
+                "overall": { "totalScore": 70 },
+                "personas": [{ "personaId": "11", "role": "TECH", "score": 78 }],
+                "feedbacks": [{ "questionId": "901", "personaId": "11", "comment": "좋음" }]
               }
             }
             """;
@@ -109,6 +131,25 @@ class FeedbackCallbackRequestDeserializationTest {
 
             assertThat(request.getResult().getPersonas()).isNull();
             assertThat(request.getResult().getFeedbacks().getFirst().getPersonaId()).isNull();
+        });
+    }
+
+    /**
+     * 면접관 식별자를 문자열로 받아도 읽혀야 한다.
+     *
+     * <p>우리는 Long으로 들고 있어 Jackson의 문자열-숫자 변환에 기대고 있다. 그 변환이 막히면
+     * personas 계층에서 역직렬화가 통째로 실패하고, 콜백은 400으로 끝나 결과가 영구 폐기된다.
+     */
+    @Test
+    void 면접관_식별자가_문자열로_와도_읽힌다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+
+            FeedbackCallbackRequest request =
+                    objectMapper.readValue(STRING_PERSONA_ID_CALLBACK, FeedbackCallbackRequest.class);
+
+            assertThat(request.getResult().getPersonas().getFirst().getPersonaId()).isEqualTo(11L);
+            assertThat(request.getResult().getFeedbacks().getFirst().getPersonaId()).isEqualTo(11L);
         });
     }
 }

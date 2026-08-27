@@ -11,6 +11,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
@@ -19,6 +20,7 @@ import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQues
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionTailorRepository;
+import repit.repit_api_server.domain.metadata.sse.SseNotifier;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.exception.ExternalApiException;
@@ -46,6 +48,8 @@ class QuestionTailorServiceCallbackTest {
     @Mock
     private InterviewRepository interviewRepository;
     @Mock
+    private InterviewPersonaRepository interviewPersonaRepository;
+    @Mock
     private PersonaRepository personaRepository;
     @Mock
     private AnalysisDataRepository analysisDataRepository;
@@ -59,12 +63,16 @@ class QuestionTailorServiceCallbackTest {
     @Captor
     private ArgumentCaptor<QuestionTailorEntity> savedTailor;
 
+    @Mock
+    private SseNotifier sseNotifier;
+
     private QuestionTailorService service;
 
     @BeforeEach
     void setUp() {
-        service = new QuestionTailorService(questionTailorRepository, interviewRepository, personaRepository,
-                analysisDataRepository, aiServerClient, authServerClient, chatInterviewHandoffService,
+        service = new QuestionTailorService(questionTailorRepository, interviewRepository,
+                interviewPersonaRepository, personaRepository,
+                analysisDataRepository, aiServerClient, authServerClient, chatInterviewHandoffService, sseNotifier,
                 new ObjectMapper());
 
         // 넘길 권리를 차지한 상태를 기본으로 둔다. 차지하지 못하는 경우는 따로 검증한다.

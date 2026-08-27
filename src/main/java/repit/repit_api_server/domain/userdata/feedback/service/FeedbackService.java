@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallbackRequest;
+import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackResponse;
@@ -20,7 +21,10 @@ import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackReposi
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
@@ -37,7 +41,9 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -48,6 +54,7 @@ public class FeedbackService {
 
     private static final Logger log = LoggerFactory.getLogger(FeedbackService.class);
 
+    // 1:1과 N:1이 같은 경로로 돌아온다. 콜백 본문은 personas 블록이 있고 없고만 다르다.
     private static final String CALLBACK_PATH = "/api/feedbacks/callback";
     private static final int MAX_QUESTIONS = 50;
     private static final String STATUS_SUCCEEDED = "succeeded";
@@ -57,6 +64,7 @@ public class FeedbackService {
     private final FeedbackItemRepository feedbackItemRepository;
     private final FeedbackPersonaRepository feedbackPersonaRepository;
     private final InterviewRepository interviewRepository;
+    private final InterviewPersonaRepository interviewPersonaRepository;
     private final PersonaRepository personaRepository;
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
@@ -93,9 +101,11 @@ public class FeedbackService {
             }
         }
 
-        FeedbackSoloRequest request = toSoloRequest(interview);
-
-        FeedbackAcceptedResponse accepted = aiServerClient.requestSoloFeedback(request);
+        // N:1은 면접관별 평가까지 받아야 해서 엔드포인트가 다르다. 1:1 채점에 태우면
+        // 질문이 누구 것인지 잃고 personas 블록도 오지 않는다.
+        FeedbackAcceptedResponse accepted = interview.getMode() == InterviewMode.MULTI
+                ? aiServerClient.requestMultiFeedback(toMultiRequest(interview))
+                : aiServerClient.requestSoloFeedback(toSoloRequest(interview));
 
         feedbackRepository.save(FeedbackEntity.builder()
                 .interviewId(interview.getInterviewId())
@@ -109,50 +119,47 @@ public class FeedbackService {
     }
 
     /**
-     * 분석 서버에 보낼 채점 요청을 만든다.
+     * 채점에 실을 면접 기록. 질문과 답변, 그리고 질문 id 모음을 함께 들고 다닌다.
      *
      * <p>면접 내용은 채팅 서버가 아니라 우리 DB에서 읽는다. 채팅 서버는 면접이 끝나면 결과를
      * 이 서버로 넘기고 곧바로 세션을 지우므로, 피드백을 요청하는 시점에는 물어볼 상대가 없다.
      * 우리 DB가 그때부터 유일한 원본이다.
      */
-    private FeedbackSoloRequest toSoloRequest(InterviewEntity interview) {
+    private record Transcript(List<QuestionEntity> questions, List<AnswerEntity> answers, Set<Long> questionIds) {
+    }
+
+    /**
+     * 채점 대상을 읽고, 분석 서버가 422로 즉시 거부하는 조건을 요청 전에 걸러낸다.
+     * 콜백까지 갔다 오면 사용자는 한참 기다린 끝에 실패를 보게 된다.
+     */
+    private Transcript loadTranscript(InterviewEntity interview) {
         Long interviewId = interview.getInterviewId();
 
-        List<QuestionEntity> questionEntities =
+        List<QuestionEntity> questions =
                 questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(interviewId);
-        List<AnswerEntity> answerEntities =
+        List<AnswerEntity> allAnswers =
                 answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(interviewId);
 
         // 면접이 끝나야 채팅 서버가 기록을 넘겨준다. 그 전에는 채점할 것이 없다.
-        if (questionEntities.isEmpty() && interview.getStatus() == Status.IN_PROGRESS) {
+        if (questions.isEmpty() && interview.getStatus() == Status.IN_PROGRESS) {
             throw BusinessException.unprocessable("면접이 아직 끝나지 않았습니다. 면접을 마친 뒤 다시 요청해주세요.");
         }
 
-        Set<Long> questionIds = questionEntities.stream()
+        Set<Long> questionIds = questions.stream()
                 .map(QuestionEntity::getQuestionId)
                 .collect(Collectors.toSet());
 
-        List<FeedbackSoloRequest.Question> questions = questionEntities.stream()
-                .map(question -> toQuestion(question, questionIds))
-                .toList();
-
-        List<FeedbackSoloRequest.Answer> answers = new ArrayList<>();
-        for (AnswerEntity answer : answerEntities) {
+        List<AnswerEntity> answers = new ArrayList<>();
+        for (AnswerEntity answer : allAnswers) {
             if (!questionIds.contains(answer.getQuestionId())) {
                 // 질문 없는 답변을 실어 보내면 분석 서버가 요청 전체를 거부한다.
                 log.warn("답변에 대응하는 질문이 없어 채점에서 제외합니다. interviewId={}, questionId={}",
                         interviewId, answer.getQuestionId());
                 continue;
             }
-            answers.add(FeedbackSoloRequest.Answer.builder()
-                    .answerId(String.valueOf(answer.getAnswerId()))
-                    .questionId(String.valueOf(answer.getQuestionId()))
-                    .content(answer.getContent())
-                    .createdAt(toUtc(answer.getCreatedAt()))
-                    .build());
+            answers.add(answer);
         }
 
-        // 아래 조건은 분석 서버가 422로 즉시 거부하는 항목이라 요청 전에 걸러낸다.
         if (questions.isEmpty()) {
             throw BusinessException.unprocessable("채점할 질문이 없습니다.");
         }
@@ -163,15 +170,119 @@ public class FeedbackService {
             throw BusinessException.unprocessable("채점할 답변이 없습니다.");
         }
 
+        return new Transcript(questions, answers, questionIds);
+    }
+
+    private FeedbackSoloRequest toSoloRequest(InterviewEntity interview) {
+        Transcript transcript = loadTranscript(interview);
+
         return FeedbackSoloRequest.builder()
                 .sessionId(interview.getSessionId())
-                .interviewId(String.valueOf(interviewId))
+                .interviewId(String.valueOf(interview.getInterviewId()))
                 .userId(String.valueOf(interview.getUserId()))
                 .personaType(personaTypeOf(interview))
                 .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
-                .questions(questions)
-                .answers(answers)
+                .questions(transcript.questions().stream()
+                        .map(question -> toQuestion(question, transcript.questionIds()))
+                        .toList())
+                .answers(transcript.answers().stream()
+                        .map(answer -> FeedbackSoloRequest.Answer.builder()
+                                .answerId(String.valueOf(answer.getAnswerId()))
+                                .questionId(String.valueOf(answer.getQuestionId()))
+                                .content(answer.getContent())
+                                .createdAt(toUtc(answer.getCreatedAt()))
+                                .build())
+                        .toList())
                 .build();
+    }
+
+    /**
+     * N:1 채점 요청.
+     *
+     * <p>1:1과 다른 점은 두 가지다 — 참여 면접관 명단이 함께 나가고, 질문마다 누가 물었는지가 붙는다.
+     * 명단이 있어야 담당 문항이 없는 면접관도 결과에 자리를 얻고, 질문별 면접관이 있어야
+     * 면접관별 평가가 나뉜다.
+     */
+    private FeedbackMultiRequest toMultiRequest(InterviewEntity interview) {
+        Transcript transcript = loadTranscript(interview);
+        List<PersonaEntity> members = orderedPersonas(interview.getInterviewId());
+        Map<Long, Long> personaByQuestion = resolveQuestionPersonas(transcript, members.getFirst().getPersonaId());
+
+        return FeedbackMultiRequest.builder()
+                .sessionId(interview.getSessionId())
+                .interviewId(String.valueOf(interview.getInterviewId()))
+                .userId(String.valueOf(interview.getUserId()))
+                .personas(members.stream()
+                        .map(persona -> FeedbackMultiRequest.Persona.builder()
+                                .personaId(String.valueOf(persona.getPersonaId()))
+                                .role(persona.getRole() == null ? null : persona.getRole().name())
+                                .style(persona.getType() == null ? null : persona.getType().name())
+                                .build())
+                        .toList())
+                .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
+                .questions(transcript.questions().stream()
+                        .map(question -> toMultiQuestion(question, transcript.questionIds(), personaByQuestion))
+                        .toList())
+                .answers(transcript.answers().stream()
+                        .map(answer -> FeedbackMultiRequest.Answer.builder()
+                                .answerId(String.valueOf(answer.getAnswerId()))
+                                .questionId(String.valueOf(answer.getQuestionId()))
+                                .content(answer.getContent())
+                                .createdAt(toUtc(answer.getCreatedAt()))
+                                .build())
+                        .toList())
+                .build();
+    }
+
+    /** 면접 진행 순서대로 정리한 면접관. 맨 앞이 기술 면접관이다. */
+    private List<PersonaEntity> orderedPersonas(Long interviewId) {
+        List<Long> personaIds = interviewPersonaRepository
+                .findAllByInterviewIdOrderByPersonaOrderAsc(interviewId).stream()
+                .map(InterviewPersonaEntity::getPersonaId)
+                .toList();
+        if (personaIds.isEmpty()) {
+            throw BusinessException.unprocessable("면접에 참여한 면접관을 찾을 수 없습니다.");
+        }
+
+        Map<Long, PersonaEntity> found = personaRepository.findAllById(personaIds).stream()
+                .collect(Collectors.toMap(PersonaEntity::getPersonaId, persona -> persona));
+
+        List<PersonaEntity> ordered = new ArrayList<>();
+        for (Long personaId : personaIds) {
+            PersonaEntity persona = found.get(personaId);
+            if (persona == null) {
+                throw BusinessException.notFound("면접관을 찾을 수 없습니다: " + personaId);
+            }
+            ordered.add(persona);
+        }
+        return ordered;
+    }
+
+    /**
+     * 질문마다 누가 물었는지를 정한다. 이 값이 비면 분석 서버가 요청 전체를 422로 거부한다.
+     *
+     * <p>꼬리질문은 부모의 면접관을 물려받는다. 채팅 서버가 값을 달아 보내지만, 예전 면접 기록에는
+     * 그 자리가 비어 있다. 부모까지 비어 있으면 기술 면접관 것으로 돌린다 — 한 문항 때문에
+     * 면접 전체가 채점되지 않는 편보다 낫다.
+     *
+     * <p>질문은 저장 순서대로 읽히고 부모가 자식보다 먼저 저장되므로, 한 번 훑으면 부모가 먼저 채워진다.
+     */
+    private Map<Long, Long> resolveQuestionPersonas(Transcript transcript, Long fallbackPersonaId) {
+        Map<Long, Long> personaByQuestion = new HashMap<>();
+
+        for (QuestionEntity question : transcript.questions()) {
+            Long personaId = question.getPersonaId();
+            if (personaId == null && question.getParentId() != null) {
+                personaId = personaByQuestion.get(question.getParentId());
+            }
+            if (personaId == null) {
+                log.warn("질문에 면접관이 없어 기술 면접관으로 채점합니다. questionId={}", question.getQuestionId());
+                personaId = fallbackPersonaId;
+            }
+            personaByQuestion.put(question.getQuestionId(), personaId);
+        }
+
+        return personaByQuestion;
     }
 
     private FeedbackSoloRequest.Question toQuestion(QuestionEntity question, Set<Long> questionIds) {
@@ -182,6 +293,22 @@ public class FeedbackService {
 
         return FeedbackSoloRequest.Question.builder()
                 .questionId(String.valueOf(question.getQuestionId()))
+                .parentId(parentId)
+                .type(type)
+                .intention(intentionOf(question))
+                .content(question.getContent())
+                .createdAt(toUtc(question.getCreatedAt()))
+                .build();
+    }
+
+    private FeedbackMultiRequest.Question toMultiQuestion(QuestionEntity question, Set<Long> questionIds,
+                                                         Map<Long, Long> personaByQuestion) {
+        Type type = typeOf(question, questionIds);
+        String parentId = type == Type.FOLLOW ? String.valueOf(question.getParentId()) : null;
+
+        return FeedbackMultiRequest.Question.builder()
+                .questionId(String.valueOf(question.getQuestionId()))
+                .personaId(String.valueOf(personaByQuestion.get(question.getQuestionId())))
                 .parentId(parentId)
                 .type(type)
                 .intention(intentionOf(question))
@@ -331,8 +458,16 @@ public class FeedbackService {
     }
 
     /**
-     * N:1 면접은 채팅 서버가 면접 종료 시점에 분석 서버를 직접 호출한다.
-     * 이 서버는 요청을 접수한 적이 없어 대응하는 행이 없으므로, 세션으로 면접을 찾아 그때 만든다.
+     * 접수 기록이 없는 콜백을 세션으로 되짚어 받아낸다.
+     *
+     * <p>채점을 요청하는 쪽은 언제나 이 서버다. 채팅 서버는 웹소켓만 맡고, 면접이 끝나면
+     * 기록을 {@code POST /api/interviews/result}로 넘길 뿐 분석 서버를 부르지 않는다.
+     * 그러니 정상적인 흐름이라면 콜백에 대응하는 행이 이미 있다.
+     *
+     * <p>없을 수 있는 경우는 하나다 — 접수는 됐는데 202 응답을 우리가 못 받은 때. 그러면
+     * 요청은 예외로 끝나 행이 남지 않지만 채점은 그대로 돌아 콜백이 온다. 여기서 받아두지
+     * 않으면 분석 서버는 두 번 시도한 뒤 결과를 영구 폐기하고, 사용자는 채점이 끝났는데도
+     * 아무것도 보지 못한다.
      */
     private FeedbackEntity createFromSession(String sessionId) {
         InterviewEntity interview = interviewRepository.findBySessionId(sessionId).orElse(null);
