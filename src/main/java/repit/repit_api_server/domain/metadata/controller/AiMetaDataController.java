@@ -153,7 +153,7 @@ public class AiMetaDataController {
             return ApiResponse.success(null);
         }
 
-        sseNotifier.sendAnalysisResult(saved.getJob_id(), saved.getStatus(), saved);
+        sseNotifier.sendAnalysisResult(saved.getJobId(), saved.getStatus(), saved);
 
         return ApiResponse.success(saved);
     }

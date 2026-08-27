@@ -55,7 +55,7 @@ public class AnalysisLaunchService {
                 .callback_url(callbackBaseUrl + CALLBACK_PATH)
                 .build();
 
-        // 소유자는 분석 서버에 요청하기 전에 확인해둔다. 접수는 분석 서버가 job_id를 돌려줘야
+        // 소유자는 분석 서버에 요청하기 전에 확인해둔다. 접수는 분석 서버가 jobId를 돌려줘야
         // 할 수 있는데, 그 응답이 콜백보다 늦게 오는 일이 있다. 그때 사용자 조회까지 뒤에 두면
         // 소유자가 더 늦게 붙고, 그 사이 도착한 콜백이 만든 행은 주인 없이 남는다.
         Long userId = resolveOwner(authorization);
@@ -98,7 +98,7 @@ public class AnalysisLaunchService {
     private void registerJob(GenerateResponse response, Long userId, LocalDateTime requestedAt) {
         if (response == null || response.getJobId() == null) {
             // jobId가 없으면 구독도 조회도 할 수 없다. 성공으로 돌려주면 원인을 찾을 수 없다.
-            log.error("분석 서버 응답에 job_id가 없습니다. status={}, message={}",
+            log.error("분석 서버 응답에 jobId가 없습니다. status={}, message={}",
                     response == null ? null : response.getStatus(),
                     response == null ? null : response.getMessage());
             throw new ExternalApiException("분석 서버가 작업 번호를 돌려주지 않았습니다.", null, null);

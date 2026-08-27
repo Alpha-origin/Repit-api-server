@@ -78,9 +78,9 @@ public class AiMetaDataService {
      */
     @Transactional
     public CallbackSuccessResponse saveResult(CallbackSuccessRequest request) {
-        String jobId = request.getJob_id();
+        String jobId = request.getJobId();
         if (jobId == null) {
-            log.warn("job_id 없는 분석 콜백을 받았습니다. status={}", request.getStatus());
+            log.warn("jobId 없는 분석 콜백을 받았습니다. status={}", request.getStatus());
             return null;
         }
 
@@ -165,7 +165,7 @@ public class AiMetaDataService {
      */
     private CallbackSuccessResponse toResponse(AnalysisDataEntity data) {
         return CallbackSuccessResponse.builder()
-                .job_id(data.getJobId())
+                .jobId(data.getJobId())
                 .status(statusName(data.getStatus()))
                 .result(data.getResult())
                 .error(toError(data))

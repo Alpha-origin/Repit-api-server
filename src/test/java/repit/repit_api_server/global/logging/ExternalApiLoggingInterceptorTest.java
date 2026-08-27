@@ -49,7 +49,7 @@ class ExternalApiLoggingInterceptorTest {
     void 나가는_요청과_돌아온_응답이_서버_이름과_함께_남는다() throws Exception {
         MockClientHttpRequest request = jsonRequest();
         ClientHttpRequestExecution execution = (req, body) ->
-                jsonResponse(HttpStatus.ACCEPTED, "{\"job_id\":\"job-1\"}");
+                jsonResponse(HttpStatus.ACCEPTED, "{\"jobId\":\"job-1\"}");
 
         interceptor.intercept(request, "{\"interview_id\":3}".getBytes(StandardCharsets.UTF_8), execution);
 
@@ -59,7 +59,7 @@ class ExternalApiLoggingInterceptorTest {
         assertThat(messages()).anySatisfy(message -> assertThat(message)
                 .contains("ext <-- [AI] POST http://ai-server/feedback/solo")
                 .contains("202 ACCEPTED")
-                .contains("{\"job_id\":\"job-1\"}"));
+                .contains("{\"jobId\":\"job-1\"}"));
     }
 
     @Test

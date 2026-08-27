@@ -13,10 +13,10 @@ class CallbackSuccessRequestDeserializationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(JacksonAutoConfiguration.class));
 
-    // /generate 는 snake_case로 콜백한다. 실패면 result 없이 error만 온다.
+    // /generate 콜백의 작업 식별자는 jobId다. 실패면 result 없이 error만 온다.
     private static final String FAILURE_CALLBACK = """
             {
-              "job_id": "3f0a",
+              "jobId": "3f0a",
               "status": "failed",
               "error": { "status_code": 403, "message": "private 저장소입니다." }
             }
@@ -29,7 +29,7 @@ class CallbackSuccessRequestDeserializationTest {
 
             CallbackSuccessRequest request = objectMapper.readValue(FAILURE_CALLBACK, CallbackSuccessRequest.class);
 
-            assertThat(request.getJob_id()).isEqualTo("3f0a");
+            assertThat(request.getJobId()).isEqualTo("3f0a");
             assertThat(request.getStatus()).isEqualTo("failed");
             assertThat(request.getResult()).isNull();
             assertThat(request.getError().getStatus_code()).isEqualTo(403);
