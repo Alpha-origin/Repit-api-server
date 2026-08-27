@@ -100,8 +100,9 @@ public class ChatInterviewHandoffService {
      * <p>분석 서버는 의도를 따로 주지 않는다. 대신 질문마다 붙는 기대 답변이 곧 확인하려는
      * 것이라 그것을 쓴다.
      *
-     * <p>기대 답변이 비어 오면 분류라도 넘긴다. 이 값은 면접이 끝나고 피드백을 요청할 때
-     * 채팅 서버를 거쳐 분석 서버로 되돌아가므로, 비워 보내면 그 단계에서 되찾을 길이 없다.
+     * <p>기대 답변이 비어 오면 분류라도 넘긴다. 이 값은 채팅 서버가 질문의 의도로 들고 있다가
+     * 면접이 끝날 때 기록과 함께 이 서버로 돌아오고, 그것이 그대로 채점 기준이 된다.
+     * 여기서 비워 보내면 그 뒤로는 되찾을 길이 없다.
      */
     private String intentionOf(TailoredQuestionResponse question) {
         String expectedAnswer = question.getExpectedAnswer();

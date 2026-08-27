@@ -40,8 +40,9 @@ import static org.mockito.Mockito.when;
 /**
  * N:1 피드백 콜백 저장.
  *
- * <p>N:1은 채팅 서버가 면접 종료 시점에 분석 서버를 직접 호출한다. 이 서버는 요청을 접수한 적이 없어
- * 대응하는 행이 없는 상태로 콜백을 받는다.
+ * <p>채점을 요청하는 쪽은 언제나 이 서버다. 그래도 접수 기록이 없는 콜백이 올 수 있다 —
+ * 접수는 됐는데 202 응답을 우리가 못 받으면 행이 남지 않은 채로 채점만 돌기 때문이다.
+ * 그때도 결과를 받아내야 한다. 여기서 흘리면 분석 서버가 두 번 시도한 뒤 영구 폐기한다.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -109,7 +110,7 @@ class FeedbackServiceMultiCallbackTest {
     }
 
     @Test
-    void 접수한_적_없는_세션이면_면접을_찾아_행을_만든다() {
+    void 접수_기록이_없어도_세션으로_면접을_찾아_결과를_받아낸다() {
         when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.empty());
         when(feedbackRepository.findTopBySessionIdOrderByCreatedAtDesc("sess-1")).thenReturn(Optional.empty());
         when(interviewRepository.findBySessionId("sess-1")).thenReturn(Optional.of(InterviewEntity.builder()

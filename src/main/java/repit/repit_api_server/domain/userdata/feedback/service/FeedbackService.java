@@ -458,8 +458,16 @@ public class FeedbackService {
     }
 
     /**
-     * N:1 면접은 채팅 서버가 면접 종료 시점에 분석 서버를 직접 호출한다.
-     * 이 서버는 요청을 접수한 적이 없어 대응하는 행이 없으므로, 세션으로 면접을 찾아 그때 만든다.
+     * 접수 기록이 없는 콜백을 세션으로 되짚어 받아낸다.
+     *
+     * <p>채점을 요청하는 쪽은 언제나 이 서버다. 채팅 서버는 웹소켓만 맡고, 면접이 끝나면
+     * 기록을 {@code POST /api/interviews/result}로 넘길 뿐 분석 서버를 부르지 않는다.
+     * 그러니 정상적인 흐름이라면 콜백에 대응하는 행이 이미 있다.
+     *
+     * <p>없을 수 있는 경우는 하나다 — 접수는 됐는데 202 응답을 우리가 못 받은 때. 그러면
+     * 요청은 예외로 끝나 행이 남지 않지만 채점은 그대로 돌아 콜백이 온다. 여기서 받아두지
+     * 않으면 분석 서버는 두 번 시도한 뒤 결과를 영구 폐기하고, 사용자는 채점이 끝났는데도
+     * 아무것도 보지 못한다.
      */
     private FeedbackEntity createFromSession(String sessionId) {
         InterviewEntity interview = interviewRepository.findBySessionId(sessionId).orElse(null);
