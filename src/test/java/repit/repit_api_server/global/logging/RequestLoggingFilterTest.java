@@ -13,10 +13,13 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.core.annotation.Order;
 import org.springframework.mock.web.MockAsyncContext;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockPart;
 import org.springframework.util.StreamUtils;
+import repit.repit_api_server.global.config.CorsConfig;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
@@ -236,6 +239,73 @@ class RequestLoggingFilterTest {
 
         assertThat(messages()).noneSatisfy(message -> assertThat(message).contains("interviewId"));
         assertThat(messages()).anySatisfy(message -> assertThat(message).contains("--> POST /api/feedbacks"));
+    }
+
+    /**
+     * CorsFilter는 허용하지 않은 오리진의 요청을 체인에 넘기지 않고 그 자리에서 끊는다.
+     * 로깅 필터가 뒤에 서 있으면 프론트 연동이 막힌 요청만 로그에서 통째로 사라진다.
+     */
+    @Test
+    void 로깅_필터가_CORS_필터보다_앞에_선다() {
+        int loggingOrder = RequestLoggingFilter.class.getAnnotation(Order.class).value();
+        int corsOrder = new CorsConfig().corsFilter().getOrder();
+
+        assertThat(loggingOrder).isLessThan(corsOrder);
+    }
+
+    /** 통과한 사전 요청은 곧바로 뒤따르는 본 요청과 겹쳐 흐름만 두 배로 늘린다. */
+    @Test
+    void 통과한_사전_요청은_남기지_않는다() throws Exception {
+        filter.doFilter(preflightRequest("POST"), new MockHttpServletResponse(),
+                (req, res) -> ((HttpServletResponse) res).setStatus(200));
+
+        assertThat(capturedLogs.list).isEmpty();
+    }
+
+    /**
+     * 막힌 사전 요청은 본 요청이 아예 나가지 못한다. 남기지 않으면 서버 쪽에는 흔적이 없고
+     * 브라우저에만 CORS 오류가 떠, 허용 목록의 무엇을 고쳐야 할지 알 수 없다.
+     */
+    @Test
+    void 막힌_사전_요청은_오리진과_함께_경고로_남는다() throws Exception {
+        filter.doFilter(preflightRequest("POST"), new MockHttpServletResponse(),
+                (req, res) -> ((HttpServletResponse) res).setStatus(403));
+
+        assertThat(capturedLogs.list).anySatisfy(event -> {
+            assertThat(event.getFormattedMessage())
+                    .contains("OPTIONS /api/feedbacks")
+                    .contains("403 FORBIDDEN")
+                    .contains("origin=https://허용되지-않은.example.com")
+                    .contains("요청한 메서드=POST");
+            assertThat(event.getLevel().levelStr).isEqualTo("WARN");
+        });
+    }
+
+    /**
+     * 업로드 본문은 메모리에 올릴 수 없어 본문 로그에서 빠진다. 그렇다고 아무것도 남기지 않으면
+     * 이 경로만 무엇이 올라왔는지 흔적이 없다. 파일 내용 대신 이름과 크기, 폼 값을 남긴다.
+     */
+    @Test
+    void 업로드_요청은_파일_이름과_크기_폼_값이_남는다() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/metaData/dataUpload");
+        request.setContentType(MediaType.MULTIPART_FORM_DATA_VALUE);
+        request.setParameter("gitUrls", "https://github.com/alpha/repit");
+        request.addPart(new MockPart("file", "포트폴리오.pdf", "내용".getBytes(StandardCharsets.UTF_8)));
+
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> {
+        });
+
+        assertThat(messages()).anySatisfy(message -> assertThat(message)
+                .contains("--> POST /api/v1/metaData/dataUpload")
+                .contains("gitUrls=https://github.com/alpha/repit")
+                .contains("file=포트폴리오.pdf"));
+    }
+
+    private MockHttpServletRequest preflightRequest(String requestMethod) {
+        MockHttpServletRequest request = new MockHttpServletRequest("OPTIONS", "/api/feedbacks");
+        request.addHeader(HttpHeaders.ORIGIN, "https://허용되지-않은.example.com");
+        request.addHeader(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, requestMethod);
+        return request;
     }
 
     private MockHttpServletRequest jsonRequest(String method, String uri, String body) {
