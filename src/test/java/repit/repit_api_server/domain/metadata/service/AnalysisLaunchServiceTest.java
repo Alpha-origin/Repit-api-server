@@ -59,11 +59,11 @@ class AnalysisLaunchServiceTest {
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
 
         when(aiServerClient.generate(any(GenerateRequest.class))).thenReturn(GenerateResponse.builder()
-                .job_id("job-1")
+                .jobId("job-1")
                 .status("accepted")
                 .build());
         when(aiServerClient.generateMock(any(GenerateRequest.class))).thenReturn(GenerateResponse.builder()
-                .job_id("mock-job-1")
+                .jobId("mock-job-1")
                 .status("accepted")
                 .build());
     }
@@ -81,7 +81,7 @@ class AnalysisLaunchServiceTest {
 
         GenerateResponse response = service.launch("Bearer token", metaData());
 
-        assertThat(response.getJob_id()).isEqualTo("job-1");
+        assertThat(response.getJobId()).isEqualTo("job-1");
         verify(aiMetaDataService).registerJob(eq("job-1"), eq(9L), any(LocalDateTime.class));
     }
 
@@ -154,7 +154,7 @@ class AnalysisLaunchServiceTest {
 
         GenerateResponse response = service.launch("Bearer token", metaData());
 
-        assertThat(response.getJob_id()).isEqualTo("job-1");
+        assertThat(response.getJobId()).isEqualTo("job-1");
     }
 
     private void doThrowOnRegister() {
