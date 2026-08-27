@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResultResponse;
 import repit.repit_api_server.domain.metadata.dto.response.GeneratedQuestionResponse;
 import repit.repit_api_server.domain.metadata.dto.response.ProjectSummaryResponse;
@@ -15,6 +16,8 @@ import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaE
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.metadata.sse.SseNotifier;
+import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewReadyResponse;
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
@@ -78,6 +81,7 @@ public class QuestionTailorService {
     private final AiServerClient aiServerClient;
     private final AuthServerClient authServerClient;
     private final ChatInterviewHandoffService chatInterviewHandoffService;
+    private final SseNotifier sseNotifier;
     private final ObjectMapper objectMapper;
 
     @Value("${app.callback-base-url}")
@@ -480,18 +484,80 @@ public class QuestionTailorService {
             return;
         }
 
+        boolean delivered;
         try {
             chatInterviewHandoffService.deliver(tailor);
             tailor.setChatDelivered(true);
             tailor.setChatErrorMessage(null);
+            delivered = true;
         } catch (RuntimeException e) {
             log.error("면접 데이터를 채팅 서버로 넘기지 못했습니다. tailorId={}, interviewId={}",
                     tailor.getTailorId(), tailor.getInterviewId(), e);
             // 차지했던 것을 놓아준다. 그대로 두면 넘어간 적이 없는데도 넘긴 것으로 남아 다시 시도하지 못한다.
             tailor.setChatDelivered(false);
             tailor.setChatErrorMessage(e.getMessage());
+            delivered = false;
         }
         questionTailorRepository.save(tailor);
+
+        // 저장이 끝난 뒤에 알린다. 웹은 이 이벤트를 받고 곧바로 상태를 조회하므로, 먼저 보내면
+        // 아직 저장되지 않은 것을 조회하게 된다.
+        notifySubscriber(tailor, delivered);
+    }
+
+    /**
+     * 구독 중인 웹에 면접 준비가 끝났음을 알린다.
+     *
+     * <p>웹은 분석 jobId 하나로 구독한 채 면접관을 고르고 면접 시작까지 진행한다. 그 구독을
+     * 되찾는 열쇠가 재작성 건에 남겨둔 분석 jobId다.
+     *
+     * <p>재작성이 실패했어도 준비 완료로 알린다. 그때는 원질문이 폴백으로 들어가 면접이 그대로
+     * 열리기 때문이다. 못 여는 것은 채팅 서버에 면접을 열지 못했을 때뿐이다.
+     */
+    private void notifySubscriber(QuestionTailorEntity tailor, boolean delivered) {
+        String analysisJobId = tailor.getAnalysisJobId();
+        if (analysisJobId == null) {
+            // 어느 분석에서 비롯됐는지 모르면 되찾을 구독도 없다. 웹은 조회로 확인해야 한다.
+            log.warn("분석 작업을 알 수 없어 면접 준비 완료를 알리지 못했습니다. tailorId={}", tailor.getTailorId());
+            return;
+        }
+
+        if (delivered) {
+            sseNotifier.sendFinal(analysisJobId, SseNotifier.INTERVIEW_READY, toReady(tailor));
+            return;
+        }
+        sseNotifier.sendFinal(analysisJobId, SseNotifier.INTERVIEW_PREPARATION_FAILED,
+                InterviewReadyResponse.failed(tailor.getInterviewId(), tailor.getChatErrorMessage()));
+    }
+
+    /**
+     * 뒤늦게 붙은 구독에 되짚어줄 면접 준비 상태. 아직 준비되지 않았으면 아무것도 돌려주지 않는다.
+     *
+     * <p>넘기는 중인 건은 준비된 것으로 보지 않는다. 채팅 서버 전달은 권리를 먼저 차지하고
+     * 시작하므로, 그 사이에 조회하면 아직 열리지도 않은 면접을 열렸다고 알리게 된다.
+     * 전달이 끝나야 사유가 지워지므로 그것까지 함께 본다.
+     */
+    @Transactional(readOnly = true)
+    public InterviewReadyResponse findReady(String analysisJobId) {
+        if (analysisJobId == null) {
+            return null;
+        }
+        QuestionTailorEntity tailor = questionTailorRepository
+                .findTopByAnalysisJobIdOrderByCreatedAtDesc(analysisJobId)
+                .orElse(null);
+        if (tailor == null
+                || !Boolean.TRUE.equals(tailor.getChatDelivered())
+                || tailor.getChatErrorMessage() != null) {
+            return null;
+        }
+        return toReady(tailor);
+    }
+
+    private InterviewReadyResponse toReady(QuestionTailorEntity tailor) {
+        String sessionId = interviewRepository.findById(tailor.getInterviewId())
+                .map(InterviewEntity::getSessionId)
+                .orElse(null);
+        return InterviewReadyResponse.ready(tailor.getInterviewId(), sessionId, tailor.getTailored());
     }
 
     /**

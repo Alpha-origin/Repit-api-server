@@ -20,6 +20,7 @@ import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQues
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionTailorRepository;
+import repit.repit_api_server.domain.metadata.sse.SseNotifier;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
 import tools.jackson.databind.ObjectMapper;
@@ -65,13 +66,16 @@ class QuestionTailorServiceMultiCallbackTest {
     @Captor
     private ArgumentCaptor<QuestionTailorEntity> savedTailor;
 
+    @Mock
+    private SseNotifier sseNotifier;
+
     private QuestionTailorService service;
 
     @BeforeEach
     void setUp() {
         service = new QuestionTailorService(questionTailorRepository, interviewRepository,
                 interviewPersonaRepository, personaRepository,
-                analysisDataRepository, aiServerClient, authServerClient, chatInterviewHandoffService,
+                analysisDataRepository, aiServerClient, authServerClient, chatInterviewHandoffService, sseNotifier,
                 new ObjectMapper());
 
         when(questionTailorRepository.claimChatDelivery(anyLong())).thenReturn(1);

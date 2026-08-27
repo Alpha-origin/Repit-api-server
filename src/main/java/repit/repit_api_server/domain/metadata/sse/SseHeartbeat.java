@@ -38,7 +38,7 @@ public class SseHeartbeat {
      * <p>어떤 실패든 여기서 삼킨다. 예외가 새어나가면 순회가 통째로 멈춰, 그 뒤 순서의 구독들이
      * ping을 받지 못한다. 죽은 연결 하나가 살아 있는 나머지를 끊어버리는 셈이다.
      */
-    private void ping(String jobId, SseEmitter emitter) {
+    private void ping(String jobId, SseSubscription emitter) {
         try {
             // 주석 줄이라 클라이언트의 이벤트 처리에는 걸리지 않는다. 연결을 살려두는 용도다.
             emitter.send(SseEmitter.event().comment("ping"));

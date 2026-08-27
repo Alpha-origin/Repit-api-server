@@ -23,7 +23,7 @@ class SseHeartbeatTest {
 
     @Test
     void 살아있는_구독에는_빈_줄을_흘리고_그대로_둔다() throws IOException {
-        SseEmitter emitter = mock(SseEmitter.class);
+        SseSubscription emitter = mock(SseSubscription.class);
         repository.save("job-1", emitter);
 
         heartbeat.ping();
@@ -35,7 +35,7 @@ class SseHeartbeatTest {
     /** 여기서 걷어내지 않으면 콜백이 도착했을 때 죽은 연결에 완료 이벤트를 쓰다 잃는다. */
     @Test
     void 끊긴_구독은_걷어내고_닫는다() throws IOException {
-        SseEmitter gone = mock(SseEmitter.class);
+        SseSubscription gone = mock(SseSubscription.class);
         doThrow(new IOException("Broken pipe")).when(gone).send(any(SseEmitter.SseEventBuilder.class));
         repository.save("job-2", gone);
 
@@ -48,7 +48,7 @@ class SseHeartbeatTest {
     /** 이미 끝난 구독에 쓰면 IllegalStateException이 난다. 이것도 걷어낼 대상이다. */
     @Test
     void 이미_끝난_구독도_걷어낸다() throws IOException {
-        SseEmitter finished = mock(SseEmitter.class);
+        SseSubscription finished = mock(SseSubscription.class);
         doThrow(new IllegalStateException("ResponseBodyEmitter has already completed"))
                 .when(finished).send(any(SseEmitter.SseEventBuilder.class));
         repository.save("job-3", finished);
@@ -61,9 +61,9 @@ class SseHeartbeatTest {
     /** 한 구독이 끊겼다고 나머지 구독까지 못 받게 되면 안 된다. */
     @Test
     void 끊긴_구독이_있어도_나머지는_계속_흐른다() throws IOException {
-        SseEmitter gone = mock(SseEmitter.class);
+        SseSubscription gone = mock(SseSubscription.class);
         doThrow(new IOException("Broken pipe")).when(gone).send(any(SseEmitter.SseEventBuilder.class));
-        SseEmitter alive = mock(SseEmitter.class);
+        SseSubscription alive = mock(SseSubscription.class);
         repository.save("job-4", gone);
         repository.save("job-5", alive);
 
@@ -80,13 +80,13 @@ class SseHeartbeatTest {
      */
     @Test
     void 닫는_것마저_거부당해도_나머지는_계속_흐른다() throws IOException {
-        SseEmitter dead = mock(SseEmitter.class);
+        SseSubscription dead = mock(SseSubscription.class);
         doThrow(new IllegalStateException("ResponseBodyEmitter has already completed"))
                 .when(dead).send(any(SseEmitter.SseEventBuilder.class));
         doThrow(new IllegalStateException(
                 "A non-container (application) thread attempted to use the AsyncContext"))
                 .when(dead).complete();
-        SseEmitter alive = mock(SseEmitter.class);
+        SseSubscription alive = mock(SseSubscription.class);
         repository.save("job-6", dead);
         repository.save("job-7", alive);
 
@@ -101,10 +101,10 @@ class SseHeartbeatTest {
     /** send가 IOException도 IllegalStateException도 아닌 것으로 터져도 순회는 이어져야 한다. */
     @Test
     void 예상하지_못한_실패도_순회를_멈추지_않는다() throws IOException {
-        SseEmitter broken = mock(SseEmitter.class);
+        SseSubscription broken = mock(SseSubscription.class);
         doThrow(new RuntimeException("예상 못 한 실패"))
                 .when(broken).send(any(SseEmitter.SseEventBuilder.class));
-        SseEmitter alive = mock(SseEmitter.class);
+        SseSubscription alive = mock(SseSubscription.class);
         repository.save("job-8", broken);
         repository.save("job-9", alive);
 

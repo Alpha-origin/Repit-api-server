@@ -16,6 +16,14 @@ public interface QuestionTailorRepository extends JpaRepository<QuestionTailorEn
     Optional<QuestionTailorEntity> findTopByInterviewIdOrderByCreatedAtDesc(Long interviewId);
 
     /**
+     * 어느 분석에서 비롯된 재작성인지로 찾는다.
+     *
+     * <p>웹은 분석 jobId 하나로 구독한다. 뒤늦게 붙은 구독에 면접 준비 완료를 되짚어주려면
+     * 그 jobId에서 이어진 재작성을 찾아야 한다.
+     */
+    Optional<QuestionTailorEntity> findTopByAnalysisJobIdOrderByCreatedAtDesc(String analysisJobId);
+
+    /**
      * 채팅 서버로 넘길 권리를 차지한다. 먼저 차지한 쪽만 1을 돌려받는다.
      *
      * <p>전달은 트랜잭션 밖에서 도는 외부 호출이라 수백 ms가 걸린다. 그동안 읽어둔 값만 보고
