@@ -21,7 +21,9 @@ public class AnswerResponse {
 
     private Long userId;
 
-    private int responseTime;
+    // 엔티티와 같은 Integer 다. int 로 받으면 응답 시간이 비어 있는 답변에서 언박싱하다
+    // NPE 가 나고, 답변 목록 전체가 500 이 된다.
+    private Integer responseTime;
 
     private String content;
 
