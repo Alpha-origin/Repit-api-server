@@ -53,6 +53,32 @@ class QuestionServiceLookupTest {
     }
 
     @Test
+    void 없는_질문을_조회하면_404다() {
+        when(questionRepository.findById(901L)).thenReturn(Optional.empty());
+
+        // 성공 응답에 빈 본문을 실어 보내면 클라이언트는 그것을 정상으로 읽는다.
+        assertThatThrownBy(() -> service.getQuestionById(901L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("질문을 찾을 수 없습니다")
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void 있는_질문은_그대로_돌려준다() {
+        when(questionRepository.findById(901L)).thenReturn(Optional.of(QuestionEntity.builder()
+                .questionId(901L)
+                .interviewId(3L)
+                .type(Type.ORIGINAL)
+                .intention("도입 근거 확인")
+                .content("WebFlux 를 도입한 이유가 무엇인가요?")
+                .createdAt(LocalDateTime.parse("2026-08-18T01:00:00"))
+                .build()));
+
+        assertThat(service.getQuestionById(901L).getQuestionId()).isEqualTo(901L);
+    }
+
+    @Test
     void 없는_면접의_질문을_조회하면_404다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.empty());
 

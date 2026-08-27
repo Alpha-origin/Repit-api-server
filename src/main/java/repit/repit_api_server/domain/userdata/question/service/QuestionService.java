@@ -35,10 +35,9 @@ public class QuestionService {
     }
 
     public QuestionResponse getQuestionById(Long questionId) {
-        QuestionEntity question = questionRepository.findById(questionId).orElse(null);
-        if (question == null) {
-            return null;
-        }
+        // 없는 질문에 성공 응답을 주면 클라이언트는 본문이 빈 것을 정상으로 읽는다.
+        QuestionEntity question = questionRepository.findById(questionId)
+                .orElseThrow(() -> BusinessException.notFound("질문을 찾을 수 없습니다"));
 
         return QuestionResponse.from(question);
     }
