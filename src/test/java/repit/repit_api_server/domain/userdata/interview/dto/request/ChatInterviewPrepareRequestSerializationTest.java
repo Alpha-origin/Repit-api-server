@@ -26,8 +26,10 @@ class ChatInterviewPrepareRequestSerializationTest {
                 .status(Status.IN_PROGRESS)
                 .questions(List.of(ChatInterviewPrepareRequest.Question.builder()
                         .id(1L)
-                        .category("선택 근거와 대안 비교")
+                        .category("tech_choice")
                         .question("왜 Redis 를 썼나요?")
+                        .expectedAnswer("선택 근거와 대안 비교")
+                        .basedOn(List.of("order-api/src/cache.py"))
                         .personaId(9L)
                         .build()))
                 .build();
@@ -40,10 +42,13 @@ class ChatInterviewPrepareRequestSerializationTest {
 
         JsonNode question = json.get("questions").get(0);
         assertThat(question.propertyNames()).containsExactlyInAnyOrder(
-                "id", "category", "question", "personaId");
+                "id", "category", "question", "expectedAnswer", "basedOn", "personaId");
         assertThat(question.get("id").asLong()).isEqualTo(1L);
-        assertThat(question.get("category").asString()).isEqualTo("선택 근거와 대안 비교");
+        assertThat(question.get("category").asString()).isEqualTo("tech_choice");
         assertThat(question.get("question").asString()).isEqualTo("왜 Redis 를 썼나요?");
+        // 채점 기준이다. 이름이 어긋나면 채팅 서버가 버리고, 기록이 돌아와도 비어 있다.
+        assertThat(question.get("expectedAnswer").asString()).isEqualTo("선택 근거와 대안 비교");
+        assertThat(question.get("basedOn").get(0).asString()).isEqualTo("order-api/src/cache.py");
         assertThat(question.get("personaId").asLong()).isEqualTo(9L);
     }
 }

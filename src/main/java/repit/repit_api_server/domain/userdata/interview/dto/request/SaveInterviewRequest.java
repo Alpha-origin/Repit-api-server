@@ -4,7 +4,6 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
-import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -42,19 +41,28 @@ public class SaveInterviewRequest {
         private Answer answer;
     }
 
+    /**
+     * 면접에서 실제로 오간 질문 한 건.
+     *
+     * <p>면접을 열 때 우리가 넘긴 필드가 그대로 돌아온다. 꼬리질문은 채팅 서버가 면접 중에
+     * 만든 것이라 우리가 넘긴 적 없는 값이고, 기대 답변과 근거가 비어 있다.
+     *
+     * <p>질문 종류(ORIGINAL/FOLLOW)와 부모 질문, 생성 시각은 채팅 서버가 보내지 않는다.
+     * 셋 다 저장할 때 우리가 되짚어 채운다 — {@code InterviewService.saveQuestions} 참고.
+     */
     @Getter
     @NoArgsConstructor
     @AllArgsConstructor
     public static class Question {
-        // 채팅 서버가 매긴 번호. 우리 PK와는 다른 체계다.
-        private Long questionId;
-        // 꼬리질문이면 부모 질문의 채팅 서버 번호, 아니면 비어 있다.
-        private Long parentId;
-        private Type questionType;
-        private String questionIntention;
-        private String questionContent;
+        // 채팅 서버가 매긴 번호. 우리 PK와는 다른 체계다. 꼬리질문은 음수로 온다.
+        private Long id;
         private Long personaId;
-        private LocalDateTime questionCreatedAt;
+        // 이 질문이 무엇을 묻는 갈래인지. 꼬리질문은 채팅 서버가 만든 의도가 실려 온다.
+        private String category;
+        private String question;
+        // 채점 기준. 면접을 열 때 우리가 넘긴 값이 손대지 않은 채 돌아온다.
+        private String expectedAnswer;
+        private List<String> basedOn;
     }
 
     @Getter

@@ -27,6 +27,7 @@ import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
+import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
 import repit.repit_api_server.global.client.AuthServerClient;
@@ -365,40 +366,74 @@ public class InterviewService {
      * 질문을 저장하고 채팅 서버 번호 -> 우리 PK 매핑을 돌려준다.
      *
      * <p>채팅 서버 번호는 PK로 쓸 수 없다. ORIGINAL은 분석 결과 안의 지역 번호(1..N)라 면접이
-     * 다르면 같은 번호가 다시 나오고, FOLLOW는 채팅 서버가 만든 랜덤 값이다.
+     * 다르면 같은 번호가 다시 나오고, FOLLOW는 채팅 서버가 매기는 음수다.
      *
-     * <p>꼬리질문의 부모는 목록에서 늘 앞서 나오므로 한 번 훑으면서 부모를 우리 PK로 옮길 수
-     * 있다. 그래서 saveAll로 묶지 않고 한 건씩 저장해 매핑을 채운다.
+     * <p>질문 종류와 부모, 시각은 채팅 서버가 보내지 않아 여기서 되짚는다. 채팅 서버는 꼬리질문을
+     * 답한 질문 바로 뒤에 끼워 넣으므로, 목록에서 직전에 나온 원질문이 곧 부모다. 부모는 늘 앞서
+     * 저장되므로 한 번 훑으면서 우리 PK로 옮길 수 있다. 그래서 saveAll로 묶지 않고 한 건씩
+     * 저장해 매핑을 채운다.
      */
     private Map<Long, Long> saveQuestions(InterviewEntity interview, List<SaveInterviewRequest.QnA> qnAs) {
         Map<Long, Long> questionIdByChatId = new HashMap<>();
+        // 직전에 저장한 원질문의 우리 PK. 바로 뒤에 오는 꼬리질문의 부모가 된다.
+        Long lastOriginalId = null;
 
         for (SaveInterviewRequest.QnA qnA : qnAs) {
             SaveInterviewRequest.Question question = qnA.getQuestion();
-            if (question == null || question.getQuestionId() == null) {
+            if (question == null || question.getId() == null) {
                 continue;
             }
 
+            Type type = typeOf(question.getId());
             QuestionEntity saved = questionRepository.save(QuestionEntity.builder()
                     .interviewId(interview.getInterviewId())
-                    .chatQuestionId(question.getQuestionId())
-                    .parentId(questionIdByChatId.get(question.getParentId()))
+                    .chatQuestionId(question.getId())
+                    .parentId(type == Type.FOLLOW ? lastOriginalId : null)
                     .personaId(question.getPersonaId())
-                    .type(question.getQuestionType())
-                    .intention(question.getQuestionIntention())
-                    .content(question.getQuestionContent())
-                    .createdAt(orNow(question.getQuestionCreatedAt()))
+                    .type(type)
+                    .intention(intentionOf(question))
+                    .content(question.getQuestion())
+                    // 채팅 서버는 질문마다의 시각을 보내지 않는다. 저장 순서가 곧 면접 순서라
+                    // 받은 시각으로 채운다. 순서를 읽는 쪽은 question_id 오름차순을 쓴다.
+                    .createdAt(LocalDateTime.now())
                     .build());
 
-            questionIdByChatId.put(question.getQuestionId(), saved.getQuestionId());
+            questionIdByChatId.put(question.getId(), saved.getQuestionId());
+            if (type == Type.ORIGINAL) {
+                lastOriginalId = saved.getQuestionId();
+            }
         }
 
         return questionIdByChatId;
     }
 
-    // 시각이 비어 와도 저장까지 실패하지는 않게 한다. 여기서 막히면 면접 기록이 통째로 사라진다.
+    /**
+     * 질문 종류. 채팅 서버가 보내지 않아 번호로 되짚는다.
+     *
+     * <p>원질문 번호는 분석 결과 안의 지역 번호(1..N)라 늘 양수고, 꼬리질문 번호는 채팅 서버가
+     * 음수로 매긴다. 그 부호가 둘을 가르는 유일한 단서다.
+     */
+    private Type typeOf(Long chatQuestionId) {
+        return chatQuestionId < 0 ? Type.FOLLOW : Type.ORIGINAL;
+    }
+
+    // 답변 시각이 비어 와도 저장까지 실패하지는 않게 한다. 여기서 막히면 면접 기록이 통째로 사라진다.
     private LocalDateTime orNow(LocalDateTime createdAt) {
         return createdAt == null ? LocalDateTime.now() : createdAt;
+    }
+
+    /**
+     * 질문 의도. 채점은 이 값 하나를 기준으로 이뤄진다.
+     *
+     * <p>원질문은 면접을 열 때 우리가 넘긴 기대 답변이 그대로 돌아온다. 꼬리질문은 채팅 서버가
+     * 면접 중에 만든 것이라 기대 답변이 없고, 대신 그때 정한 의도가 category로 실려 온다.
+     */
+    private String intentionOf(SaveInterviewRequest.Question question) {
+        String expectedAnswer = question.getExpectedAnswer();
+        if (expectedAnswer != null && !expectedAnswer.isBlank()) {
+            return expectedAnswer;
+        }
+        return question.getCategory();
     }
 
     private void saveAnswers(InterviewEntity interview, List<SaveInterviewRequest.QnA> qnAs,

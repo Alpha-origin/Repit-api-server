@@ -34,8 +34,8 @@ public class ChatInterviewPrepareRequest {
     /**
      * 면접 질문 한 건.
      *
-     * <p>채팅 서버가 면접 내내 들고 다니는 모양이다. 면접이 끝나고 피드백을 요청할 때
-     * 이 값들이 그대로 분석 서버로 넘어가므로, 여기서 비워 보내면 되찾을 길이 없다.
+     * <p>채팅 서버가 면접 내내 들고 다니는 모양이다. 면접이 끝나고 기록이 돌아올 때 이 값들이
+     * 그대로 실려 오고, 그것이 채점 요청의 재료가 된다. 여기서 비워 보내면 되찾을 길이 없다.
      */
     @Getter
     @Builder
@@ -43,10 +43,19 @@ public class ChatInterviewPrepareRequest {
     @AllArgsConstructor
     public static class Question {
         private Long id;
-        // 이 질문으로 무엇을 확인하려는지. 채팅 서버는 이 필드를 질문의 의도로 읽어 세션에 싣는다.
+        // 이 질문이 무엇을 묻는 갈래인지. 채팅 서버는 이 값을 질문의 의도로 읽어 꼬리질문을 만들 때 참고한다.
         private String category;
         // 면접에서 실제로 물을 본문. 재작성본이거나, 폴백이면 원질문과 같다.
         private String question;
+        /**
+         * 이 질문으로 확인하려는 답. 채점의 유일한 기준이라 반드시 실어 보낸다.
+         *
+         * <p>채팅 서버는 이 값을 손대지 않고 들고 있다가 면접 기록과 함께 그대로 돌려준다.
+         * 우리 DB의 질문 의도는 그렇게 돌아온 값으로 채워진다.
+         */
+        private String expectedAnswer;
+        // 이 질문이 어느 근거에서 나왔는지. 채팅 서버가 그대로 되돌려준다.
+        private List<String> basedOn;
         // 이 질문을 던지는 면접관. 1:1은 모든 질문이 같은 면접관이다.
         private Long personaId;
     }

@@ -64,6 +64,9 @@ public class ChatInterviewHandoffService {
      * <p>채팅 서버는 질문마다 면접관을 달아 두고, 프론트는 그 값이 바뀌는 것으로 면접관 전환을
      * 감지한다. N:1은 질문에 붙어 온 면접관을 그대로 쓰고, 1:1은 면접관이 하나뿐이라 전부 같다.
      *
+     * <p>기대 답변과 근거도 함께 넘긴다. 채팅 서버는 이 둘을 손대지 않고 들고 있다가 면접
+     * 기록과 함께 돌려주고, 그것이 그대로 채점 기준이 된다. 여기서 비워 보내면 되찾을 길이 없다.
+     *
      * <p>id와 본문, 면접관이 비면 채팅 서버가 질문을 다룰 수 없으므로 넘기기 전에 멈춘다.
      */
     private List<ChatInterviewPrepareRequest.Question> toQuestions(QuestionTailorEntity tailor, Long defaultPersonaId) {
@@ -85,30 +88,13 @@ public class ChatInterviewHandoffService {
                     }
                     return ChatInterviewPrepareRequest.Question.builder()
                             .id(question.getId().longValue())
-                            .category(intentionOf(question))
+                            .category(question.getCategory())
                             .question(question.getQuestion())
+                            .expectedAnswer(question.getExpectedAnswer())
+                            .basedOn(question.getBasedOn())
                             .personaId(personaId)
                             .build();
                 })
                 .toList();
-    }
-
-    /**
-     * 이 질문으로 무엇을 확인하려는지. 채팅 서버는 {@code category} 필드에 담긴 이 값을
-     * 질문의 의도로 읽는다.
-     *
-     * <p>분석 서버는 의도를 따로 주지 않는다. 대신 질문마다 붙는 기대 답변이 곧 확인하려는
-     * 것이라 그것을 쓴다.
-     *
-     * <p>기대 답변이 비어 오면 분류라도 넘긴다. 이 값은 채팅 서버가 질문의 의도로 들고 있다가
-     * 면접이 끝날 때 기록과 함께 이 서버로 돌아오고, 그것이 그대로 채점 기준이 된다.
-     * 여기서 비워 보내면 그 뒤로는 되찾을 길이 없다.
-     */
-    private String intentionOf(TailoredQuestionResponse question) {
-        String expectedAnswer = question.getExpectedAnswer();
-        if (expectedAnswer != null && !expectedAnswer.isBlank()) {
-            return expectedAnswer;
-        }
-        return question.getCategory();
     }
 }

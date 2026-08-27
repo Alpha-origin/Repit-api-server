@@ -120,8 +120,11 @@ class ChatInterviewHandoffServiceTest {
         assertThat(question.getQuestion()).isEqualTo("다시 쓴 Redis 질문");
         // 질문마다 면접관이 붙는다. 1:1은 모든 질문이 같은 면접관이다.
         assertThat(question.getPersonaId()).isEqualTo(1L);
-        // 의도는 채팅 서버가 category로 읽어 두었다가, 피드백 요청에 실어 분석 서버로 돌려보낸다.
-        assertThat(question.getCategory()).isEqualTo("선택 근거와 대안 비교");
+        assertThat(question.getCategory()).isEqualTo("tech_choice");
+        // 기대 답변과 근거는 채팅 서버가 그대로 들고 있다가 면접 기록과 함께 돌려준다.
+        // 여기서 비워 보내면 채점 기준을 되찾을 길이 없다.
+        assertThat(question.getExpectedAnswer()).isEqualTo("선택 근거와 대안 비교");
+        assertThat(question.getBasedOn()).containsExactly("order-api/src/cache.py");
     }
 
     @Test
@@ -132,12 +135,17 @@ class ChatInterviewHandoffServiceTest {
         ChatInterviewPrepareRequest.Question question = sentRequest.getValue().getQuestions().getFirst();
 
         assertThat(question.getQuestion()).isEqualTo("왜 Redis 를 썼나요?");
-        assertThat(question.getCategory()).isEqualTo("선택 근거와 대안 비교");
+        assertThat(question.getCategory()).isEqualTo("tech_choice");
+        assertThat(question.getExpectedAnswer()).isEqualTo("선택 근거와 대안 비교");
     }
 
-    /** 의도가 비면 피드백 단계에서 되찾을 길이 없다. 분류라도 넘긴다. */
+    /**
+     * 기대 답변이 없는 질문도 그대로 넘긴다.
+     * 채점 기준을 분류로 대신하는 것은 기록이 돌아온 뒤의 일이다 —
+     * {@code InterviewServiceSaveResultTest} 참고.
+     */
     @Test
-    void 기대_답변이_비면_분류를_의도로_넘긴다() {
+    void 기대_답변이_비어도_그대로_넘긴다() {
         QuestionTailorEntity tailor = tailor(true);
         tailor.setQuestions(List.of(TailoredQuestionResponse.builder()
                 .id(1)
@@ -148,7 +156,9 @@ class ChatInterviewHandoffServiceTest {
         service.deliver(tailor);
 
         verify(chatServerClient).prepareInterview(sentRequest.capture());
-        assertThat(sentRequest.getValue().getQuestions().getFirst().getCategory()).isEqualTo("tech_choice");
+        ChatInterviewPrepareRequest.Question question = sentRequest.getValue().getQuestions().getFirst();
+        assertThat(question.getCategory()).isEqualTo("tech_choice");
+        assertThat(question.getExpectedAnswer()).isNull();
     }
 
     @Test
