@@ -267,6 +267,62 @@ class FeedbackServiceSoloRequestTest {
     }
 
     @Test
+    void 부모를_잃은_꼬리질문은_홑질문으로_보낸다() {
+        when(questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(3L)).thenReturn(List.of(
+                questions().get(0),
+                QuestionEntity.builder()
+                        .questionId(902L)
+                        .interviewId(3L)
+                        // 결과 저장이 부모를 찾지 못하면 이 자리가 빈 채로 남는다.
+                        .parentId(null)
+                        .type(repit.repit_api_server.domain.userdata.question.entity.enums.Type.FOLLOW)
+                        .intention("대안 검토 확인")
+                        .content("가상 스레드는 고려하지 않으셨나요?")
+                        .createdAt(LocalDateTime.parse("2026-08-18T01:02:00"))
+                        .build()));
+
+        service.requestFeedback("Bearer token", 3L);
+
+        // 부모 없는 FOLLOW를 그대로 보내면 분석 서버가 요청 전체를 422로 거부한다.
+        List<FeedbackSoloRequest.Question> questions = captureRequest().getQuestions();
+        assertThat(questions).hasSize(2);
+        assertThat(questions.get(1).getType())
+                .isEqualTo(repit.repit_api_server.domain.userdata.question.entity.enums.Type.ORIGINAL);
+        assertThat(questions.get(1).getParentId()).isNull();
+    }
+
+    @Test
+    void 부모가_채점_목록에_없는_꼬리질문도_홑질문으로_보낸다() {
+        when(questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(3L)).thenReturn(List.of(
+                QuestionEntity.builder()
+                        .questionId(902L)
+                        .interviewId(3L)
+                        // 가리키는 질문이 이 면접에 없다.
+                        .parentId(555L)
+                        .type(repit.repit_api_server.domain.userdata.question.entity.enums.Type.FOLLOW)
+                        .intention("대안 검토 확인")
+                        .content("가상 스레드는 고려하지 않으셨나요?")
+                        .createdAt(LocalDateTime.parse("2026-08-18T01:02:00"))
+                        .build()));
+        when(answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(3L)).thenReturn(List.of(
+                AnswerEntity.builder()
+                        .answerId(501L)
+                        .interviewId(3L)
+                        .questionId(902L)
+                        .userId(7L)
+                        .content("측정은 못 해봤습니다.")
+                        .createdAt(LocalDateTime.parse("2026-08-18T01:02:40"))
+                        .build()));
+
+        service.requestFeedback("Bearer token", 3L);
+
+        List<FeedbackSoloRequest.Question> questions = captureRequest().getQuestions();
+        assertThat(questions.get(0).getType())
+                .isEqualTo(repit.repit_api_server.domain.userdata.question.entity.enums.Type.ORIGINAL);
+        assertThat(questions.get(0).getParentId()).isNull();
+    }
+
+    @Test
     void 면접이_끝나지_않았으면_그렇게_알린다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.IN_PROGRESS, 5L)));
         when(questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(3L)).thenReturn(List.of());
