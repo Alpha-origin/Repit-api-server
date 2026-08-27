@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallbackRequest;
@@ -85,37 +86,115 @@ public class FeedbackService {
     public FeedbackAcceptedResponse requestFeedback(String authorization, Long interviewId) {
         Long userId = currentUserId(authorization);
 
-        InterviewEntity interview = interviewRepository.findById(interviewId)
-                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+        InterviewEntity interview = findInterview(interviewId);
         verifyOwner(interview.getUserId(), userId);
 
-        FeedbackEntity existing = feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId)
-                .orElse(null);
-        if (existing != null) {
-            expireIfTimedOut(existing);
-            if (existing.getStatus() == FeedbackStatus.PENDING) {
-                throw BusinessException.conflict("이미 피드백을 생성하고 있습니다. 잠시 후 다시 확인해주세요.");
-            }
-            if (existing.getStatus() == FeedbackStatus.SUCCEEDED) {
-                throw BusinessException.conflict("이미 생성된 피드백이 있습니다.");
-            }
+        FeedbackStatus running = runningStatusOf(interviewId);
+        if (running == FeedbackStatus.PENDING) {
+            throw BusinessException.conflict("이미 피드백을 생성하고 있습니다. 잠시 후 다시 확인해주세요.");
+        }
+        if (running == FeedbackStatus.SUCCEEDED) {
+            throw BusinessException.conflict("이미 생성된 피드백이 있습니다.");
         }
 
+        return startFeedback(interview);
+    }
+
+    /**
+     * 면접이 끝나 기록이 넘어온 직후 채점을 접수한다. 채팅 서버가 부르는 길이라 사용자 토큰이 없다.
+     *
+     * <p>채점 대상이 누구 것인지는 토큰이 아니라 면접에 적힌 소유자로 정한다. 면접을 시작할 때
+     * 이미 본인 확인을 거쳤고, 여기까지 오는 요청은 채팅 서버가 보내는 서버 간 호출뿐이다.
+     *
+     * <p>중단된 면접도 그대로 채점한다. 답한 데까지는 평가할 것이 남아 있고, 웹이 직접 요청하던
+     * 길도 상태를 가리지 않았다. 답변이 하나도 없는 면접은 {@code loadTranscript}가 막는다.
+     *
+     * <p>이미 채점 중이거나 끝난 면접은 건너뛴다. 웹이 먼저 요청했거나 같은 기록이 두 번 넘어온
+     * 경우라, 여기서 거절로 취급하면 정상적인 흐름이 실패로 남는다.
+     */
+    public void requestFeedbackForFinishedInterview(Long interviewId) {
+        InterviewEntity interview = findInterview(interviewId);
+
+        FeedbackStatus running = runningStatusOf(interviewId);
+        if (running != null) {
+            log.info("이미 채점이 접수된 면접이라 자동 채점을 건너뜁니다. interviewId={}, status={}",
+                    interviewId, running);
+            return;
+        }
+
+        FeedbackAcceptedResponse accepted = startFeedback(interview);
+        log.info("면접 기록을 받아 채점을 접수했습니다. interviewId={}, jobId={}",
+                interviewId, accepted == null ? null : accepted.getJobId());
+    }
+
+    private InterviewEntity findInterview(Long interviewId) {
+        return interviewRepository.findById(interviewId)
+                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+    }
+
+    /**
+     * 이 면접에 이미 살아 있는 채점이 있는지. 없으면 null이다.
+     *
+     * <p>PENDING과 SUCCEEDED만 살아 있는 것으로 본다. FAILED는 다시 요청할 수 있어야 하고,
+     * 콜백이 오지 않은 채 시간을 넘긴 PENDING도 여기서 실패로 정리해 다음 요청을 열어준다.
+     */
+    private FeedbackStatus runningStatusOf(Long interviewId) {
+        FeedbackEntity existing = feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId)
+                .orElse(null);
+        if (existing == null) {
+            return null;
+        }
+        expireIfTimedOut(existing);
+        if (existing.getStatus() == FeedbackStatus.PENDING || existing.getStatus() == FeedbackStatus.SUCCEEDED) {
+            return existing.getStatus();
+        }
+        return null;
+    }
+
+    /** 분석 서버에 채점을 맡기고 접수 사실을 남긴다. 웹이 부르는 길과 채팅 서버가 부르는 길이 함께 쓴다. */
+    private FeedbackAcceptedResponse startFeedback(InterviewEntity interview) {
         // N:1은 면접관별 평가까지 받아야 해서 엔드포인트가 다르다. 1:1 채점에 태우면
         // 질문이 누구 것인지 잃고 personas 블록도 오지 않는다.
         FeedbackAcceptedResponse accepted = interview.getMode() == InterviewMode.MULTI
                 ? aiServerClient.requestMultiFeedback(toMultiRequest(interview))
                 : aiServerClient.requestSoloFeedback(toSoloRequest(interview));
 
-        feedbackRepository.save(FeedbackEntity.builder()
-                .interviewId(interview.getInterviewId())
-                .userId(interview.getUserId())
-                .sessionId(interview.getSessionId())
-                .jobId(accepted == null ? null : accepted.getJobId())
-                .status(FeedbackStatus.PENDING)
-                .build());
-
+        saveAccepted(interview, accepted == null ? null : accepted.getJobId());
         return accepted;
+    }
+
+    /**
+     * 접수 사실을 남긴다.
+     *
+     * <p>결과 콜백이 접수 응답보다 먼저 도착할 수 있다. 분석 서버 응답이 늦어지는 일이 있어
+     * 읽기 제한 시간을 60초까지 늘려둔 것도 그래서다. 콜백이 먼저 오면 세션으로 면접을 되짚어
+     * 행이 이미 만들어지고, 그 행에는 결과까지 담겨 있다.
+     *
+     * <p>그 위에 접수 행을 새로 넣으면 job_id 유일 색인에 걸려 요청이 통째로 실패한다. 색인이
+     * 없었더라도 결과가 빈 PENDING 행이 최신이 되어, 조회가 그것을 집어 들고 이미 받아둔 결과를
+     * 가린다. 그래서 같은 작업의 행이 이미 있으면 그대로 둔다.
+     */
+    private void saveAccepted(InterviewEntity interview, String jobId) {
+        if (jobId != null && feedbackRepository.findByJobId(jobId).isPresent()) {
+            log.info("채점 결과가 접수 응답보다 먼저 도착해 이미 기록돼 있습니다. interviewId={}, jobId={}",
+                    interview.getInterviewId(), jobId);
+            return;
+        }
+
+        try {
+            feedbackRepository.save(FeedbackEntity.builder()
+                    .interviewId(interview.getInterviewId())
+                    .userId(interview.getUserId())
+                    .sessionId(interview.getSessionId())
+                    .jobId(jobId)
+                    .status(FeedbackStatus.PENDING)
+                    .build());
+        } catch (DataIntegrityViolationException e) {
+            // 확인과 저장 사이에 콜백이 끼어든 경우다. 결과는 콜백이 이미 남겼으니 접수만 넘어간다.
+            // 이 메서드는 트랜잭션 밖에서 돌아 여기서 삼켜도 다른 저장이 함께 말려들지 않는다.
+            log.info("접수를 남기는 사이 채점 결과가 먼저 기록됐습니다. interviewId={}, jobId={}",
+                    interview.getInterviewId(), jobId);
+        }
     }
 
     /**
