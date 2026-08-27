@@ -96,7 +96,7 @@ public class AnalysisLaunchService {
      * 예외로 번지지 않게 막는다.
      */
     private void registerJob(GenerateResponse response, Long userId, LocalDateTime requestedAt) {
-        if (response == null || response.getJob_id() == null) {
+        if (response == null || response.getJobId() == null) {
             // jobId가 없으면 구독도 조회도 할 수 없다. 성공으로 돌려주면 원인을 찾을 수 없다.
             log.error("분석 서버 응답에 job_id가 없습니다. status={}, message={}",
                     response == null ? null : response.getStatus(),
@@ -106,13 +106,13 @@ public class AnalysisLaunchService {
 
         if (userId == null) {
             log.error("소유자 없이 분석 작업을 접수합니다. 이 결과로는 면접을 열 수 없습니다. jobId={}",
-                    response.getJob_id());
+                    response.getJobId());
         }
 
         try {
-            aiMetaDataService.registerJob(response.getJob_id(), userId, requestedAt);
+            aiMetaDataService.registerJob(response.getJobId(), userId, requestedAt);
         } catch (RuntimeException e) {
-            log.error("분석 작업을 접수하지 못했습니다. jobId={}", response.getJob_id(), e);
+            log.error("분석 작업을 접수하지 못했습니다. jobId={}", response.getJobId(), e);
         }
     }
 }

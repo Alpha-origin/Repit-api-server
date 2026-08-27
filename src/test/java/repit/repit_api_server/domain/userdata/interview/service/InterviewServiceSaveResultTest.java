@@ -103,26 +103,25 @@ class InterviewServiceSaveResultTest {
         });
     }
 
-    /** 채팅 서버가 보내는 형태 그대로. 꼬리질문(-77)은 부모(1)보다 뒤에 온다. */
+    /** 채팅 서버가 보내는 형태 그대로. 꼬리질문(-1)은 부모(1)보다 뒤에 온다. */
     private SaveInterviewRequest request() {
         SaveInterviewRequest.QnA first = new SaveInterviewRequest.QnA(
-                new SaveInterviewRequest.Question(1L, null, Type.ORIGINAL, "도입 근거 확인",
-                        "WebFlux 를 도입한 이유가 무엇인가요?", 5L,
-                        LocalDateTime.parse("2026-08-18T01:00:00")),
+                new SaveInterviewRequest.Question(1L, 5L, "tech_choice",
+                        "WebFlux 를 도입한 이유가 무엇인가요?", "도입 근거 확인",
+                        List.of("order-api/src/router.java")),
                 new SaveInterviewRequest.Answer(1L, 90, "스레드가 I/O 대기에 묶였습니다.",
                         LocalDateTime.parse("2026-08-18T01:01:30")));
 
+        // 꼬리질문은 채팅 서버가 면접 중에 만든 것이라 기대 답변이 없고, 번호가 음수다.
         SaveInterviewRequest.QnA follow = new SaveInterviewRequest.QnA(
-                new SaveInterviewRequest.Question(-77L, 1L, Type.FOLLOW, "대안 검토 확인",
-                        "가상 스레드는 고려하지 않으셨나요?", 5L,
-                        LocalDateTime.parse("2026-08-18T01:02:00")),
-                new SaveInterviewRequest.Answer(-77L, 40, "측정은 못 해봤습니다.",
+                new SaveInterviewRequest.Question(-1L, 5L, "대안 검토 확인",
+                        "가상 스레드는 고려하지 않으셨나요?", null, null),
+                new SaveInterviewRequest.Answer(-1L, 40, "측정은 못 해봤습니다.",
                         LocalDateTime.parse("2026-08-18T01:02:40")));
 
         SaveInterviewRequest.QnA unanswered = new SaveInterviewRequest.QnA(
-                new SaveInterviewRequest.Question(2L, null, Type.ORIGINAL, "운영 경험 확인",
-                        "장애 대응 경험이 있나요?", 5L,
-                        LocalDateTime.parse("2026-08-18T01:03:00")),
+                new SaveInterviewRequest.Question(2L, 5L, "ops",
+                        "장애 대응 경험이 있나요?", "운영 경험 확인", null),
                 null);
 
         return new SaveInterviewRequest("sess-1", 3L, 7L, Status.COMPLETED,
@@ -146,15 +145,31 @@ class InterviewServiceSaveResultTest {
 
         List<QuestionEntity> questions = savedQuestions();
         assertThat(questions).extracting(QuestionEntity::getChatQuestionId)
-                .containsExactly(1L, -77L, 2L);
+                .containsExactly(1L, -1L, 2L);
         assertThat(questions).extracting(QuestionEntity::getInterviewId)
                 .containsOnly(3L);
-        assertThat(questions.get(0).getCreatedAt())
-                .isEqualTo(LocalDateTime.parse("2026-08-18T01:00:00"));
+        // 채팅 서버는 질문마다의 시각을 보내지 않는다. not null 컬럼이라 받은 시각으로 채운다.
+        assertThat(questions.get(0).getCreatedAt()).isNotNull();
     }
 
+    /**
+     * 질문 종류는 채팅 서버가 보내지 않는다. 원질문 번호는 분석 결과의 지역 번호(1..N)라 양수고,
+     * 꼬리질문 번호는 채팅 서버가 음수로 매긴다. 그 부호가 둘을 가르는 유일한 단서다.
+     */
     @Test
-    void 꼬리질문의_부모를_우리_PK로_옮긴다() {
+    void 질문_번호의_부호로_꼬리질문을_가려낸다() {
+        service.saveInterview(request());
+
+        assertThat(savedQuestions()).extracting(QuestionEntity::getType)
+                .containsExactly(Type.ORIGINAL, Type.FOLLOW, Type.ORIGINAL);
+    }
+
+    /**
+     * 꼬리질문의 부모도 채팅 서버가 보내지 않는다. 채팅 서버는 꼬리질문을 답한 질문 바로 뒤에
+     * 끼워 넣으므로, 목록에서 직전에 나온 원질문이 곧 부모다.
+     */
+    @Test
+    void 꼬리질문을_직전_원질문에_매단다() {
         service.saveInterview(request());
 
         List<QuestionEntity> questions = savedQuestions();
@@ -162,6 +177,18 @@ class InterviewServiceSaveResultTest {
         assertThat(questions.get(0).getParentId()).isNull();
         assertThat(questions.get(1).getParentId()).isEqualTo(901L);
         assertThat(questions.get(2).getParentId()).isNull();
+    }
+
+    /**
+     * 채점은 질문 의도 하나를 기준으로 이뤄진다. 원질문은 면접을 열 때 우리가 넘긴 기대 답변이
+     * 그대로 돌아오고, 그것이 없는 꼬리질문은 채팅 서버가 정한 의도가 category로 온다.
+     */
+    @Test
+    void 기대_답변을_질문_의도로_남기고_비면_분류를_쓴다() {
+        service.saveInterview(request());
+
+        assertThat(savedQuestions()).extracting(QuestionEntity::getIntention)
+                .containsExactly("도입 근거 확인", "대안 검토 확인", "운영 경험 확인");
     }
 
     @Test
@@ -179,9 +206,8 @@ class InterviewServiceSaveResultTest {
     @Test
     void 대응하는_질문이_없는_답변은_건너뛴다() {
         SaveInterviewRequest.QnA orphan = new SaveInterviewRequest.QnA(
-                new SaveInterviewRequest.Question(1L, null, Type.ORIGINAL, "도입 근거 확인",
-                        "WebFlux 를 도입한 이유가 무엇인가요?", 5L,
-                        LocalDateTime.parse("2026-08-18T01:00:00")),
+                new SaveInterviewRequest.Question(1L, 5L, "tech_choice",
+                        "WebFlux 를 도입한 이유가 무엇인가요?", "도입 근거 확인", null),
                 new SaveInterviewRequest.Answer(999L, 90, "어느 질문에도 붙지 않는 답변",
                         LocalDateTime.parse("2026-08-18T01:01:30")));
 

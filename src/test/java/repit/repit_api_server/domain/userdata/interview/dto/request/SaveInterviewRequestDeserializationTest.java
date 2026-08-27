@@ -5,7 +5,6 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
-import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
@@ -31,13 +30,12 @@ class SaveInterviewRequestDeserializationTest {
               "qnaRequests": [
                 {
                   "question": {
-                    "questionId": 1,
-                    "parentId": null,
-                    "questionType": "ORIGINAL",
-                    "questionIntention": "도입 근거 확인",
-                    "questionContent": "WebFlux 를 도입한 이유가 무엇인가요?",
+                    "id": 1,
                     "personaId": 5,
-                    "questionCreatedAt": "2026-08-18T01:00:00"
+                    "category": "tech_choice",
+                    "question": "WebFlux 를 도입한 이유가 무엇인가요?",
+                    "expectedAnswer": "블로킹 I/O 병목과 대안 비교",
+                    "basedOn": ["order-api/src/router.java"]
                   },
                   "answer": {
                     "questionId": 1,
@@ -48,13 +46,12 @@ class SaveInterviewRequestDeserializationTest {
                 },
                 {
                   "question": {
-                    "questionId": -8006038266222948352,
-                    "parentId": 1,
-                    "questionType": "FOLLOW",
-                    "questionIntention": "대안 검토 확인",
-                    "questionContent": "가상 스레드는 고려하지 않으셨나요?",
+                    "id": -1,
                     "personaId": 5,
-                    "questionCreatedAt": "2026-08-18T01:02:00"
+                    "category": "대안 검토 확인",
+                    "question": "가상 스레드는 고려하지 않으셨나요?",
+                    "expectedAnswer": null,
+                    "basedOn": null
                   },
                   "answer": null
                 }
@@ -78,22 +75,24 @@ class SaveInterviewRequestDeserializationTest {
             assertThat(request.getQnaRequests()).hasSize(2);
 
             SaveInterviewRequest.Question original = request.getQnaRequests().get(0).getQuestion();
-            assertThat(original.getQuestionId()).isEqualTo(1L);
-            assertThat(original.getQuestionType()).isEqualTo(Type.ORIGINAL);
+            assertThat(original.getId()).isEqualTo(1L);
             assertThat(original.getPersonaId()).isEqualTo(5L);
-            assertThat(original.getQuestionCreatedAt())
-                    .isEqualTo(LocalDateTime.parse("2026-08-18T01:00:00"));
+            assertThat(original.getCategory()).isEqualTo("tech_choice");
+            assertThat(original.getQuestion()).isEqualTo("WebFlux 를 도입한 이유가 무엇인가요?");
+            // 면접을 열 때 우리가 넘긴 채점 기준이 그대로 돌아온다.
+            assertThat(original.getExpectedAnswer()).isEqualTo("블로킹 I/O 병목과 대안 비교");
+            assertThat(original.getBasedOn()).containsExactly("order-api/src/router.java");
 
             SaveInterviewRequest.Answer answer = request.getQnaRequests().get(0).getAnswer();
             assertThat(answer.getQuestionId()).isEqualTo(1L);
             assertThat(answer.getResponseTime()).isEqualTo(90);
             assertThat(answer.getAnswerContent()).isEqualTo("스레드가 I/O 대기에 묶였습니다.");
 
-            // 꼬리질문 번호는 채팅 서버가 만든 랜덤 음수 long이다. int로는 담기지 않는다.
+            // 꼬리질문은 채팅 서버가 음수로 번호를 매긴다. 우리가 넘긴 적 없는 질문이라 기대 답변이 없다.
             SaveInterviewRequest.Question follow = request.getQnaRequests().get(1).getQuestion();
-            assertThat(follow.getQuestionId()).isEqualTo(-8006038266222948352L);
-            assertThat(follow.getParentId()).isEqualTo(1L);
-            assertThat(follow.getQuestionType()).isEqualTo(Type.FOLLOW);
+            assertThat(follow.getId()).isEqualTo(-1L);
+            assertThat(follow.getCategory()).isEqualTo("대안 검토 확인");
+            assertThat(follow.getExpectedAnswer()).isNull();
 
             // 답하지 않고 넘어간 질문은 answer가 null로 온다.
             assertThat(request.getQnaRequests().get(1).getAnswer()).isNull();
