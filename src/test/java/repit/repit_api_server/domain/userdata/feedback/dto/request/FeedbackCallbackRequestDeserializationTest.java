@@ -67,6 +67,23 @@ class FeedbackCallbackRequestDeserializationTest {
             }
             """;
 
+    /**
+     * 분석 서버는 personaId를 문자열로 받는다(FeedbackPersonaRequest.personaId: string).
+     * 그대로 되돌려주는 값이라 콜백에도 문자열로 실려 올 수 있다.
+     */
+    private static final String STRING_PERSONA_ID_CALLBACK = """
+            {
+              "jobId": "job-3",
+              "sessionId": "sess-3",
+              "status": "succeeded",
+              "result": {
+                "overall": { "totalScore": 70 },
+                "personas": [{ "personaId": "11", "role": "TECH", "score": 78 }],
+                "feedbacks": [{ "questionId": "901", "personaId": "11", "comment": "좋음" }]
+              }
+            }
+            """;
+
     // 1:1 콜백에는 personas가 아예 없다. 그래도 같은 DTO로 읽혀야 한다.
     private static final String SOLO_CALLBACK = """
             {
@@ -114,6 +131,25 @@ class FeedbackCallbackRequestDeserializationTest {
 
             assertThat(request.getResult().getPersonas()).isNull();
             assertThat(request.getResult().getFeedbacks().getFirst().getPersonaId()).isNull();
+        });
+    }
+
+    /**
+     * 면접관 식별자를 문자열로 받아도 읽혀야 한다.
+     *
+     * <p>우리는 Long으로 들고 있어 Jackson의 문자열-숫자 변환에 기대고 있다. 그 변환이 막히면
+     * personas 계층에서 역직렬화가 통째로 실패하고, 콜백은 400으로 끝나 결과가 영구 폐기된다.
+     */
+    @Test
+    void 면접관_식별자가_문자열로_와도_읽힌다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+
+            FeedbackCallbackRequest request =
+                    objectMapper.readValue(STRING_PERSONA_ID_CALLBACK, FeedbackCallbackRequest.class);
+
+            assertThat(request.getResult().getPersonas().getFirst().getPersonaId()).isEqualTo(11L);
+            assertThat(request.getResult().getFeedbacks().getFirst().getPersonaId()).isEqualTo(11L);
         });
     }
 }
