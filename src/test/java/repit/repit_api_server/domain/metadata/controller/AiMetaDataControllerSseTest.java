@@ -215,7 +215,7 @@ class AiMetaDataControllerSseTest {
         sseEmitterRepository.save("job-10", emitter);
 
         CallbackSuccessRequest request = CallbackSuccessRequest.builder()
-                .job_id("job-10")
+                .jobId("job-10")
                 .status("succeeded")
                 .build();
         CallbackSuccessResponse stored = saved("job-10", "failed");
@@ -256,7 +256,7 @@ class AiMetaDataControllerSseTest {
 
     private CallbackSuccessRequest analysisCallback(String jobId) {
         return CallbackSuccessRequest.builder()
-                .job_id(jobId)
+                .jobId(jobId)
                 .status("succeeded")
                 .result(Map.of("project_summary", "요약"))
                 .build();
@@ -264,7 +264,7 @@ class AiMetaDataControllerSseTest {
 
     private CallbackSuccessResponse saved(String jobId, String status) {
         return CallbackSuccessResponse.builder()
-                .job_id(jobId)
+                .jobId(jobId)
                 .status(status)
                 .result("succeeded".equals(status) ? Map.of("project_summary", "요약") : null)
                 .build();

@@ -38,7 +38,9 @@ public class CorsConfig {
         source.registerCorsConfiguration("/**", config);
 
         FilterRegistrationBean<CorsFilter> registration = new FilterRegistrationBean<>(new CorsFilter(source));
-        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        // RequestLoggingFilter 바로 뒤에 세운다. 맨 앞에 두면 여기서 거절한 요청이 체인을 타지 못해
+        // 403만 나가고 로그에는 한 줄도 남지 않는다. 어느 오리진이 왜 막혔는지 볼 수 없게 된다.
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 1);
         return registration;
     }
 }

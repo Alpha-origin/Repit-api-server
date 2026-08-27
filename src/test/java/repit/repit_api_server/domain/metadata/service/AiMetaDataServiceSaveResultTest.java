@@ -48,12 +48,12 @@ class AiMetaDataServiceSaveResultTest {
         when(analysisDataRepository.findById("job-1")).thenReturn(Optional.empty());
 
         CallbackSuccessResponse saved = service.saveResult(CallbackSuccessRequest.builder()
-                .job_id("job-1")
+                .jobId("job-1")
                 .status("succeeded")
                 .result(Map.of("project_summary", "요약"))
                 .build());
 
-        assertThat(saved.getJob_id()).isEqualTo("job-1");
+        assertThat(saved.getJobId()).isEqualTo("job-1");
         assertThat(saved.getStatus()).isEqualTo("succeeded");
         assertThat(saved.getResult()).isEqualTo(Map.of("project_summary", "요약"));
         assertThat(saved.getError()).isNull();
@@ -61,7 +61,7 @@ class AiMetaDataServiceSaveResultTest {
 
     /** 어느 작업의 결과인지 알 수 없으면 저장할 곳도, 흘려보낼 구독도 없다. */
     @Test
-    void job_id가_없으면_저장도_반환도_없다() {
+    void jobId가_없으면_저장도_반환도_없다() {
         CallbackSuccessResponse saved = service.saveResult(CallbackSuccessRequest.builder()
                 .status("succeeded")
                 .result(Map.of("project_summary", "요약"))
@@ -77,7 +77,7 @@ class AiMetaDataServiceSaveResultTest {
         when(analysisDataRepository.findById("job-2")).thenReturn(Optional.empty());
 
         CallbackSuccessResponse saved = service.saveResult(CallbackSuccessRequest.builder()
-                .job_id("job-2")
+                .jobId("job-2")
                 .status("succeeded")
                 .build());
 
@@ -95,7 +95,7 @@ class AiMetaDataServiceSaveResultTest {
                 .build()));
 
         CallbackSuccessResponse saved = service.saveResult(CallbackSuccessRequest.builder()
-                .job_id("job-3")
+                .jobId("job-3")
                 .status("failed")
                 .error(CallbackSuccessRequest.Error.builder().status_code(500).message("늦은 실패").build())
                 .build());
@@ -110,7 +110,7 @@ class AiMetaDataServiceSaveResultTest {
         when(analysisDataRepository.findById("job-4")).thenReturn(Optional.empty());
 
         CallbackSuccessResponse saved = service.saveResult(CallbackSuccessRequest.builder()
-                .job_id("job-4")
+                .jobId("job-4")
                 .status("failed")
                 .error(CallbackSuccessRequest.Error.builder().status_code(422).message("분석 불가").build())
                 .build());

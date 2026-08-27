@@ -336,6 +336,7 @@ public class QuestionTailorService {
     private record SourceQuestions(String analysisJobId,
                                    List<TailoredQuestionResponse> questions,
                                    Object projectSummary) {
+
     }
 
     /** 재작성 대상은 해당 사용자의 가장 최근 분석 결과에 담긴 원질문이다. */
@@ -368,8 +369,8 @@ public class QuestionTailorService {
                     .id(question.getId())
                     .category(question.getCategory())
                     .question(question.getQuestion())
-                    .expectedAnswer(question.getExpected_answer())
-                    .basedOn(question.getBased_on())
+                    .expectedAnswer(question.getExpectedAnswer())
+                    .basedOn(question.getBasedOn())
                     .build());
         }
         return new SourceQuestions(analysisData.getJobId(), questions, parsed.getProject_summary());

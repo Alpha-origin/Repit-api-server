@@ -20,7 +20,7 @@ public class GeneratedQuestionResponse {
     // tech_choice / implementation / troubleshooting / integration / structure
     private String category;
     private String question;
-    private String expected_answer;
+    private String expectedAnswer;
     // 질문의 근거 파일 경로. 추측 질문 방지 장치라 비지 않는다.
-    private List<String> based_on;
+    private List<String> basedOn;
 }

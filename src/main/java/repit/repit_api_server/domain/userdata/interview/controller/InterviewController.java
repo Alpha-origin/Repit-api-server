@@ -28,10 +28,10 @@ public class InterviewController {
     }
 
     // 면접 시작. 질문 재작성을 접수만 하고, 준비가 끝나면 채팅 서버로 면접 데이터가 넘어간다.
-    @PostMapping
+    @PostMapping("/{interviewId}")
     public ApiResponse<InterviewPrepareResponse> prepareInterview(
             @RequestHeader("Authorization") String authorization,
-            @RequestBody Long interviewId
+            @PathVariable Long interviewId
     ) {
         return ApiResponse.success(interviewService.prepareInterview(authorization, interviewId));
     }

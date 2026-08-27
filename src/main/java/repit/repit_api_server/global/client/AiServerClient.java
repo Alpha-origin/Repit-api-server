@@ -16,6 +16,8 @@ import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResp
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorAcceptedResponse;
 import repit.repit_api_server.global.common.ApiResponse;
 
+import java.util.function.Supplier;
+
 @Component
 @RequiredArgsConstructor
 public class AiServerClient {
@@ -64,6 +66,7 @@ public class AiServerClient {
     }
 
     public QuestionTailorAcceptedResponse tailorQuestions(QuestionTailorRequest request) {
+//
         return executor.execute(SERVER_NAME,
                 () -> aiServerApi.tailorQuestions(request),
                 this::resolveMessage, false);

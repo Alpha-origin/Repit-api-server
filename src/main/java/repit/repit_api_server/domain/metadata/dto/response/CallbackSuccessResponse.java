@@ -12,7 +12,7 @@ import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest
 @NoArgsConstructor
 @Builder
 public class CallbackSuccessResponse {
-    private String job_id;
+    private String jobId;
 
     private String status;
 

@@ -6,6 +6,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.Part;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -16,12 +17,16 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
+import org.springframework.web.cors.CorsUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
+import java.util.Map;
+import java.util.StringJoiner;
 import java.util.UUID;
 
 /**
@@ -29,9 +34,11 @@ import java.util.UUID;
  * 요청마다 추적 id를 발급해 MDC에 넣어두므로, 그 요청이 남긴 모든 로그(외부 서버 호출 포함)를
  * 같은 id로 묶어 흐름 그대로 읽을 수 있다.
  */
-// CorsFilter 바로 뒤에 세운다. 앞에 두면 브라우저의 사전 요청(OPTIONS)까지 흐름에 섞이고,
-// 더 뒤로 밀면 그 사이 필터에서 걸린 요청이 로그에 아예 남지 않는다.
-@Order(Ordered.HIGHEST_PRECEDENCE + 1)
+// 체인의 맨 앞에 세운다. 뒤로 밀면 그 사이 필터에서 걸린 요청이 로그에 아예 남지 않는다.
+// 특히 CorsFilter는 허용하지 않은 오리진의 요청을 체인에 넘기지 않고 그 자리에서 403으로 끊는다.
+// 뒤에 서 있으면 프론트 연동이 막힌 바로 그 순간의 요청만 로그에서 통째로 사라진다.
+// 대신 브라우저의 사전 요청(OPTIONS)은 통과한 경우 남기지 않아 흐름에 섞이지 않게 한다.
+@Order(Ordered.HIGHEST_PRECEDENCE)
 @Component
 public class RequestLoggingFilter extends OncePerRequestFilter {
 
@@ -42,6 +49,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     private static final String REQUEST_ARROW = "--> ";
     private static final String RESPONSE_ARROW = "<-- ";
     private static final String BODY_INDENT = "\n      body: ";
+    private static final String FORM_INDENT = "\n      form: ";
 
     // 이보다 큰 본문은 로그를 위해 메모리에 통째로 올리지 않는다.
     private static final long MAX_CACHEABLE_BODY_BYTES = 256 * 1024L;
@@ -82,11 +90,17 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         }
 
 
+        // 사전 요청은 브라우저가 본 요청마다 한 번씩 더 보내는 것이라, 통과한 것까지 남기면
+        // 흐름이 두 배로 늘어난다. 남길지는 결과를 보고 정하므로 진입 줄은 잡아둔다.
+        boolean preflight = CorsUtils.isPreFlightRequest(request);
+
         ContentCachingResponseWrapper cachingResponse =
-                shouldCacheResponseBody(request) ? new ContentCachingResponseWrapper(response) : null;
+                !preflight && shouldCacheResponseBody(request) ? new ContentCachingResponseWrapper(response) : null;
         HttpServletResponse responseToUse = cachingResponse != null ? cachingResponse : response;
 
-        logRequest(request, requestBody);
+        if (!preflight) {
+            logRequest(request, requestBody);
+        }
 
         Exception failure = null;
         try {
@@ -103,7 +117,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
                 cachingResponse.copyBodyToResponse();
             }
 
-            if (request.isAsyncStarted()) {
+            if (preflight) {
+                logPreflight(request, responseToUse.getStatus(), elapsedMillis);
+            } else if (request.isAsyncStarted()) {
                 // 아직 응답이 끝나지 않았다. 여기서는 접수만 남기고 마무리는 비동기 완료 시점에 남긴다.
                 log.info("{}{} {} 비동기 처리 시작 ({}ms)", RESPONSE_ARROW, request.getMethod(), request.getRequestURI(), elapsedMillis);
                 registerAsyncCompletionLogging(request, responseToUse, cachingResponse, traceId, startedAt);
@@ -134,7 +150,37 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         }
 
         appendBody(message, requestBody, contentType, charsetOf(request.getCharacterEncoding()));
+        appendFormSummary(message, request, contentType);
         log.info(message.toString());
+    }
+
+    /**
+     * 사전 요청은 막혔을 때만 남긴다.
+     *
+     * <p>통과한 사전 요청은 곧바로 뒤따르는 본 요청과 내용이 겹쳐 흐름만 늘린다. 반대로 막힌
+     * 사전 요청은 본 요청이 아예 나가지 못하므로, 남기지 않으면 서버 쪽에는 아무 흔적도 없이
+     * 브라우저에만 CORS 오류가 뜬다. 어느 오리진이 무엇을 요구했는지 함께 남겨야 허용 목록을
+     * 어떻게 고칠지 판단할 수 있다.
+     */
+    private void logPreflight(HttpServletRequest request, int status, long elapsedMillis) {
+        if (status < 400) {
+            return;
+        }
+        StringBuilder message = new StringBuilder(RESPONSE_ARROW)
+                .append("OPTIONS ").append(request.getRequestURI())
+                .append("  ").append(statusText(status))
+                .append("  사전 요청 거절 (").append(elapsedMillis).append("ms)")
+                .append("  origin=").append(request.getHeader(HttpHeaders.ORIGIN));
+
+        String requestMethod = request.getHeader(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD);
+        if (requestMethod != null) {
+            message.append("  요청한 메서드=").append(requestMethod);
+        }
+        String requestHeaders = request.getHeader(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS);
+        if (requestHeaders != null) {
+            message.append("  요청한 헤더=").append(requestHeaders);
+        }
+        log.warn(message.toString());
     }
 
     private void logResponse(HttpServletRequest request, int status, byte[] responseBody,
@@ -220,6 +266,70 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         });
     }
 
+    /**
+     * 파일 업로드와 폼 본문은 본문 로그에서 빠지므로, 무엇이 올라왔는지만이라도 남긴다.
+     *
+     * <p>업로드 본문은 메모리에 통째로 올릴 수 없고, 폼 본문은 우리가 미리 읽으면 컨테이너가
+     * 파라미터를 파싱하지 못한다. 그래서 {@link #shouldCacheRequestBody}가 둘 다 비켜가는데,
+     * 그 결과 이 경로들만 요청 줄만 남고 무엇을 보냈는지는 로그에 흔적이 없다.
+     * {@code POST /api/v1/metaData/dataUpload}가 그렇다.
+     *
+     * <p>본문을 우리가 읽는 대신, 컨테이너가 이미 파싱해 둔 파라미터와 파트 목록을 빌려 온다.
+     * 파싱은 컨테이너가 한 번만 하고 결과를 보관하므로 뒤이어 컨트롤러가 받는 값은 그대로다.
+     * 파일 내용은 남기지 않고 이름과 크기만 남긴다.
+     */
+    private void appendFormSummary(StringBuilder message, HttpServletRequest request, String contentType) {
+        if (!properties.includeBody() || contentType == null) {
+            return;
+        }
+        String lowerCase = contentType.toLowerCase();
+        boolean multipart = lowerCase.startsWith("multipart/");
+        if (!multipart && !lowerCase.startsWith(MediaType.APPLICATION_FORM_URLENCODED_VALUE)) {
+            return;
+        }
+
+        StringJoiner summary = new StringJoiner(", ");
+        appendParameters(summary, request);
+        if (multipart) {
+            appendUploadedFiles(summary, request);
+        }
+        if (summary.length() == 0) {
+            return;
+        }
+
+        String text = summary.toString();
+        int maxLength = properties.maxBodyLength();
+        message.append(FORM_INDENT)
+                .append(text.length() <= maxLength ? text : text.substring(0, maxLength) + "...");
+    }
+
+    private void appendParameters(StringJoiner summary, HttpServletRequest request) {
+        try {
+            for (Map.Entry<String, String[]> parameter : request.getParameterMap().entrySet()) {
+                summary.add(LogPayloads.mask(parameter.getKey() + "=" + String.join("|", parameter.getValue())));
+            }
+        } catch (RuntimeException e) {
+            // 파싱에 실패한 요청이다. 여기서 대신 답하지 않는다. 같은 실패를 컨트롤러가 다시 마주쳐
+            // 원래대로 응답으로 이어지고, 그 응답은 아래 응답 줄에 상태 코드로 남는다.
+        }
+    }
+
+    private void appendUploadedFiles(StringJoiner summary, HttpServletRequest request) {
+        try {
+            Collection<Part> parts = request.getParts();
+            for (Part part : parts) {
+                String fileName = part.getSubmittedFileName();
+                if (fileName != null) {
+                    // 파일 내용은 남길 수 없다. 어떤 파일이 얼마나 올라왔는지만 남긴다.
+                    summary.add(part.getName() + "=" + fileName
+                            + "(" + LogPayloads.humanReadableSize(part.getSize()) + ")");
+                }
+            }
+        } catch (IOException | ServletException | RuntimeException e) {
+            // 위와 같다. 로그를 남기려다 요청을 망치지 않는다.
+        }
+    }
+
     private void appendBody(StringBuilder message, byte[] body, String contentType, Charset charset) {
         if (!properties.includeBody() || body == null || body.length == 0) {
             return;
@@ -239,6 +349,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             String lowerCase = contentType.toLowerCase();
             // 파일 업로드는 메모리에 통째로 올릴 수 없고,
             // 폼 본문은 미리 읽어버리면 컨테이너가 파라미터를 파싱하지 못해 빈 값이 넘어간다.
+            // 대신 컨테이너가 파싱해 둔 것을 빌려 appendFormSummary가 요약을 남긴다.
             if (lowerCase.startsWith("multipart/")
                     || lowerCase.startsWith(MediaType.APPLICATION_FORM_URLENCODED_VALUE)) {
                 return false;

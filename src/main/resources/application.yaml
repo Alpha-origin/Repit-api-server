@@ -45,7 +45,7 @@ auth-server:
 
 ai-server:
   base-url: ${AI_SERVER}
-  # 분석 접수 응답이 콜백보다 늦게 오는 일이 있다. 여기서 끊기면 job_id를 받지 못해
+  # 분석 접수 응답이 콜백보다 늦게 오는 일이 있다. 여기서 끊기면 jobId를 받지 못해
   # 접수가 통째로 날아가고, 소유자가 붙지 않은 분석은 면접을 열 수 없다.
   read-timeout: 60s
 

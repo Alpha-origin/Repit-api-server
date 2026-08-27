@@ -59,11 +59,11 @@ class AnalysisLaunchServiceTest {
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
 
         when(aiServerClient.generate(any(GenerateRequest.class))).thenReturn(GenerateResponse.builder()
-                .job_id("job-1")
+                .jobId("job-1")
                 .status("accepted")
                 .build());
         when(aiServerClient.generateMock(any(GenerateRequest.class))).thenReturn(GenerateResponse.builder()
-                .job_id("mock-job-1")
+                .jobId("mock-job-1")
                 .status("accepted")
                 .build());
     }
@@ -81,12 +81,12 @@ class AnalysisLaunchServiceTest {
 
         GenerateResponse response = service.launch("Bearer token", metaData());
 
-        assertThat(response.getJob_id()).isEqualTo("job-1");
+        assertThat(response.getJobId()).isEqualTo("job-1");
         verify(aiMetaDataService).registerJob(eq("job-1"), eq(9L), any(LocalDateTime.class));
     }
 
     /**
-     * 접수는 분석 서버가 job_id를 돌려줘야 할 수 있는데, 그 응답이 콜백보다 늦게 오는 일이 있다.
+     * 접수는 분석 서버가 jobId를 돌려줘야 할 수 있는데, 그 응답이 콜백보다 늦게 오는 일이 있다.
      * 소유자 조회까지 뒤에 두면 그 사이 콜백이 만든 행이 주인 없이 남는다.
      */
     @Test
@@ -134,9 +134,9 @@ class AnalysisLaunchServiceTest {
         verify(aiMetaDataService).registerJob(eq("job-1"), eq(null), any(LocalDateTime.class));
     }
 
-    /** job_id가 없으면 구독도 조회도 할 수 없다. 성공으로 돌려주면 원인을 찾을 수 없다. */
+    /** jobId가 없으면 구독도 조회도 할 수 없다. 성공으로 돌려주면 원인을 찾을 수 없다. */
     @Test
-    void job_id가_없으면_실패로_돌린다() {
+    void jobId가_없으면_실패로_돌린다() {
         when(authServerClient.getUser("Bearer token")).thenReturn(owner);
         when(aiServerClient.generate(any(GenerateRequest.class))).thenReturn(GenerateResponse.builder()
                 .status("rejected")
@@ -154,7 +154,7 @@ class AnalysisLaunchServiceTest {
 
         GenerateResponse response = service.launch("Bearer token", metaData());
 
-        assertThat(response.getJob_id()).isEqualTo("job-1");
+        assertThat(response.getJobId()).isEqualTo("job-1");
     }
 
     private void doThrowOnRegister() {

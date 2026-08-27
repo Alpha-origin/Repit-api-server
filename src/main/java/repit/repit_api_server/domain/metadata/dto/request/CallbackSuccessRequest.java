@@ -14,7 +14,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @Builder
 public class CallbackSuccessRequest {
-    private String job_id;
+    private String jobId;
 
     // "succeeded" 또는 "failed"
     private String status;
