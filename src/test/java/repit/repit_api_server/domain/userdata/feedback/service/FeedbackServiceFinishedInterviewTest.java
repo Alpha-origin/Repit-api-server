@@ -8,6 +8,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
@@ -41,6 +42,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -237,5 +239,19 @@ class FeedbackServiceFinishedInterviewTest {
                 .hasMessageContaining("채점할 답변이 없습니다.");
 
         verify(aiServerClient, never()).requestSoloFeedback(any());
+    }
+
+    /**
+     * 확인과 저장 사이에 결과 콜백이 끼어든 경우. 결과는 콜백이 이미 남겼으므로 접수만 넘어가면 된다.
+     * 여기서 예외가 나가면 접수는 됐는데 요청은 실패한 것으로 끝난다.
+     */
+    @Test
+    void 접수를_남기는_사이에_결과가_먼저_기록돼도_요청이_깨지지_않는다() {
+        when(feedbackRepository.save(any(FeedbackEntity.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate key value violates feedback_job_id_unique"));
+
+        assertThatCode(() -> service.requestFeedbackForFinishedInterview(3L)).doesNotThrowAnyException();
+
+        verify(aiServerClient).requestSoloFeedback(any());
     }
 }

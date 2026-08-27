@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallbackRequest;
@@ -158,15 +159,42 @@ public class FeedbackService {
                 ? aiServerClient.requestMultiFeedback(toMultiRequest(interview))
                 : aiServerClient.requestSoloFeedback(toSoloRequest(interview));
 
-        feedbackRepository.save(FeedbackEntity.builder()
-                .interviewId(interview.getInterviewId())
-                .userId(interview.getUserId())
-                .sessionId(interview.getSessionId())
-                .jobId(accepted == null ? null : accepted.getJobId())
-                .status(FeedbackStatus.PENDING)
-                .build());
-
+        saveAccepted(interview, accepted == null ? null : accepted.getJobId());
         return accepted;
+    }
+
+    /**
+     * 접수 사실을 남긴다.
+     *
+     * <p>결과 콜백이 접수 응답보다 먼저 도착할 수 있다. 분석 서버 응답이 늦어지는 일이 있어
+     * 읽기 제한 시간을 60초까지 늘려둔 것도 그래서다. 콜백이 먼저 오면 세션으로 면접을 되짚어
+     * 행이 이미 만들어지고, 그 행에는 결과까지 담겨 있다.
+     *
+     * <p>그 위에 접수 행을 새로 넣으면 job_id 유일 색인에 걸려 요청이 통째로 실패한다. 색인이
+     * 없었더라도 결과가 빈 PENDING 행이 최신이 되어, 조회가 그것을 집어 들고 이미 받아둔 결과를
+     * 가린다. 그래서 같은 작업의 행이 이미 있으면 그대로 둔다.
+     */
+    private void saveAccepted(InterviewEntity interview, String jobId) {
+        if (jobId != null && feedbackRepository.findByJobId(jobId).isPresent()) {
+            log.info("채점 결과가 접수 응답보다 먼저 도착해 이미 기록돼 있습니다. interviewId={}, jobId={}",
+                    interview.getInterviewId(), jobId);
+            return;
+        }
+
+        try {
+            feedbackRepository.save(FeedbackEntity.builder()
+                    .interviewId(interview.getInterviewId())
+                    .userId(interview.getUserId())
+                    .sessionId(interview.getSessionId())
+                    .jobId(jobId)
+                    .status(FeedbackStatus.PENDING)
+                    .build());
+        } catch (DataIntegrityViolationException e) {
+            // 확인과 저장 사이에 콜백이 끼어든 경우다. 결과는 콜백이 이미 남겼으니 접수만 넘어간다.
+            // 이 메서드는 트랜잭션 밖에서 돌아 여기서 삼켜도 다른 저장이 함께 말려들지 않는다.
+            log.info("접수를 남기는 사이 채점 결과가 먼저 기록됐습니다. interviewId={}, jobId={}",
+                    interview.getInterviewId(), jobId);
+        }
     }
 
     /**
