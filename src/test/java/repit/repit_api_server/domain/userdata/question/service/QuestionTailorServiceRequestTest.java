@@ -115,11 +115,13 @@ class QuestionTailorServiceRequestTest {
                         "expected_answer", "원인 추적 과정", "based_on", List.of()));
     }
 
+    /** 저장된 실제 모양 그대로다 — 키는 전부 snake_case, core_features 원소에 based_on 이 붙는다. */
     private Map<String, Object> projectSummary() {
         return Map.of(
                 "overview", "주문 처리를 맡는 백엔드",
                 "repositories", List.of(Map.of("repo", "order-api", "role", "api_server", "description", "주문 API")),
-                "core_features", List.of(Map.of("name", "주문 생성", "description", "결제 승인 후 주문을 만든다")),
+                "core_features", List.of(Map.of("name", "주문 생성", "description", "결제 승인 후 주문을 만든다",
+                        "based_on", List.of("order-api/OrderService.java"))),
                 "tech_stack", List.of("Spring", "Redis"));
     }
 
@@ -205,6 +207,9 @@ class QuestionTailorServiceRequestTest {
         assertThat(request.getProjectSummary().getOverview()).isEqualTo("주문 처리를 맡는 백엔드");
         assertThat(request.getProjectSummary().getTechStack()).containsExactly("Spring", "Redis");
         assertThat(request.getProjectSummary().getCoreFeatures()).hasSize(1);
+        // based_on 까지 옮겨져야 신규 질문이 근거 없는 추측 질문이 되지 않는다.
+        assertThat(request.getProjectSummary().getCoreFeatures().getFirst().getBasedOn())
+                .containsExactly("order-api/OrderService.java");
     }
 
     /** 기대 답변이 비면 분석 서버가 요청 전체를 422로 거부한다. 콜백까지 갔다 오기 전에 막는다. */
