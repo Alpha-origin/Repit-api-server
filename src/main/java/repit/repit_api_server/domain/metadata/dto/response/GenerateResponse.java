@@ -10,7 +10,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @Builder
 public class GenerateResponse {
-    private String job_id;
+    private String jobId;
     private String status;
     private String message;
 }
