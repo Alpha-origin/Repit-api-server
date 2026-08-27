@@ -33,6 +33,7 @@ import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.response.UserResponse;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
@@ -255,10 +256,26 @@ public class QuestionTailorService {
     }
 
     /**
-     * 신규 질문의 유일한 근거. 개요가 비면 분석 서버가 422로 거부하므로 요청 전에 막는다.
+     * 신규 질문의 유일한 근거.
+     *
+     * <p>분석 결과에 통째로 저장해둔 값이라 형태를 우리가 못 박아둘 수 없다. 여기서 해석하다
+     * 실패하면 N:1을 열 수 없다는 뜻이므로 그렇게 알린다 — 500으로 나가면 사용자는 서버가
+     * 고장난 것인지 분석을 다시 해야 하는 것인지 구분할 수 없다.
+     *
+     * <p>해석은 이 자리에서만 한다. 원질문을 읽는 경로는 1:1 면접 시작도 함께 지나므로,
+     * 그쪽에서 이 값을 건드리면 N:1에만 필요한 해석 때문에 1:1까지 멈춘다.
      */
-    private QuestionTailorMultiRequest.ProjectSummary toRequestProjectSummary(ProjectSummaryResponse summary) {
-        if (summary == null || summary.getOverview() == null || summary.getOverview().isBlank()) {
+    private QuestionTailorMultiRequest.ProjectSummary toRequestProjectSummary(Object raw) {
+        ProjectSummaryResponse summary;
+        try {
+            summary = objectMapper.convertValue(raw, ProjectSummaryResponse.class);
+        } catch (IllegalArgumentException | JacksonException e) {
+            log.warn("분석 결과의 프로젝트 요약을 해석하지 못했습니다.", e);
+            throw BusinessException.unprocessable(
+                    "프로젝트 요약을 읽지 못했습니다. 포트폴리오 분석을 다시 진행해주세요.");
+        }
+
+        if (summary == null || isBlank(summary.getOverview())) {
             throw BusinessException.unprocessable(
                     "질문을 만들 프로젝트 요약이 없습니다. 포트폴리오 분석을 먼저 진행해주세요.");
         }
@@ -314,7 +331,7 @@ public class QuestionTailorService {
      */
     private record SourceQuestions(String analysisJobId,
                                    List<TailoredQuestionResponse> questions,
-                                   ProjectSummaryResponse projectSummary) {
+                                   Object projectSummary) {
     }
 
     /** 재작성 대상은 해당 사용자의 가장 최근 분석 결과에 담긴 원질문이다. */

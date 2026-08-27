@@ -1,0 +1,228 @@
+package repit.repit_api_server.domain.userdata.question.service;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import org.springframework.http.HttpStatus;
+import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
+import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
+import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
+import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiRequest;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
+import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
+import repit.repit_api_server.domain.userdata.question.repository.QuestionTailorRepository;
+import repit.repit_api_server.global.client.AiServerClient;
+import repit.repit_api_server.global.client.AuthServerClient;
+import repit.repit_api_server.global.exception.BusinessException;
+import repit.repit_api_server.global.response.UserResponse;
+import tools.jackson.databind.ObjectMapper;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * 면접 시작 시 분석 서버로 나가는 요청.
+ *
+ * <p>1:1과 N:1이 갈리기 전, 원질문을 읽는 구간은 두 경로가 함께 지난다. 그 구간에서 N:1에만
+ * 필요한 값까지 해석하면 1:1 면접 시작이 그 해석에 발이 묶인다.
+ */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class QuestionTailorServiceRequestTest {
+
+    @Mock
+    private QuestionTailorRepository questionTailorRepository;
+    @Mock
+    private InterviewRepository interviewRepository;
+    @Mock
+    private InterviewPersonaRepository interviewPersonaRepository;
+    @Mock
+    private PersonaRepository personaRepository;
+    @Mock
+    private AnalysisDataRepository analysisDataRepository;
+    @Mock
+    private AiServerClient aiServerClient;
+    @Mock
+    private AuthServerClient authServerClient;
+    @Mock
+    private ChatInterviewHandoffService chatInterviewHandoffService;
+
+    private QuestionTailorService service;
+    private UserResponse user;
+
+    @BeforeEach
+    void setUp() {
+        service = new QuestionTailorService(questionTailorRepository, interviewRepository,
+                interviewPersonaRepository, personaRepository,
+                analysisDataRepository, aiServerClient, authServerClient, chatInterviewHandoffService,
+                new ObjectMapper());
+
+        user = mock(UserResponse.class);
+        when(user.getId()).thenReturn(7L);
+        when(user.getMajor()).thenReturn("BACKEND");
+
+        when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.empty());
+        when(questionTailorRepository.save(any(QuestionTailorEntity.class)))
+                .thenAnswer(call -> call.getArgument(0));
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(11L, Role.TECH)));
+        givenAnalysisResult(projectSummary());
+    }
+
+    private void givenAnalysisResult(Object projectSummary) {
+        when(analysisDataRepository.findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(7L))
+                .thenReturn(Optional.of(AnalysisDataEntity.builder()
+                        .jobId("analysis-1")
+                        .userId(7L)
+                        .result(Map.of("project_summary", projectSummary, "interview", originalQuestions()))
+                        .build()));
+    }
+
+    /** /generate 산출물. 와이어 포맷이 snake_case다. */
+    private List<Map<String, Object>> originalQuestions() {
+        return List.of(
+                Map.of("id", 1, "category", "tech_choice", "question", "왜 Redis 를 썼나요?",
+                        "expected_answer", "캐시 선택 근거", "based_on", List.of("order-api/CacheConfig.java")),
+                Map.of("id", 2, "category", "structure", "question", "모듈을 왜 나눴나요?",
+                        "expected_answer", "경계 설정 기준", "based_on", List.of()),
+                Map.of("id", 3, "category", "troubleshooting", "question", "장애는 어떻게 잡았나요?",
+                        "expected_answer", "원인 추적 과정", "based_on", List.of()));
+    }
+
+    private Map<String, Object> projectSummary() {
+        return Map.of(
+                "overview", "주문 처리를 맡는 백엔드",
+                "repositories", List.of(Map.of("repo", "order-api", "role", "api_server", "description", "주문 API")),
+                "core_features", List.of(Map.of("name", "주문 생성", "description", "결제 승인 후 주문을 만든다")),
+                "tech_stack", List.of("Spring", "Redis"));
+    }
+
+    private PersonaEntity persona(long id, Role role) {
+        return PersonaEntity.builder()
+                .personaId(id)
+                .personaName("면접관 " + id)
+                .role(role)
+                .major(role == Role.TECH ? Major.BACKEND : null)
+                .type(Type.NEUTRAL)
+                .level(Level.NORMAL)
+                .career(8)
+                .gender(Gender.MALE)
+                .build();
+    }
+
+    private InterviewEntity interview(InterviewMode mode) {
+        return InterviewEntity.builder()
+                .interviewId(3L)
+                .userId(7L)
+                .personaId(mode == InterviewMode.SOLO ? 11L : null)
+                .mode(mode)
+                .sessionId("sess-1")
+                .status(Status.IN_PROGRESS)
+                .build();
+    }
+
+    private void givenMultiPersonas() {
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(11L).personaOrder(0).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(12L).personaOrder(1).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(13L).personaOrder(2).build()));
+        when(personaRepository.findAllById(List.of(11L, 12L, 13L))).thenReturn(List.of(
+                persona(11L, Role.TECH), persona(12L, Role.HR), persona(13L, Role.CEO)));
+    }
+
+    /**
+     * 프로젝트 요약은 분석 결과에 통째로 저장해둔 값이라 형태를 우리가 못 박아둘 수 없다.
+     * 1:1은 그 값을 쓰지 않으므로, 어떤 모양이 들어 있든 면접 시작이 걸리면 안 된다.
+     */
+    @Test
+    void 일대일은_프로젝트_요약_형태에_걸리지_않는다() {
+        givenAnalysisResult("요약이 문자열로 들어 있다");
+
+        service.requestTailor(interview(InterviewMode.SOLO), user);
+
+        verify(aiServerClient).tailorQuestions(any(QuestionTailorRequest.class));
+    }
+
+    @Test
+    void N대1은_요약을_읽지_못하면_422로_알린다() {
+        givenMultiPersonas();
+        givenAnalysisResult("요약이 문자열로 들어 있다");
+
+        assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.MULTI), user))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+
+        // 500으로 나가면 사용자는 서버가 고장난 것인지 분석을 다시 해야 하는 것인지 알 수 없다.
+        verify(aiServerClient, never()).tailorQuestionsMulti(any());
+    }
+
+    @Test
+    void N대1은_원질문_두_개와_면접관_구성을_실어_보낸다() {
+        givenMultiPersonas();
+
+        service.requestTailor(interview(InterviewMode.MULTI), user);
+
+        ArgumentCaptor<QuestionTailorMultiRequest> sent =
+                ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
+        verify(aiServerClient).tailorQuestionsMulti(sent.capture());
+        QuestionTailorMultiRequest request = sent.getValue();
+
+        // 기술 면접관 몫은 원질문 앞에서 두 개. questionCount는 이 개수와 같아야 한다.
+        assertThat(request.getQuestions()).extracting(QuestionTailorMultiRequest.Question::getId)
+                .containsExactly(1, 2);
+        assertThat(request.getTechPersona().getQuestionCount()).isEqualTo(2);
+        assertThat(request.getTechPersona().getRole()).isEqualTo("TECH");
+        assertThat(request.getOtherPersonas()).extracting(QuestionTailorMultiRequest.Persona::getRole)
+                .containsExactly("HR", "CEO");
+        // snake_case로 저장된 요약이 camelCase로 옮겨져야 근거가 살아서 넘어간다.
+        assertThat(request.getProjectSummary().getOverview()).isEqualTo("주문 처리를 맡는 백엔드");
+        assertThat(request.getProjectSummary().getTechStack()).containsExactly("Spring", "Redis");
+        assertThat(request.getProjectSummary().getCoreFeatures()).hasSize(1);
+    }
+
+    /** 기대 답변이 비면 분석 서버가 요청 전체를 422로 거부한다. 콜백까지 갔다 오기 전에 막는다. */
+    @Test
+    void 기대_답변이_빈_원질문이면_보내지_않는다() {
+        givenMultiPersonas();
+        when(analysisDataRepository.findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(7L))
+                .thenReturn(Optional.of(AnalysisDataEntity.builder()
+                        .jobId("analysis-1")
+                        .userId(7L)
+                        .result(Map.of("project_summary", projectSummary(), "interview", List.of(
+                                Map.of("id", 1, "category", "tech_choice", "question", "왜 Redis 를 썼나요?",
+                                        "expected_answer", "  ", "based_on", List.of()))))
+                        .build()));
+
+        assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.MULTI), user))
+                .isInstanceOf(BusinessException.class);
+
+        verify(aiServerClient, never()).tailorQuestionsMulti(any());
+    }
+}
