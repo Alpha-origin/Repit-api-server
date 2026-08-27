@@ -7,6 +7,7 @@ import repit.repit_api_server.domain.userdata.interview.dto.request.SaveIntervie
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewAllResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewPrepareResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
+import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewResultService;
 import repit.repit_api_server.domain.userdata.interview.service.InterviewService;
 import repit.repit_api_server.domain.userdata.answer.service.AnswerService;
 import repit.repit_api_server.global.common.ApiResponse;
@@ -18,6 +19,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class InterviewController {
     private final InterviewService interviewService;
+    private final ChatInterviewResultService chatInterviewResultService;
     private final AnswerService answerService;
 
     @PostMapping("/create")
@@ -56,10 +58,11 @@ public class InterviewController {
         return ApiResponse.success(interviewService.getChatInterview(interviewId));
     }
 
+    // 채팅 서버 전용. 면접 기록을 저장하고, 이어서 채점까지 접수한다.
     @PostMapping("/result")
     public void saveInterview(
             @RequestBody SaveInterviewRequest request
     ) {
-        interviewService.saveInterview(request);
+        chatInterviewResultService.handleResult(request);
     }
 }
