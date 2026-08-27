@@ -215,8 +215,8 @@ public class InterviewService {
     }
 
     public InterviewResponse getInterviewById(Long interviewId) {
-        InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
-        assert interview != null;
+        InterviewEntity interview = interviewRepository.findById(interviewId)
+                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
         return InterviewResponse.from(interview, personaIdsOf(interview));
     }
 

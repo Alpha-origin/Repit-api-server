@@ -8,6 +8,7 @@ import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResp
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
+import repit.repit_api_server.global.exception.BusinessException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -34,17 +35,16 @@ public class QuestionService {
     }
 
     public QuestionResponse getQuestionById(Long questionId) {
-        QuestionEntity question = questionRepository.findById(questionId).orElse(null);
-        if (question == null) {
-            return null;
-        }
+        // 없는 질문에 성공 응답을 주면 클라이언트는 본문이 빈 것을 정상으로 읽는다.
+        QuestionEntity question = questionRepository.findById(questionId)
+                .orElseThrow(() -> BusinessException.notFound("질문을 찾을 수 없습니다"));
 
         return QuestionResponse.from(question);
     }
 
     public List<QuestionResponse> getAllByInterview(Long interviewId) {
-        InterviewEntity interview = interviewRepository.findById(interviewId).orElse(null);
-        assert interview != null;
+        InterviewEntity interview = interviewRepository.findById(interviewId)
+                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
         List<QuestionEntity> questions = questionRepository.findAllByInterviewId(interview.getInterviewId());
         return questions.stream()
                 .map(QuestionResponse::from)

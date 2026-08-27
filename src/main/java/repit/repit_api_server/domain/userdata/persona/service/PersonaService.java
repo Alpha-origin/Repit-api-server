@@ -48,14 +48,14 @@ public class PersonaService {
     }
 
     public PersonaResponse getPersonaById(Long id) {
-        PersonaEntity persona = personaRepository.findById(id).orElse(null);
-        assert persona != null;
+        PersonaEntity persona = personaRepository.findById(id)
+                .orElseThrow(() -> BusinessException.notFound("페르소나를 찾을 수 없습니다"));
         return PersonaResponse.from(persona);
     }
 
     public PersonaResponse getPersonaByName(String name) {
-        PersonaEntity persona = personaRepository.findByPersonaName(name).orElse(null);
-        assert persona != null;
+        PersonaEntity persona = personaRepository.findByPersonaName(name)
+                .orElseThrow(() -> BusinessException.notFound("페르소나를 찾을 수 없습니다: " + name));
         return PersonaResponse.from(persona);
     }
 
