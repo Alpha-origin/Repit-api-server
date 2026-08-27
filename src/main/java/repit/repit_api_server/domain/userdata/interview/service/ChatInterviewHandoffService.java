@@ -32,41 +32,41 @@ public class ChatInterviewHandoffService {
     public ChatInterviewResponse deliver(QuestionTailorEntity tailor) {
         InterviewEntity interview = interviewRepository.findById(tailor.getInterviewId())
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
-        PersonaEntity persona = findPersona(interview);
 
         return chatServerClient.prepareInterview(ChatInterviewPrepareRequest.builder()
                 .sessionId(interview.getSessionId())
                 .interviewId(interview.getInterviewId())
                 .userId(interview.getUserId())
                 .status(interview.getStatus())
-                .questions(toQuestions(tailor, persona.getPersonaId()))
+                .questions(toQuestions(tailor, defaultPersonaId(interview)))
                 .build());
     }
 
     /**
-     * 면접을 진행할 면접관.
+     * 질문에 면접관이 붙어 있지 않을 때 쓸 면접관.
      *
-     * <p>N:1 면접은 면접관이 여럿이라 {@code interview.persona_id}가 비어 있다. 그대로 넘기면
-     * 채팅 서버가 어느 면접관으로 면접을 열지 정하지 못한다. 어느 면접관의 질문인지 가릴 수
-     * 있게 되기 전까지는 넘기기 전에 막는다.
+     * <p>1:1 면접은 질문마다 면접관을 나눌 일이 없어 전부 이 한 명이다. N:1 질문에는 분석 서버가
+     * 면접관을 달아 보내주므로 이 값이 쓰이지 않고, 실제로 {@code interview.persona_id}도 비어 있다.
      */
-    private PersonaEntity findPersona(InterviewEntity interview) {
+    private Long defaultPersonaId(InterviewEntity interview) {
         if (interview.getPersonaId() == null) {
-            throw BusinessException.unprocessable("면접에 면접관이 지정되어 있지 않습니다.");
+            return null;
         }
         return personaRepository.findById(interview.getPersonaId())
-                .orElseThrow(() -> BusinessException.notFound("페르소나가 없습니다"));
+                .orElseThrow(() -> BusinessException.notFound("페르소나가 없습니다"))
+                .getPersonaId();
     }
 
     /**
      * 면접에 실제로 쓸 질문만 넘긴다. 재작성이 실패한 건은 폴백으로 원질문이 들어와 있어
      * 어느 쪽이든 같은 형태로 나간다.
      *
-     * <p>채팅 서버는 질문마다 면접관을 달아 두므로, 1:1 면접에서는 모든 질문에 같은 면접관을 붙인다.
+     * <p>채팅 서버는 질문마다 면접관을 달아 두고, 프론트는 그 값이 바뀌는 것으로 면접관 전환을
+     * 감지한다. N:1은 질문에 붙어 온 면접관을 그대로 쓰고, 1:1은 면접관이 하나뿐이라 전부 같다.
      *
-     * <p>id와 본문이 비면 채팅 서버가 질문을 다룰 수 없으므로 넘기기 전에 멈춘다.
+     * <p>id와 본문, 면접관이 비면 채팅 서버가 질문을 다룰 수 없으므로 넘기기 전에 멈춘다.
      */
-    private List<ChatInterviewPrepareRequest.Question> toQuestions(QuestionTailorEntity tailor, Long personaId) {
+    private List<ChatInterviewPrepareRequest.Question> toQuestions(QuestionTailorEntity tailor, Long defaultPersonaId) {
         List<TailoredQuestionResponse> finalQuestions = tailor.getQuestions() == null
                 ? tailor.getSourceQuestions()
                 : tailor.getQuestions();
@@ -78,6 +78,10 @@ public class ChatInterviewHandoffService {
                 .map(question -> {
                     if (question.getId() == null || question.getQuestion() == null || question.getQuestion().isBlank()) {
                         throw BusinessException.unprocessable("채팅 서버에 넘길 수 없는 질문이 있습니다. id=" + question.getId());
+                    }
+                    Long personaId = question.getPersonaId() == null ? defaultPersonaId : question.getPersonaId();
+                    if (personaId == null) {
+                        throw BusinessException.unprocessable("질문에 면접관이 지정되어 있지 않습니다. id=" + question.getId());
                     }
                     return ChatInterviewPrepareRequest.Question.builder()
                             .id(question.getId().longValue())

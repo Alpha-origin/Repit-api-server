@@ -40,6 +40,8 @@ public class PersonaService {
                 .major(role == Role.TECH ? request.getMajor() : null)
                 .career(request.getCareer())
                 .gender(request.getGender())
+                .imageUrl(blankToNull(request.getImageUrl()))
+                .description(blankToNull(request.getDescription()))
                 .build();
 
         PersonaEntity saved =  personaRepository.save(persona);
@@ -59,10 +61,23 @@ public class PersonaService {
         return PersonaResponse.from(persona);
     }
 
-    public List<PersonaResponse> getAllPersona() {
-        return personaRepository.findAll()
-                .stream()
+    /**
+     * 면접관 목록. 직책을 주면 그 직책만 내려준다.
+     *
+     * <p>N:1 사전설정 화면은 슬롯마다 다른 면접관 풀을 보여줘야 한다. 전부 내려주고 프론트에서
+     * 거르게 하면 슬롯 규칙이 화면 쪽에 흩어지므로 여기서 거른다.
+     */
+    public List<PersonaResponse> getAllPersona(Role role) {
+        List<PersonaEntity> personas = role == null
+                ? personaRepository.findAll()
+                : personaRepository.findAllByRole(role);
+
+        return personas.stream()
                 .map(PersonaResponse::from)
                 .toList();
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 }

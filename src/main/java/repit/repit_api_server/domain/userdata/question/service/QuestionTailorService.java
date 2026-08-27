@@ -7,14 +7,21 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResultResponse;
 import repit.repit_api_server.domain.metadata.dto.response.GeneratedQuestionResponse;
+import repit.repit_api_server.domain.metadata.dto.response.ProjectSummaryResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorCallbackRequest;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiCallbackRequest;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorAcceptedResponse;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorResponse;
@@ -36,6 +43,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 면접 시작 시 도는 질문 재작성 흐름.
@@ -51,11 +60,18 @@ public class QuestionTailorService {
     private static final Logger log = LoggerFactory.getLogger(QuestionTailorService.class);
 
     private static final String CALLBACK_PATH = "/api/questions/tailor/callback";
+    private static final String MULTI_CALLBACK_PATH = "/api/questions/tailor/multi/callback";
     private static final int MAX_QUESTIONS = 10;
     private static final String STATUS_SUCCEEDED = "succeeded";
 
+    // 기술 면접관이 맡을 문항 수. 원질문 5개를 다 쓰면 다른 면접관 몫까지 더해져 면접이 너무 길어진다.
+    private static final int TECH_QUESTION_COUNT = 2;
+    // 기술 외 면접관 한 명이 맡을 문항 수. 분석 서버 기본값과 같다.
+    private static final int OTHER_QUESTION_COUNT = 2;
+
     private final QuestionTailorRepository questionTailorRepository;
     private final InterviewRepository interviewRepository;
+    private final InterviewPersonaRepository interviewPersonaRepository;
     private final PersonaRepository personaRepository;
     private final AnalysisDataRepository analysisDataRepository;
     private final AiServerClient aiServerClient;
@@ -91,6 +107,10 @@ public class QuestionTailorService {
         }
 
         SourceQuestions source = loadOriginalQuestions(interview.getUserId());
+        if (interview.getMode() == InterviewMode.MULTI) {
+            return requestMultiTailor(interview, user, source);
+        }
+
         List<TailoredQuestionResponse> sourceQuestions = source.questions();
         QuestionTailorRequest.Profile profile = resolveProfile(user, interview.getPersonaId());
 
@@ -105,6 +125,7 @@ public class QuestionTailorService {
         return questionTailorRepository.save(QuestionTailorEntity.builder()
                 .interviewId(interview.getInterviewId())
                 .userId(interview.getUserId())
+                .mode(InterviewMode.SOLO)
                 .jobId(accepted == null ? null : accepted.getJobId())
                 // 재작성본이 어느 분석 결과에서 나왔는지 되짚을 수 있게 남긴다.
                 .analysisJobId(source.analysisJobId())
@@ -112,6 +133,169 @@ public class QuestionTailorService {
                 .sourceQuestions(sourceQuestions)
                 .chatDelivered(false)
                 .build());
+    }
+
+    /**
+     * N:1 질문 구성 요청.
+     *
+     * <p>1:1과 달리 두 가지가 한 번에 돈다 — 기술 면접관이 쓸 원질문을 다시 쓰고, 나머지 면접관
+     * 몫의 질문을 새로 만든다. 신규 질문의 근거는 프로젝트 요약뿐이라 그것까지 실어 보낸다.
+     *
+     * <p>원질문을 전부 넘기지는 않는다. 5개를 다 쓰면 다른 면접관 몫이 더해져 면접이 너무 길어진다.
+     * 앞에서부터 {@link #TECH_QUESTION_COUNT}개만 고른다.
+     */
+    private QuestionTailorEntity requestMultiTailor(InterviewEntity interview, UserResponse user,
+                                                    SourceQuestions source) {
+        List<PersonaEntity> members = orderedPersonas(interview.getInterviewId());
+        PersonaEntity tech = members.getFirst();
+        List<PersonaEntity> others = members.subList(1, members.size());
+
+        List<TailoredQuestionResponse> techQuestions = source.questions().stream()
+                .limit(TECH_QUESTION_COUNT)
+                .toList();
+        verifyTechQuestions(techQuestions);
+
+        QuestionTailorAcceptedResponse accepted =
+                aiServerClient.tailorQuestionsMulti(QuestionTailorMultiRequest.builder()
+                        .interviewId(String.valueOf(interview.getInterviewId()))
+                        .userId(String.valueOf(interview.getUserId()))
+                        .jobRole(resolveJobRole(user, tech))
+                        // persona.career는 면접관 설정이지 지원자 경력이 아니다. 지원자 경력은 아직 수집하지 않는다.
+                        .experienceLevel(null)
+                        .techPersona(toRequestPersona(tech, techQuestions.size()))
+                        .otherPersonas(others.stream()
+                                .map(persona -> toRequestPersona(persona, OTHER_QUESTION_COUNT))
+                                .toList())
+                        .questions(techQuestions.stream().map(this::toMultiRequestQuestion).toList())
+                        .projectSummary(toRequestProjectSummary(source.projectSummary()))
+                        .callbackUrl(callbackBaseUrl + MULTI_CALLBACK_PATH)
+                        .build());
+
+        return questionTailorRepository.save(QuestionTailorEntity.builder()
+                .interviewId(interview.getInterviewId())
+                .userId(interview.getUserId())
+                .mode(InterviewMode.MULTI)
+                .jobId(accepted == null ? null : accepted.getJobId())
+                .analysisJobId(source.analysisJobId())
+                .status(TailorStatus.PENDING)
+                // 기술 면접관에게 넘긴 원질문만 남는다. 나머지 4문항은 아직 존재하지 않는다.
+                .sourceQuestions(techQuestions)
+                .chatDelivered(false)
+                .build());
+    }
+
+    /**
+     * 면접 진행 순서대로 정리한 면접관.
+     *
+     * <p>맨 앞은 반드시 기술 면접관이다. 원질문을 맡을 자리가 거기뿐이라, 없으면 요청을 만들 수 없다.
+     * 면접 생성에서 이미 걸러지지만 그 사이에 면접관이 지워질 수 있어 여기서도 확인한다.
+     */
+    private List<PersonaEntity> orderedPersonas(Long interviewId) {
+        List<Long> personaIds = interviewPersonaRepository
+                .findAllByInterviewIdOrderByPersonaOrderAsc(interviewId).stream()
+                .map(InterviewPersonaEntity::getPersonaId)
+                .toList();
+
+        Map<Long, PersonaEntity> found = personaRepository.findAllById(personaIds).stream()
+                .collect(Collectors.toMap(PersonaEntity::getPersonaId, Function.identity()));
+
+        List<PersonaEntity> ordered = new ArrayList<>();
+        for (Long personaId : personaIds) {
+            PersonaEntity persona = found.get(personaId);
+            if (persona == null) {
+                throw BusinessException.notFound("면접관을 찾을 수 없습니다: " + personaId);
+            }
+            ordered.add(persona);
+        }
+
+        if (ordered.size() < 2 || ordered.getFirst().getRole() != Role.TECH) {
+            throw BusinessException.unprocessable("N:1 면접의 면접관 구성이 올바르지 않습니다.");
+        }
+        return ordered;
+    }
+
+    private QuestionTailorMultiRequest.Persona toRequestPersona(PersonaEntity persona, int questionCount) {
+        return QuestionTailorMultiRequest.Persona.builder()
+                .personaId(String.valueOf(persona.getPersonaId()))
+                .role(persona.getRole() == null ? null : persona.getRole().name())
+                .style(persona.getType() == null ? null : persona.getType().name())
+                .questionCount(questionCount)
+                .build();
+    }
+
+    /**
+     * 기술 면접관에게 넘길 원질문. 분석 서버는 넷 중 하나라도 비면 요청 전체를 422로 거부한다.
+     *
+     * <p>특히 기대 답변은 재작성 후에도 그대로 확인할 수 있어야 하는 기준값이라 비면 안 된다.
+     * 콜백까지 갔다 오면 면접 시작이 그만큼 늦어지므로 요청 전에 막는다.
+     */
+    private void verifyTechQuestions(List<TailoredQuestionResponse> questions) {
+        if (questions.isEmpty()) {
+            throw BusinessException.unprocessable("기술 면접관에게 넘길 원질문이 없습니다.");
+        }
+        for (TailoredQuestionResponse question : questions) {
+            if (question.getId() == null
+                    || isBlank(question.getCategory())
+                    || isBlank(question.getQuestion())
+                    || isBlank(question.getExpectedAnswer())) {
+                throw BusinessException.unprocessable(
+                        "질문을 만들 재료가 모자랍니다. 포트폴리오 분석을 다시 진행해주세요.");
+            }
+        }
+    }
+
+    private QuestionTailorMultiRequest.Question toMultiRequestQuestion(TailoredQuestionResponse question) {
+        return QuestionTailorMultiRequest.Question.builder()
+                .id(question.getId())
+                .category(question.getCategory())
+                .question(question.getQuestion())
+                .expectedAnswer(question.getExpectedAnswer())
+                .basedOn(question.getBasedOn())
+                .build();
+    }
+
+    /**
+     * 신규 질문의 유일한 근거. 개요가 비면 분석 서버가 422로 거부하므로 요청 전에 막는다.
+     */
+    private QuestionTailorMultiRequest.ProjectSummary toRequestProjectSummary(ProjectSummaryResponse summary) {
+        if (summary == null || summary.getOverview() == null || summary.getOverview().isBlank()) {
+            throw BusinessException.unprocessable(
+                    "질문을 만들 프로젝트 요약이 없습니다. 포트폴리오 분석을 먼저 진행해주세요.");
+        }
+
+        return QuestionTailorMultiRequest.ProjectSummary.builder()
+                .overview(summary.getOverview())
+                // 항목 하나에 빈 칸이 있으면 분석 서버가 요약 전체를 거부한다. 그 한 건만 빼고 넘긴다 —
+                // 근거가 조금 줄어들 뿐이지만, 통째로 거부되면 질문이 아예 만들어지지 않는다.
+                .repositories(summary.getRepositories() == null ? List.of() : summary.getRepositories().stream()
+                        .filter(repository -> !isBlank(repository.getRepo())
+                                && !isBlank(repository.getRole())
+                                && !isBlank(repository.getDescription()))
+                        .map(repository -> QuestionTailorMultiRequest.Repository.builder()
+                                .repo(repository.getRepo())
+                                .role(repository.getRole())
+                                .description(repository.getDescription())
+                                .build())
+                        .toList())
+                .coreFeatures(summary.getCoreFeatures() == null ? List.of() : summary.getCoreFeatures().stream()
+                        .filter(feature -> !isBlank(feature.getName()) && !isBlank(feature.getDescription()))
+                        .map(feature -> QuestionTailorMultiRequest.CoreFeature.builder()
+                                .name(feature.getName())
+                                .description(feature.getDescription())
+                                .basedOn(feature.getBasedOn())
+                                .build())
+                        .toList())
+                .techStack(summary.getTechStack() == null ? List.of() : summary.getTechStack())
+                .build();
+    }
+
+    /** 재작성 개인화 축. 사용자 전공이 먼저고, 없으면 기술 면접관의 전공을 쓴다. */
+    private String resolveJobRole(UserResponse user, PersonaEntity tech) {
+        String jobRole = blankToNull(user.getMajor());
+        if (jobRole != null) {
+            return jobRole;
+        }
+        return tech.getMajor() == null ? null : tech.getMajor().name();
     }
 
     private QuestionTailorRequest.Question toRequestQuestion(TailoredQuestionResponse question) {
@@ -124,8 +308,13 @@ public class QuestionTailorService {
                 .build();
     }
 
-    /** 원질문과 그 질문이 나온 분석 작업. 재작성 건에 출처를 남겨두려고 jobId를 함께 들고 다닌다. */
-    private record SourceQuestions(String analysisJobId, List<TailoredQuestionResponse> questions) {
+    /**
+     * 원질문과 그 질문이 나온 분석 작업.
+     * 재작성 건에 출처를 남겨두려고 jobId를, N:1 신규 질문의 근거로 쓰려고 프로젝트 요약을 함께 들고 다닌다.
+     */
+    private record SourceQuestions(String analysisJobId,
+                                   List<TailoredQuestionResponse> questions,
+                                   ProjectSummaryResponse projectSummary) {
     }
 
     /** 재작성 대상은 해당 사용자의 가장 최근 분석 결과에 담긴 원질문이다. */
@@ -162,7 +351,7 @@ public class QuestionTailorService {
                     .basedOn(question.getBased_on())
                     .build());
         }
-        return new SourceQuestions(analysisData.getJobId(), questions);
+        return new SourceQuestions(analysisData.getJobId(), questions, parsed.getProject_summary());
     }
 
     /**
@@ -199,6 +388,15 @@ public class QuestionTailorService {
             return;
         }
         if (tailor.getCreatedAt().plus(pendingTimeout).isAfter(LocalDateTime.now())) {
+            return;
+        }
+
+        if (tailor.getMode() == InterviewMode.MULTI) {
+            log.warn("N:1 질문 구성 콜백이 {} 내에 도착하지 않아 실패 처리합니다. tailorId={}, jobId={}",
+                    pendingTimeout, tailor.getTailorId(), tailor.getJobId());
+
+            failWithoutFallback(tailor, "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.");
+            questionTailorRepository.save(tailor);
             return;
         }
 
@@ -255,6 +453,10 @@ public class QuestionTailorService {
         if (tailor.getStatus() == TailorStatus.PENDING || Boolean.TRUE.equals(tailor.getChatDelivered())) {
             return;
         }
+        // 폴백 없이 실패한 N:1은 넘길 질문 자체가 없다. 1:1 실패는 원질문이 들어차 있어 여기 걸리지 않는다.
+        if (tailor.getQuestions() == null || tailor.getQuestions().isEmpty()) {
+            return;
+        }
 
         // 차지하지 못했다면 다른 쪽이 이미 넘겼거나 넘기는 중이다. 그 결과는 다음 조회에서 읽힌다.
         if (questionTailorRepository.claimChatDelivery(tailor.getTailorId()) == 0) {
@@ -273,6 +475,87 @@ public class QuestionTailorService {
             tailor.setChatErrorMessage(e.getMessage());
         }
         questionTailorRepository.save(tailor);
+    }
+
+    /**
+     * 분석 서버가 N:1 질문 구성을 마치고 보내는 콜백.
+     *
+     * <p>1:1과 달리 폴백이 없다. 신규 질문 4개는 여기서 받은 값이 유일한 원본이라, 실패하면
+     * 면접에 쓸 질문이 남지 않는다. 그 경우 채팅 서버로 넘기지 않고 실패로 남긴다 —
+     * 반쪽짜리로 넘기면 기술 질문 2개짜리 면접이 N:1인 척 열린다.
+     */
+    public void handleMultiCallback(QuestionTailorMultiCallbackRequest request) {
+        QuestionTailorEntity tailor = findMultiTarget(request);
+        if (tailor == null) {
+            log.warn("알 수 없는 N:1 질문 구성 콜백을 받았습니다. jobId={}, interviewId={}",
+                    request.getJobId(), request.getInterviewId());
+            return;
+        }
+
+        if (tailor.getJobId() == null) {
+            tailor.setJobId(request.getJobId());
+        }
+
+        if (STATUS_SUCCEEDED.equalsIgnoreCase(request.getStatus()) && request.getResult() != null) {
+            applyMultiSuccess(tailor, request.getResult());
+        } else {
+            QuestionTailorMultiCallbackRequest.Error error = request.getError();
+            tailor.setErrorStatusCode(error == null ? null : error.getStatusCode());
+            failWithoutFallback(tailor, error == null || error.getMessage() == null
+                    ? "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요."
+                    : error.getMessage());
+        }
+
+        questionTailorRepository.save(tailor);
+        deliverToChatServer(tailor);
+    }
+
+    private void applyMultiSuccess(QuestionTailorEntity tailor, QuestionTailorMultiCallbackRequest.Result result) {
+        List<QuestionTailorMultiCallbackRequest.Question> questions =
+                result.getQuestions() == null ? List.of() : result.getQuestions();
+
+        List<TailoredQuestionResponse> prepared = new ArrayList<>();
+        for (QuestionTailorMultiCallbackRequest.Question question : questions) {
+            if (question.getId() == null || question.getQuestion() == null || question.getQuestion().isBlank()) {
+                continue;
+            }
+            prepared.add(TailoredQuestionResponse.builder()
+                    .id(question.getId())
+                    .personaId(question.getPersonaId())
+                    .category(question.getCategory())
+                    .question(question.getQuestion())
+                    // 신규 질문의 채점 기준은 여기서 받은 이 값뿐이다. 버리면 되찾을 데가 없다.
+                    .expectedAnswer(question.getExpectedAnswer())
+                    .basedOn(question.getBasedOn())
+                    .build());
+        }
+
+        if (prepared.isEmpty()) {
+            log.warn("N:1 질문 구성 결과에 쓸 수 있는 질문이 없습니다. tailorId={}", tailor.getTailorId());
+            failWithoutFallback(tailor, "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.");
+            return;
+        }
+
+        tailor.setStatus(TailorStatus.SUCCEEDED);
+        tailor.setTailored(true);
+        tailor.setErrorStatusCode(null);
+        tailor.setErrorMessage(null);
+        // 배열 순서가 그대로 면접 진행 순서다. 다시 정렬하지 않는다.
+        tailor.setQuestions(prepared);
+    }
+
+    private QuestionTailorEntity findMultiTarget(QuestionTailorMultiCallbackRequest request) {
+        if (request.getJobId() != null) {
+            QuestionTailorEntity byJobId = questionTailorRepository.findByJobId(request.getJobId()).orElse(null);
+            if (byJobId != null) {
+                return byJobId;
+            }
+        }
+        Long interviewId = parseInterviewId(request.getInterviewId());
+        if (interviewId == null) {
+            return null;
+        }
+        return questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId).orElse(null);
     }
 
     private QuestionTailorEntity findTarget(QuestionTailorCallbackRequest request) {
@@ -354,6 +637,19 @@ public class QuestionTailorService {
                 : error.getMessage());
     }
 
+    /**
+     * 폴백 없이 실패로 닫는다. N:1 전용이다.
+     *
+     * <p>기술 원질문 2개는 남아 있지만 그것만으로 면접을 열면 N:1이 아니다. 면접관 대부분이
+     * 질문 없이 앉아 있게 되고, 사용자는 왜 그런지 알 길이 없다. 열지 않는 편이 낫다.
+     */
+    private void failWithoutFallback(QuestionTailorEntity tailor, String errorMessage) {
+        tailor.setStatus(TailorStatus.FAILED);
+        tailor.setTailored(false);
+        tailor.setQuestions(null);
+        tailor.setErrorMessage(errorMessage);
+    }
+
     // 재작성이 안 됐다고 면접을 못 열게 만드는 편이 더 손해다. 실패해도 원질문은 남긴다.
     private void fallbackToOriginal(QuestionTailorEntity tailor, String errorMessage) {
         tailor.setStatus(TailorStatus.FAILED);
@@ -408,6 +704,10 @@ public class QuestionTailorService {
     }
 
     private String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value;
+        return isBlank(value) ? null : value;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

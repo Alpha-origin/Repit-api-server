@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.global.common.ApiResponse;
 import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest;
 import repit.repit_api_server.domain.userdata.persona.dto.response.PersonaResponse;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.service.PersonaService;
 
 import java.util.List;
@@ -35,8 +36,10 @@ public class PersonaController {
         return ApiResponse.success(personaService.getPersonaByName(name));
     }
 
+    // role을 주면 그 직책만 내려준다. 비우면 예전처럼 전부 내려간다.
     @GetMapping("/getAll")
-    public ApiResponse<List<PersonaResponse>> getAllPersona() {
-        return ApiResponse.success(personaService.getAllPersona());
+    public ApiResponse<List<PersonaResponse>> getAllPersona(
+            @RequestParam(required = false) Role role) {
+        return ApiResponse.success(personaService.getAllPersona(role));
     }
 }

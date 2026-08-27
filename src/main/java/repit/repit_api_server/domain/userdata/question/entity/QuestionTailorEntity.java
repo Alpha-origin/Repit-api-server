@@ -6,6 +6,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQuestionResponse;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
 
@@ -45,6 +46,17 @@ public class QuestionTailorEntity {
     // 채팅 서버는 이 값을 받지 않는다.
     @Column(length = 64)
     private String analysisJobId;
+
+    /**
+     * 1:1 재작성인지 N:1 구성인지. 실패했을 때 갈 길이 서로 다르다.
+     *
+     * <p>1:1은 원질문이 그대로 유효한 산출물이라 폴백해 면접을 연다. N:1의 신규 질문은
+     * 분석 서버 말고 만들 데가 없어 폴백할 원질문 자체가 없다.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private InterviewMode mode = InterviewMode.SOLO;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

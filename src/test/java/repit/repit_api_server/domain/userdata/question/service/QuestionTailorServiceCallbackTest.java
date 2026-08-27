@@ -11,6 +11,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
@@ -46,6 +47,8 @@ class QuestionTailorServiceCallbackTest {
     @Mock
     private InterviewRepository interviewRepository;
     @Mock
+    private InterviewPersonaRepository interviewPersonaRepository;
+    @Mock
     private PersonaRepository personaRepository;
     @Mock
     private AnalysisDataRepository analysisDataRepository;
@@ -63,7 +66,8 @@ class QuestionTailorServiceCallbackTest {
 
     @BeforeEach
     void setUp() {
-        service = new QuestionTailorService(questionTailorRepository, interviewRepository, personaRepository,
+        service = new QuestionTailorService(questionTailorRepository, interviewRepository,
+                interviewPersonaRepository, personaRepository,
                 analysisDataRepository, aiServerClient, authServerClient, chatInterviewHandoffService,
                 new ObjectMapper());
 

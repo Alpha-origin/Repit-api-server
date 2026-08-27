@@ -16,14 +16,17 @@ import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.global.exception.BusinessException;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 면접관 단건 조회(GET /api/persona/getById, /getByName).
+ * 면접관 조회(GET /api/persona/getById, /getByName, /getAll).
  *
  * <p>없는 면접관을 물었을 때 그렇게 답해야 한다. 조회 실패가 500으로 나가면 클라이언트는
  * 잘못된 값 때문인지 서버가 고장난 것인지 구분할 수 없고, 로그에도 장애로 쌓인다.
@@ -82,5 +85,22 @@ class PersonaServiceLookupTest {
 
         assertThat(service.getPersonaById(5L).getPersonaName()).isEqualTo("김테크");
         assertThat(service.getPersonaByName("김테크").getPersonaId()).isEqualTo(5L);
+    }
+
+    /** N:1 사전설정은 슬롯마다 다른 면접관 풀을 보여줘야 한다. 거르는 일은 서버가 맡는다. */
+    @Test
+    void 직책을_주면_그_직책만_내려준다() {
+        when(personaRepository.findAllByRole(Role.HR)).thenReturn(List.of(persona()));
+
+        assertThat(service.getAllPersona(Role.HR)).hasSize(1);
+        verify(personaRepository, never()).findAll();
+    }
+
+    @Test
+    void 직책이_없으면_전부_내려준다() {
+        when(personaRepository.findAll()).thenReturn(List.of(persona()));
+
+        assertThat(service.getAllPersona(null)).hasSize(1);
+        verify(personaRepository, never()).findAllByRole(Role.HR);
     }
 }

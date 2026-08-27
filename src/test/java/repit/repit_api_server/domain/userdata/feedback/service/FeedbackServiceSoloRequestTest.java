@@ -11,14 +11,17 @@ import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
+import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackPersonaRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
@@ -65,6 +68,8 @@ class FeedbackServiceSoloRequestTest {
     @Mock
     private InterviewRepository interviewRepository;
     @Mock
+    private InterviewPersonaRepository interviewPersonaRepository;
+    @Mock
     private PersonaRepository personaRepository;
     @Mock
     private QuestionRepository questionRepository;
@@ -80,8 +85,8 @@ class FeedbackServiceSoloRequestTest {
     @BeforeEach
     void setUp() {
         service = new FeedbackService(feedbackRepository, feedbackItemRepository, feedbackPersonaRepository,
-                interviewRepository, personaRepository, questionRepository, answerRepository,
-                aiServerClient, authServerClient);
+                interviewRepository, interviewPersonaRepository, personaRepository, questionRepository,
+                answerRepository, aiServerClient, authServerClient);
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
 
         UserResponse user = mock(UserResponse.class);
@@ -105,6 +110,18 @@ class FeedbackServiceSoloRequestTest {
                 .mode(personaId == null ? InterviewMode.MULTI : InterviewMode.SOLO)
                 .sessionId("sess-1")
                 .status(status)
+                .build();
+    }
+
+    private PersonaEntity hrPersona() {
+        return PersonaEntity.builder()
+                .personaId(6L)
+                .personaName("박인사")
+                .role(Role.HR)
+                .type(Type.FRIENDLY)
+                .level(Level.NORMAL)
+                .career(5)
+                .gender(Gender.FEMALE)
                 .build();
     }
 
@@ -217,12 +234,62 @@ class FeedbackServiceSoloRequestTest {
     }
 
     @Test
-    void 면접관이_여럿이면_성향_없이_보낸다() {
+    void 면접관이_여럿이면_N대1_채점으로_보낸다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.COMPLETED, null)));
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(5L).personaOrder(0).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(6L).personaOrder(1).build()));
+        when(personaRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(persona(Type.NEUTRAL), hrPersona()));
 
         service.requestFeedback("Bearer token", 3L);
 
-        assertThat(captureRequest().getPersonaType()).isNull();
+        // 1:1 채점에 태우면 질문이 누구 것인지 잃고 면접관별 평가도 오지 않는다.
+        verify(aiServerClient, never()).requestSoloFeedback(any());
+        ArgumentCaptor<FeedbackMultiRequest> sent = ArgumentCaptor.forClass(FeedbackMultiRequest.class);
+        verify(aiServerClient).requestMultiFeedback(sent.capture());
+
+        FeedbackMultiRequest request = sent.getValue();
+        assertThat(request.getPersonas()).extracting(FeedbackMultiRequest.Persona::getRole)
+                .containsExactly("TECH", "HR");
+        assertThat(request.getQuestions()).extracting(FeedbackMultiRequest.Question::getPersonaId)
+                .containsExactly("5", "5");
+    }
+
+    @Test
+    void 면접관이_비어_있는_꼬리질문은_부모의_면접관을_물려받는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.COMPLETED, null)));
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(5L).personaOrder(0).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(6L).personaOrder(1).build()));
+        when(personaRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(persona(Type.NEUTRAL), hrPersona()));
+        when(questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(3L)).thenReturn(List.of(
+                QuestionEntity.builder()
+                        .questionId(901L)
+                        .interviewId(3L)
+                        .personaId(6L)
+                        .type(repit.repit_api_server.domain.userdata.question.entity.enums.Type.ORIGINAL)
+                        .intention("지원 동기 확인")
+                        .content("왜 지원하셨나요?")
+                        .createdAt(LocalDateTime.parse("2026-08-18T01:00:00"))
+                        .build(),
+                QuestionEntity.builder()
+                        .questionId(902L)
+                        .interviewId(3L)
+                        .parentId(901L)
+                        // 채팅 서버가 면접관을 달기 전 기록에는 이 자리가 비어 있다.
+                        .personaId(null)
+                        .type(repit.repit_api_server.domain.userdata.question.entity.enums.Type.FOLLOW)
+                        .intention("동기의 구체성 확인")
+                        .content("그 중 어떤 점이 그랬나요?")
+                        .createdAt(LocalDateTime.parse("2026-08-18T01:02:00"))
+                        .build()));
+
+        service.requestFeedback("Bearer token", 3L);
+
+        ArgumentCaptor<FeedbackMultiRequest> sent = ArgumentCaptor.forClass(FeedbackMultiRequest.class);
+        verify(aiServerClient).requestMultiFeedback(sent.capture());
+        assertThat(sent.getValue().getQuestions()).extracting(FeedbackMultiRequest.Question::getPersonaId)
+                .containsExactly("6", "6");
     }
 
     @Test

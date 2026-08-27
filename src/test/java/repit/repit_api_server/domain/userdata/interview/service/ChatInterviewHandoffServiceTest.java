@@ -161,7 +161,30 @@ class ChatInterviewHandoffServiceTest {
         verify(chatServerClient, never()).prepareInterview(any());
     }
 
-    /** N:1 면접은 면접관이 여럿이라 interview.personaId가 비어 있다. */
+    /**
+     * N:1 면접은 면접관이 여럿이라 interview.personaId가 비어 있다.
+     * 대신 질문마다 면접관이 붙어 오고, 프론트는 그 값이 바뀌는 것으로 면접관 전환을 감지한다.
+     */
+    @Test
+    void N대1은_질문에_붙어온_면접관을_그대로_넘긴다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null)));
+        QuestionTailorEntity tailor = tailor(true);
+        tailor.setQuestions(List.of(
+                TailoredQuestionResponse.builder()
+                        .id(2).personaId(11L).category("tech_choice")
+                        .question("왜 Redis 를 썼나요?").expectedAnswer("선택 근거와 대안 비교").build(),
+                TailoredQuestionResponse.builder()
+                        .id(6).personaId(12L).category("motivation")
+                        .question("팀에서 갈등이 있었다면?").expectedAnswer("협업 태도").build()));
+
+        service.deliver(tailor);
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        assertThat(sentRequest.getValue().getQuestions())
+                .extracting(ChatInterviewPrepareRequest.Question::getPersonaId)
+                .containsExactly(11L, 12L);
+    }
+
     @Test
     void 면접관이_없으면_넘기지_않는다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null)));

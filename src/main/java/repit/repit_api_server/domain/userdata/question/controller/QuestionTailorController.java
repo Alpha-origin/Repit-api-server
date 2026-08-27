@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorCallbackRequest;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiCallbackRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorResponse;
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
 import repit.repit_api_server.global.common.ApiResponse;
@@ -21,6 +22,15 @@ public class QuestionTailorController {
             @RequestBody QuestionTailorCallbackRequest request
     ) {
         questionTailorService.handleCallback(request);
+        return ResponseEntity.ok().build();
+    }
+
+    // N:1 전용 콜백. 1:1과 본문 형태가 달라 경로를 나눈다.
+    @PostMapping("/multi/callback")
+    public ResponseEntity<Void> multiCallback(
+            @RequestBody QuestionTailorMultiCallbackRequest request
+    ) {
+        questionTailorService.handleMultiCallback(request);
         return ResponseEntity.ok().build();
     }
 

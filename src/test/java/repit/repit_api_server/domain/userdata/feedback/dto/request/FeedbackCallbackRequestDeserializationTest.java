@@ -8,7 +8,12 @@ import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** N:1 콜백은 1:1과 같은 엔드포인트로 들어온다. 늘어난 personas 계층이 그대로 읽히는지 확인한다. */
+/**
+ * N:1 콜백은 1:1과 같은 엔드포인트로 들어온다. 늘어난 personas 계층이 그대로 읽히는지 확인한다.
+ *
+ * <p>면접관 직책은 분석 서버가 {@code role}로 보낸다. 우리 저장 이름은 persona_role이라 이름이
+ * 어긋나 있는데, 여기서 놓치면 직책이 통째로 비어 결과 화면에서 면접관 구분이 사라진다.
+ */
 class FeedbackCallbackRequestDeserializationTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
@@ -34,7 +39,7 @@ class FeedbackCallbackRequestDeserializationTest {
                 "personas": [
                   {
                     "personaId": 11,
-                    "personaRole": "TECH",
+                    "role": "TECH",
                     "score": 78,
                     "comment": "선택 근거는 분명하나 대안 검토가 얕습니다.",
                     "strengths": ["측정값을 근거로 제시함"],
@@ -42,8 +47,8 @@ class FeedbackCallbackRequestDeserializationTest {
                     "answeredCount": 3,
                     "questionCount": 3
                   },
-                  { "personaId": 12, "personaRole": "HR", "score": 70 },
-                  { "personaId": 13, "personaRole": "CEO", "score": 64 }
+                  { "personaId": 12, "role": "HR", "score": 70 },
+                  { "personaId": 13, "role": "CEO", "score": 64 }
                 ],
                 "feedbacks": [
                   {

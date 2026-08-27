@@ -1,5 +1,6 @@
 package repit.repit_api_server.domain.userdata.feedback.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -51,6 +52,9 @@ public class FeedbackCallbackRequest {
     @AllArgsConstructor
     public static class Persona {
         private Long personaId;
+        // 분석 서버는 이 값을 role로 보낸다. 우리 저장 이름이 persona_role이라 필드명은 그대로 두고
+        // 받는 이름만 맞춘다. 이름이 어긋나면 직책이 통째로 비어 면접관 구분이 사라진다.
+        @JsonAlias({"role", "personaRole"})
         private String personaRole;
         private Integer score;
         private String comment;

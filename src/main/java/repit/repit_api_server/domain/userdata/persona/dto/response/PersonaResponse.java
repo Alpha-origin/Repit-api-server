@@ -21,6 +21,9 @@ public class PersonaResponse {
     private Level level;
     private int career;
     private Gender gender;
+    // 카드에 쓰는 사진과 한 줄 소개. 등록할 때 비워 보냈으면 비어 있다.
+    private String imageUrl;
+    private String description;
 
 
     public static PersonaResponse from(PersonaEntity persona) {
@@ -32,7 +35,9 @@ public class PersonaResponse {
                 persona.getType(),
                 persona.getLevel(),
                 persona.getCareer(),
-                persona.getGender()
+                persona.getGender(),
+                persona.getImageUrl(),
+                persona.getDescription()
         );
     }
 }
