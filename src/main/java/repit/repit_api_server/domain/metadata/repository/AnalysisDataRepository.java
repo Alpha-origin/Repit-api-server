@@ -1,5 +1,7 @@
 package repit.repit_api_server.domain.metadata.repository;
 
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -8,12 +10,34 @@ import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 public interface AnalysisDataRepository extends JpaRepository<AnalysisDataEntity, String> {
 
-    // 분석이 끝난(result가 채워진) 가장 최근 작업
-    Optional<AnalysisDataEntity> findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(Long userId);
+    /** 분석이 끝난(result가 채워진) 가장 최근 작업. */
+    default Optional<AnalysisDataEntity> findLatestCompleted(Long userId) {
+        return findLatestCompleted(userId, PageRequest.of(0, 1)).stream().findFirst();
+    }
+
+    /**
+     * 최근을 가리는 기준은 접수 시각이 아니라 완료 시각이다.
+     *
+     * <p>같은 jobId로 분석을 다시 요청하면 행을 재사용하는데, createdAt은 처음 접수된 시각에
+     * 고정되어 있어 갱신되지 않는다. 접수 시각으로 줄을 세우면 그 사이에 접수된 다른 작업이 더
+     * 최근으로 보여, 방금 끝낸 분석 대신 옛 결과를 집어 든다.
+     *
+     * <p>completedAt이 비어 있는 행은 이 열이 생기기 전에 저장된 결과다. 접수 시각으로 대신해
+     * 줄에 세운다 — 그냥 두면 Postgres가 내림차순에서 null을 맨 앞에 놓아, 가장 오래된 결과가
+     * 가장 최근으로 올라선다.
+     */
+    @Query("""
+            select a from AnalysisDataEntity a
+             where a.userId = :userId
+               and a.result is not null
+             order by coalesce(a.completedAt, a.createdAt) desc
+            """)
+    List<AnalysisDataEntity> findLatestCompleted(@Param("userId") Long userId, Pageable pageable);
 
     // 소유자만 갱신한다. 엔티티를 통째로 저장하면 콜백이 먼저 채워둔 result를 덮어쓸 수 있다.
     @Modifying(clearAutomatically = true, flushAutomatically = true)

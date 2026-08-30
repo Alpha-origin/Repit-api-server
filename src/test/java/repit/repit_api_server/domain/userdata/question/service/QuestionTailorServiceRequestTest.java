@@ -100,7 +100,7 @@ class QuestionTailorServiceRequestTest {
     }
 
     private void givenAnalysisResult(Object projectSummary) {
-        when(analysisDataRepository.findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(7L))
+        when(analysisDataRepository.findLatestCompleted(7L))
                 .thenReturn(Optional.of(AnalysisDataEntity.builder()
                         .jobId("analysis-1")
                         .userId(7L)
@@ -189,6 +189,55 @@ class QuestionTailorServiceRequestTest {
         verify(aiServerClient, never()).tailorQuestionsMulti(any());
     }
 
+    /**
+     * 저장된 result의 최상위 키가 camelCase로 와도 요약은 살아 있어야 한다.
+     *
+     * <p>이름이 어긋나면 값이 조용히 빈다. 그러면 분석 결과에는 요약이 멀쩡히 들어 있는데도
+     * N:1만 "요약이 없다"며 열리지 않고, 사용자는 분석을 다시 돌려도 같은 자리에서 막힌다.
+     */
+    @Test
+    void N대1은_요약이_camelCase_키로_저장돼_있어도_읽는다() {
+        givenMultiPersonas();
+        when(analysisDataRepository.findLatestCompleted(7L))
+                .thenReturn(Optional.of(AnalysisDataEntity.builder()
+                        .jobId("analysis-1")
+                        .userId(7L)
+                        .result(Map.of("projectSummary", projectSummary(), "interview", originalQuestions()))
+                        .build()));
+
+        service.requestTailor(interview(InterviewMode.MULTI), user);
+
+        ArgumentCaptor<QuestionTailorMultiRequest> sent =
+                ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
+        verify(aiServerClient).tailorQuestionsMulti(sent.capture());
+        assertThat(sent.getValue().getProjectSummary().getOverview()).isEqualTo("주문 처리를 맡는 백엔드");
+    }
+
+    /**
+     * 요약이 비어 막힐 때, 안내는 이미 끝나 있는 분석을 가리켜야 한다.
+     *
+     * <p>같은 분석 결과에서 원질문은 이미 읽힌 뒤라 "분석을 먼저 진행하라"는 안내는 사실과 다르다.
+     * 그 말을 들은 사용자는 이미 해둔 일을 다시 하고 같은 자리에서 다시 막힌다.
+     */
+    @Test
+    void N대1은_요약이_없으면_분석이_끝나있음을_가리켜_알린다() {
+        givenMultiPersonas();
+        when(analysisDataRepository.findLatestCompleted(7L))
+                .thenReturn(Optional.of(AnalysisDataEntity.builder()
+                        .jobId("analysis-1")
+                        .userId(7L)
+                        .result(Map.of("interview", originalQuestions()))
+                        .build()));
+
+        assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.MULTI), user))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("분석 결과에 프로젝트 요약이 없어")
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+
+        verify(aiServerClient, never()).tailorQuestionsMulti(any());
+    }
+
     @Test
     void N대1은_원질문_두_개와_면접관_구성을_실어_보낸다() {
         givenMultiPersonas();
@@ -220,7 +269,7 @@ class QuestionTailorServiceRequestTest {
     @Test
     void 기대_답변이_빈_원질문이면_보내지_않는다() {
         givenMultiPersonas();
-        when(analysisDataRepository.findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(7L))
+        when(analysisDataRepository.findLatestCompleted(7L))
                 .thenReturn(Optional.of(AnalysisDataEntity.builder()
                         .jobId("analysis-1")
                         .userId(7L)

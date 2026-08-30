@@ -172,7 +172,7 @@ public class QuestionTailorService {
                                 .map(persona -> toRequestPersona(persona, OTHER_QUESTION_COUNT))
                                 .toList())
                         .questions(techQuestions.stream().map(this::toMultiRequestQuestion).toList())
-                        .projectSummary(toRequestProjectSummary(source.projectSummary()))
+                        .projectSummary(toRequestProjectSummary(source))
                         .callbackUrl(callbackBaseUrl + MULTI_CALLBACK_PATH)
                         .build());
 
@@ -269,19 +269,28 @@ public class QuestionTailorService {
      * <p>해석은 이 자리에서만 한다. 원질문을 읽는 경로는 1:1 면접 시작도 함께 지나므로,
      * 그쪽에서 이 값을 건드리면 N:1에만 필요한 해석 때문에 1:1까지 멈춘다.
      */
-    private QuestionTailorMultiRequest.ProjectSummary toRequestProjectSummary(Object raw) {
+    private QuestionTailorMultiRequest.ProjectSummary toRequestProjectSummary(SourceQuestions source) {
+        Object raw = source.projectSummary();
         ProjectSummaryResponse summary;
         try {
             summary = objectMapper.convertValue(raw, ProjectSummaryResponse.class);
         } catch (IllegalArgumentException | JacksonException e) {
-            log.warn("분석 결과의 프로젝트 요약을 해석하지 못했습니다.", e);
+            log.warn("분석 결과의 프로젝트 요약을 해석하지 못했습니다. analysisJobId={}, 받은 키={}",
+                    source.analysisJobId(), describeShape(raw), e);
             throw BusinessException.unprocessable(
                     "프로젝트 요약을 읽지 못했습니다. 포트폴리오 분석을 다시 진행해주세요.");
         }
 
         if (summary == null || isBlank(summary.getOverview())) {
+            // 여기까지 왔다는 것은 같은 분석 결과에서 원질문은 이미 읽혔다는 뜻이다. 분석은 끝나
+            // 있고 요약만 비어 있으니, 안내도 "먼저 분석하라"가 아니라 그 사실을 가리켜야 한다.
+            //
+            // 어느 작업의 결과였는지와 실제로 도착한 키를 함께 남긴다. 이름이 어긋나면 값은 조용히
+            // 비므로, 이 둘이 없으면 요약이 없는 것인지 이름이 다른 것인지 로그만으로는 가릴 수 없다.
+            log.warn("N:1 질문을 만들 프로젝트 요약이 비어 있습니다. analysisJobId={}, 요약읽힘={}, 받은 키={}",
+                    source.analysisJobId(), summary != null, describeShape(raw));
             throw BusinessException.unprocessable(
-                    "질문을 만들 프로젝트 요약이 없습니다. 포트폴리오 분석을 먼저 진행해주세요.");
+                    "분석 결과에 프로젝트 요약이 없어 N:1 면접을 열 수 없습니다. 포트폴리오 분석을 다시 진행해주세요.");
         }
 
         return QuestionTailorMultiRequest.ProjectSummary.builder()
@@ -342,7 +351,7 @@ public class QuestionTailorService {
     /** 재작성 대상은 해당 사용자의 가장 최근 분석 결과에 담긴 원질문이다. */
     private SourceQuestions loadOriginalQuestions(Long userId) {
         AnalysisDataEntity analysisData = analysisDataRepository
-                .findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(userId)
+                .findLatestCompleted(userId)
                 .orElseThrow(() -> BusinessException.notFound(
                         "완료된 분석 결과가 없습니다. 포트폴리오 분석을 먼저 진행해주세요."));
 
@@ -789,6 +798,22 @@ public class QuestionTailorService {
 
     private String blankToNull(String value) {
         return isBlank(value) ? null : value;
+    }
+
+    /**
+     * 요약 자리에 실제로 무엇이 왔는지 한 줄로 옮긴다.
+     *
+     * <p>값이 아니라 키만 남긴다. 이름이 어긋나 비었는지 값 자체가 없는지를 가리는 데는 키로
+     * 충분하고, 요약 본문은 사용자가 올린 포트폴리오 내용이라 로그에 흘릴 것이 아니다.
+     */
+    private String describeShape(Object raw) {
+        if (raw == null) {
+            return "없음";
+        }
+        if (raw instanceof Map<?, ?> map) {
+            return map.keySet().toString();
+        }
+        return raw.getClass().getSimpleName();
     }
 
     private boolean isBlank(String value) {
