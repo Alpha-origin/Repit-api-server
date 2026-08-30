@@ -100,7 +100,7 @@ class QuestionTailorServiceRequestTest {
     }
 
     private void givenAnalysisResult(Object projectSummary) {
-        when(analysisDataRepository.findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(7L))
+        when(analysisDataRepository.findLatestCompleted(7L))
                 .thenReturn(Optional.of(AnalysisDataEntity.builder()
                         .jobId("analysis-1")
                         .userId(7L)
@@ -220,7 +220,7 @@ class QuestionTailorServiceRequestTest {
     @Test
     void 기대_답변이_빈_원질문이면_보내지_않는다() {
         givenMultiPersonas();
-        when(analysisDataRepository.findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(7L))
+        when(analysisDataRepository.findLatestCompleted(7L))
                 .thenReturn(Optional.of(AnalysisDataEntity.builder()
                         .jobId("analysis-1")
                         .userId(7L)

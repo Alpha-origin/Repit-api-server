@@ -342,7 +342,7 @@ public class QuestionTailorService {
     /** 재작성 대상은 해당 사용자의 가장 최근 분석 결과에 담긴 원질문이다. */
     private SourceQuestions loadOriginalQuestions(Long userId) {
         AnalysisDataEntity analysisData = analysisDataRepository
-                .findTopByUserIdAndResultIsNotNullOrderByCreatedAtDesc(userId)
+                .findLatestCompleted(userId)
                 .orElseThrow(() -> BusinessException.notFound(
                         "완료된 분석 결과가 없습니다. 포트폴리오 분석을 먼저 진행해주세요."));
 
