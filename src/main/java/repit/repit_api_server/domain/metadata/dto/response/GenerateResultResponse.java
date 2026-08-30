@@ -1,5 +1,6 @@
 package repit.repit_api_server.domain.metadata.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -19,6 +20,14 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class GenerateResultResponse {
+
+    /**
+     * 이름이 어긋나면 값이 조용히 빈다. 그러면 N:1은 "요약이 없다"며 열리지 않는데, 정작 분석
+     * 결과에는 요약이 들어 있어 원인을 찾을 실마리가 남지 않는다. 요약 안쪽 필드가 두 표기를
+     * 모두 받아두는 것과 같은 이유로, 요약을 꺼내는 이 열쇠도 두 표기를 다 받는다.
+     */
+    @JsonAlias("projectSummary")
     private Object project_summary;
+
     private List<GeneratedQuestionResponse> interview;
 }
