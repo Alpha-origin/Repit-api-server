@@ -43,6 +43,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -655,5 +656,56 @@ public class FeedbackService {
                 feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(feedback.getFeedbackId());
 
         return FeedbackResponse.of(feedback, personas, items);
+    }
+
+    /**
+     * 사용자가 받은 피드백 목록. 면접당 가장 최근 채점 하나씩만 최근 것부터 돌려준다.
+     *
+     * <p>피드백에 적힌 소유자로 골라오므로 단건 조회처럼 따로 본인 확인을 하지 않는다.
+     *
+     * <p>같은 면접을 다시 채점하면 기록이 새로 쌓인다. 단건 조회가 늘 마지막 채점만 보여주므로
+     * 목록도 같은 기준으로 맞춘다. 그러지 않으면 한 면접이 여러 번 늘어서 보인다.
+     */
+    public List<FeedbackResponse> getAllFeedbacks(String authorization) {
+        Long userId = currentUserId(authorization);
+
+        List<FeedbackEntity> feedbacks = latestPerInterview(
+                feedbackRepository.findAllByUserIdOrderByCreatedAtDesc(userId));
+        if (feedbacks.isEmpty()) {
+            return List.of();
+        }
+
+        // 단건 조회와 같은 이유로 여기서도 판정한다. 목록만 보는 클라이언트도 멈춘 채점을 알아야 한다.
+        feedbacks.forEach(this::expireIfTimedOut);
+
+        List<Long> feedbackIds = feedbacks.stream().map(FeedbackEntity::getFeedbackId).toList();
+
+        // 피드백마다 따로 읽으면 건수만큼 쿼리가 늘어난다. 한 번에 읽고 피드백별로 나눈다.
+        Map<Long, List<FeedbackPersonaEntity>> personasByFeedback =
+                feedbackPersonaRepository.findAllByFeedbackIdInOrderByFeedbackIdAscSortOrderAsc(feedbackIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(FeedbackPersonaEntity::getFeedbackId));
+        Map<Long, List<FeedbackItemEntity>> itemsByFeedback =
+                feedbackItemRepository.findAllByFeedbackIdInOrderByFeedbackIdAscSortOrderAsc(feedbackIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(FeedbackItemEntity::getFeedbackId));
+
+        return feedbacks.stream()
+                .map(feedback -> FeedbackResponse.of(
+                        feedback,
+                        personasByFeedback.getOrDefault(feedback.getFeedbackId(), List.of()),
+                        itemsByFeedback.getOrDefault(feedback.getFeedbackId(), List.of())))
+                .toList();
+    }
+
+    /** 최근순으로 들어온 목록에서 면접마다 처음 만난 것, 곧 마지막 채점만 남긴다. */
+    private List<FeedbackEntity> latestPerInterview(List<FeedbackEntity> feedbacks) {
+        return List.copyOf(feedbacks.stream()
+                .collect(Collectors.toMap(
+                        FeedbackEntity::getInterviewId,
+                        feedback -> feedback,
+                        (latest, older) -> latest,
+                        LinkedHashMap::new))
+                .values());
     }
 }
