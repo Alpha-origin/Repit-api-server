@@ -9,6 +9,8 @@ import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackResp
 import repit.repit_api_server.domain.userdata.feedback.service.FeedbackService;
 import repit.repit_api_server.global.common.ApiResponse;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/feedbacks")
 @RequiredArgsConstructor
@@ -39,5 +41,12 @@ public class FeedbackController {
             @RequestParam Long interviewId
     ) {
         return ApiResponse.success(feedbackService.getFeedback(authorization, interviewId));
+    }
+
+    @GetMapping("/getAll")
+    public ApiResponse<List<FeedbackResponse>> getAllFeedbacks(
+            @RequestHeader("Authorization") String authorization
+    ) {
+        return ApiResponse.success(feedbackService.getAllFeedbacks(authorization));
     }
 }
