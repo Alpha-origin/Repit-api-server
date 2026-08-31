@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 
 import java.util.List;
@@ -29,6 +30,14 @@ public class ChatInterviewPrepareRequest {
     private Long userId;
     // 채팅 서버가 세션에 그대로 싣는 진행 상태. 비면 채팅 서버가 본문을 반려한다.
     private Status status;
+    /**
+     * 면접 방식. 1:1이면 SOLO, 면접관이 교대하는 N:1이면 MULTI다.
+     *
+     * <p>질문마다 붙는 personaId만으로도 면접관이 바뀌는 것은 보이지만, 그것은 결과를 보고
+     * 방식을 되짚는 것이라 질문이 한 명에게 몰린 N:1과 1:1을 구분하지 못한다. 방식은 면접을
+     * 열 때 이미 정해져 있으므로 그대로 실어 보낸다.
+     */
+    private InterviewMode mode;
     private List<Question> questions;
 
     /**

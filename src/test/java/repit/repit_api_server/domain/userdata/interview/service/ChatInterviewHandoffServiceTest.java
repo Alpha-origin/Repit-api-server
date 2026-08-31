@@ -11,6 +11,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import repit.repit_api_server.domain.userdata.interview.dto.request.ChatInterviewPrepareRequest;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
@@ -69,10 +70,15 @@ class ChatInterviewHandoffServiceTest {
     }
 
     private InterviewEntity interview(Long personaId) {
+        return interview(personaId, InterviewMode.SOLO);
+    }
+
+    private InterviewEntity interview(Long personaId, InterviewMode mode) {
         return InterviewEntity.builder()
                 .interviewId(3L)
                 .userId(7L)
                 .personaId(personaId)
+                .mode(mode)
                 .sessionId("sess-1")
                 .status(Status.IN_PROGRESS)
                 .build();
@@ -114,6 +120,8 @@ class ChatInterviewHandoffServiceTest {
         assertThat(sent.getUserId()).isEqualTo(7L);
         // 상태가 비면 채팅 서버가 본문을 통째로 반려한다.
         assertThat(sent.getStatus()).isEqualTo(Status.IN_PROGRESS);
+        // 면접 방식. 1:1은 SOLO다.
+        assertThat(sent.getMode()).isEqualTo(InterviewMode.SOLO);
 
         ChatInterviewPrepareRequest.Question question = sent.getQuestions().getFirst();
         assertThat(question.getId()).isEqualTo(1L);
@@ -177,7 +185,7 @@ class ChatInterviewHandoffServiceTest {
      */
     @Test
     void N대1은_질문에_붙어온_면접관을_그대로_넘긴다() {
-        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null)));
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null, InterviewMode.MULTI)));
         QuestionTailorEntity tailor = tailor(true);
         tailor.setQuestions(List.of(
                 TailoredQuestionResponse.builder()
@@ -193,6 +201,24 @@ class ChatInterviewHandoffServiceTest {
         assertThat(sentRequest.getValue().getQuestions())
                 .extracting(ChatInterviewPrepareRequest.Question::getPersonaId)
                 .containsExactly(11L, 12L);
+    }
+
+    /**
+     * 면접관이 교대하는 N:1임을 방식으로도 알린다.
+     * personaId가 바뀌는 것만으로는 질문이 한 명에게 몰린 N:1을 1:1과 구분하지 못한다.
+     */
+    @Test
+    void N대1_면접은_MULTI로_넘긴다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null, InterviewMode.MULTI)));
+        QuestionTailorEntity tailor = tailor(true);
+        tailor.setQuestions(List.of(TailoredQuestionResponse.builder()
+                .id(2).personaId(11L).category("tech_choice")
+                .question("왜 Redis 를 썼나요?").expectedAnswer("선택 근거와 대안 비교").build()));
+
+        service.deliver(tailor);
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        assertThat(sentRequest.getValue().getMode()).isEqualTo(InterviewMode.MULTI);
     }
 
     @Test

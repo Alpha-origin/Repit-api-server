@@ -38,6 +38,8 @@ public class ChatInterviewHandoffService {
                 .interviewId(interview.getInterviewId())
                 .userId(interview.getUserId())
                 .status(interview.getStatus())
+                // 면접 방식. DB에서 NOT NULL로 SOLO/MULTI 중 하나가 이미 정해져 있어 그대로 싣는다.
+                .mode(interview.getMode())
                 .questions(toQuestions(tailor, defaultPersonaId(interview)))
                 .build());
     }
