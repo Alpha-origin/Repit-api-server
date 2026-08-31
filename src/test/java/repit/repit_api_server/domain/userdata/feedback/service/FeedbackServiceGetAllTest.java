@@ -17,6 +17,8 @@ import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStat
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackPersonaRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackRepository;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
@@ -133,6 +135,41 @@ class FeedbackServiceGetAllTest {
     }
 
     @Test
+    void 면접_방식을_피드백마다_붙여_준다() {
+        when(feedbackRepository.findAllByUserIdOrderByCreatedAtDesc(7L))
+                .thenReturn(List.of(feedback(10L, 100L), feedback(11L, 101L)));
+        when(feedbackPersonaRepository.findAllByFeedbackIdInOrderByFeedbackIdAscSortOrderAsc(List.of(10L, 11L)))
+                .thenReturn(List.of());
+        when(feedbackItemRepository.findAllByFeedbackIdInOrderByFeedbackIdAscSortOrderAsc(List.of(10L, 11L)))
+                .thenReturn(List.of());
+        // 면접 수만큼 조회가 늘지 않도록 한 번에 읽어온다.
+        when(interviewRepository.findAllById(List.of(100L, 101L)))
+                .thenReturn(List.of(interview(100L, InterviewMode.MULTI), interview(101L, InterviewMode.SOLO)));
+
+        List<FeedbackResponse> responses = service.getAllFeedbacks("Bearer token");
+
+        assertThat(responses).extracting(FeedbackResponse::getMode)
+                .containsExactly(InterviewMode.MULTI, InterviewMode.SOLO);
+        verify(interviewRepository, never()).findById(any());
+    }
+
+    @Test
+    void 면접이_남아_있지_않으면_방식은_비워_둔다() {
+        when(feedbackRepository.findAllByUserIdOrderByCreatedAtDesc(7L))
+                .thenReturn(List.of(feedback(10L, 100L)));
+        when(feedbackPersonaRepository.findAllByFeedbackIdInOrderByFeedbackIdAscSortOrderAsc(List.of(10L)))
+                .thenReturn(List.of());
+        when(feedbackItemRepository.findAllByFeedbackIdInOrderByFeedbackIdAscSortOrderAsc(List.of(10L)))
+                .thenReturn(List.of());
+        when(interviewRepository.findAllById(List.of(100L))).thenReturn(List.of());
+
+        List<FeedbackResponse> responses = service.getAllFeedbacks("Bearer token");
+
+        assertThat(responses.get(0).getMode()).isNull();
+        assertThat(responses.get(0).getFeedbackId()).isEqualTo(10L);
+    }
+
+    @Test
     void 피드백이_없으면_더_조회하지_않고_빈_목록을_준다() {
         when(feedbackRepository.findAllByUserIdOrderByCreatedAtDesc(7L)).thenReturn(List.of());
 
@@ -185,6 +222,14 @@ class FeedbackServiceGetAllTest {
                 .status(FeedbackStatus.SUCCEEDED)
                 .totalScore(80)
                 .createdAt(LocalDateTime.now())
+                .build();
+    }
+
+    private InterviewEntity interview(Long interviewId, InterviewMode mode) {
+        return InterviewEntity.builder()
+                .interviewId(interviewId)
+                .userId(7L)
+                .mode(mode)
                 .build();
     }
 
