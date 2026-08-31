@@ -655,7 +655,7 @@ public class FeedbackService {
         List<FeedbackItemEntity> items =
                 feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(feedback.getFeedbackId());
 
-        return FeedbackResponse.of(feedback, personas, items);
+        return FeedbackResponse.of(feedback, modeOf(feedback.getInterviewId()), personas, items);
     }
 
     /**
@@ -680,6 +680,10 @@ public class FeedbackService {
 
         List<Long> feedbackIds = feedbacks.stream().map(FeedbackEntity::getFeedbackId).toList();
 
+        // 면접 방식도 피드백마다 따로 읽지 않고 한 번에 읽어 면접별로 나눈다.
+        Map<Long, InterviewMode> modeByInterview = modesOf(
+                feedbacks.stream().map(FeedbackEntity::getInterviewId).toList());
+
         // 피드백마다 따로 읽으면 건수만큼 쿼리가 늘어난다. 한 번에 읽고 피드백별로 나눈다.
         Map<Long, List<FeedbackPersonaEntity>> personasByFeedback =
                 feedbackPersonaRepository.findAllByFeedbackIdInOrderByFeedbackIdAscSortOrderAsc(feedbackIds)
@@ -693,9 +697,31 @@ public class FeedbackService {
         return feedbacks.stream()
                 .map(feedback -> FeedbackResponse.of(
                         feedback,
+                        modeByInterview.get(feedback.getInterviewId()),
                         personasByFeedback.getOrDefault(feedback.getFeedbackId(), List.of()),
                         itemsByFeedback.getOrDefault(feedback.getFeedbackId(), List.of())))
                 .toList();
+    }
+
+    /**
+     * 이 피드백이 나온 면접의 방식. 웹은 SOLO와 N:1을 다르게 그려야 해서 함께 실어 보낸다.
+     *
+     * <p>피드백에 따로 적어두지 않고 그때마다 면접에서 읽는다. 면접 방식의 원본은 면접 행이고,
+     * 복사해두면 두 곳이 어긋날 수 있다.
+     *
+     * <p>면접을 찾지 못하면 비워 둔다. 피드백만 남고 면접이 사라진 경우는 정상 흐름에 없지만,
+     * 그 때문에 이미 받아둔 채점까지 못 보게 만들 이유는 없다.
+     */
+    private InterviewMode modeOf(Long interviewId) {
+        return interviewRepository.findById(interviewId)
+                .map(InterviewEntity::getMode)
+                .orElse(null);
+    }
+
+    /** 여러 면접의 방식을 한 번에. 목록 조회가 면접 수만큼 쿼리를 늘리지 않도록 한다. */
+    private Map<Long, InterviewMode> modesOf(List<Long> interviewIds) {
+        return interviewRepository.findAllById(interviewIds).stream()
+                .collect(Collectors.toMap(InterviewEntity::getInterviewId, InterviewEntity::getMode));
     }
 
     /** 최근순으로 들어온 목록에서 면접마다 처음 만난 것, 곧 마지막 채점만 남긴다. */
