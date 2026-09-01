@@ -44,6 +44,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -562,18 +563,41 @@ public class FeedbackService {
                 .build());
     }
 
+    /**
+     * 채점 결과를 우리 기록에 맞춰 저장한다.
+     *
+     * <p>검증은 지우기 전에 모두 끝낸다. 지우고 나서 걸러내면, 걸러내다 멈춘 순간 이전 결과도
+     * 새 결과도 없는 상태로 남는다.
+     *
+     * <p>어긋난 값은 거절하지 않고 맞춰 넣는다. 여기서 예외를 던지면 분석 서버는 두 번 더
+     * 시도한 뒤 결과를 영구 폐기하고, 사용자는 면접을 다 보고도 채점을 영영 받지 못한다.
+     * 어긋난 사실은 로그로 남겨 원인을 좇는다.
+     */
     private void applySuccess(FeedbackEntity feedback, FeedbackCallbackRequest.Result result) {
+        Long interviewId = feedback.getInterviewId();
+        RecordedCounts counts = recordedCounts(interviewId);
+        Set<Long> members = interviewMembers(interviewId);
+
+        List<FeedbackPersonaEntity> personaRows =
+                verifiedPersonas(feedback, result.getPersonas(), counts, members, modeOf(interviewId));
+        Set<Long> personaIds = personaRows.stream()
+                .map(FeedbackPersonaEntity::getPersonaId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        List<FeedbackItemEntity> itemRows = verifiedItems(feedback, result.getFeedbacks(), personaIds, counts);
+
         FeedbackCallbackRequest.Overall overall = result.getOverall();
         if (overall != null) {
-            feedback.setTotalScore(overall.getTotalScore());
-            feedback.setIntentAlignmentScore(overall.getIntentAlignmentScore());
-            feedback.setReliabilityScore(overall.getReliabilityScore());
+            feedback.setTotalScore(score(overall.getTotalScore(), "종합 점수", interviewId));
+            feedback.setIntentAlignmentScore(score(overall.getIntentAlignmentScore(), "의도 부합 점수", interviewId));
+            feedback.setReliabilityScore(score(overall.getReliabilityScore(), "신뢰도 점수", interviewId));
             feedback.setSummary(overall.getSummary());
             feedback.setStrengths(overall.getStrengths());
             feedback.setImprovements(overall.getImprovements());
             feedback.setFrequentWords(overall.getFrequentWords());
-            feedback.setAnsweredCount(overall.getAnsweredCount());
-            feedback.setQuestionCount(overall.getQuestionCount());
+            feedback.setAnsweredCount(counts.answeredCountOr(overall.getAnsweredCount(),
+                    "면접 전체 답변 수", interviewId));
+            feedback.setQuestionCount(counts.questionCountOr(overall.getQuestionCount(),
+                    "면접 전체 문항 수", interviewId));
         }
         feedback.setStatus(FeedbackStatus.SUCCEEDED);
         feedback.setErrorStatusCode(null);
@@ -583,17 +607,67 @@ public class FeedbackService {
         feedbackPersonaRepository.deleteAllByFeedbackId(feedback.getFeedbackId());
         feedbackItemRepository.deleteAllByFeedbackId(feedback.getFeedbackId());
 
-        savePersonas(feedback, result.getPersonas());
+        feedbackPersonaRepository.saveAll(personaRows);
+        feedbackItemRepository.saveAll(itemRows);
+    }
 
-        List<FeedbackCallbackRequest.Item> items = result.getFeedbacks() == null ? List.of() : result.getFeedbacks();
+    /** 이 면접에 실제로 앉아 있던 면접관. 1:1은 명단이 없어 비어 있다. */
+    private Set<Long> interviewMembers(Long interviewId) {
+        return interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(interviewId).stream()
+                .map(InterviewPersonaEntity::getPersonaId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * 점수는 0..100 안에 있어야 한다.
+     *
+     * <p>범위를 벗어난 값은 경계로 당긴다. 그대로 두면 눈금이 넘치거나 음수로 그려지고, 비우면
+     * 채점이 끝났는데도 점수가 없는 화면이 된다. 어느 쪽이든 사용자에게는 고장으로 보인다.
+     */
+    private Integer score(Integer value, String label, Long interviewId) {
+        if (value == null || (value >= 0 && value <= 100)) {
+            return value;
+        }
+        int clamped = Math.max(0, Math.min(100, value));
+        log.warn("{}가 0..100을 벗어나 경계값으로 맞춥니다. interviewId={}, 받은 값={}, 저장={}",
+                label, interviewId, value, clamped);
+        return clamped;
+    }
+
+    /**
+     * 문항 목록을 우리 기록과 맞춰본다.
+     *
+     * <p>같은 문항이 두 번 오면 뒤엣것을 버린다. 남겨두면 결과 화면에 같은 질문이 두 번 나오고,
+     * 문항 수도 기록과 어긋난다.
+     *
+     * <p>우리 기록에 없는 문항은 버리지 않고 남긴다. 채점 자체는 실제로 이뤄진 것이고, 기록과
+     * 어긋나는 것은 저장이 늦었거나 식별자 체계가 갈린 쪽일 수 있다. 지우면 되찾을 수 없다.
+     */
+    private List<FeedbackItemEntity> verifiedItems(FeedbackEntity feedback,
+                                                   List<FeedbackCallbackRequest.Item> received,
+                                                   Set<Long> personaIds, RecordedCounts counts) {
+        List<FeedbackCallbackRequest.Item> items = received == null ? List.of() : received;
+        Set<String> seen = new LinkedHashSet<>();
         List<FeedbackItemEntity> entities = new ArrayList<>();
-        for (int i = 0; i < items.size(); i++) {
-            FeedbackCallbackRequest.Item item = items.get(i);
+
+        for (FeedbackCallbackRequest.Item item : items) {
+            String questionId = Objects.toString(item.getQuestionId(), "");
+            if (!seen.add(questionId)) {
+                log.warn("같은 문항이 두 번 실려와 뒤엣것을 버립니다. feedbackId={}, questionId={}",
+                        feedback.getFeedbackId(), questionId);
+                continue;
+            }
+            if (!counts.personaByQuestion().isEmpty()
+                    && !counts.personaByQuestion().containsKey(parseQuestionId(questionId))) {
+                log.warn("이 면접의 기록에 없는 문항이 채점 결과에 실려 있습니다. feedbackId={}, questionId={}",
+                        feedback.getFeedbackId(), questionId);
+            }
+
             entities.add(FeedbackItemEntity.builder()
                     .feedbackId(feedback.getFeedbackId())
-                    .questionId(Objects.toString(item.getQuestionId(), ""))
-                    .sortOrder(i)
-                    .personaId(item.getPersonaId())
+                    .questionId(questionId)
+                    .sortOrder(entities.size())
+                    .personaId(resolveItemPersonaId(feedback, item, personaIds, counts))
                     .questionContent(item.getQuestionContent())
                     .intention(item.getIntention())
                     .userAnswer(item.getUserAnswer())
@@ -603,32 +677,208 @@ public class FeedbackService {
                     .comment(item.getComment())
                     .build());
         }
-        feedbackItemRepository.saveAll(entities);
+        return entities;
     }
 
-    /** 1:1 콜백에는 personas가 없다. 없으면 아무것도 저장하지 않는다. */
-    private void savePersonas(FeedbackEntity feedback, List<FeedbackCallbackRequest.Persona> personas) {
-        if (personas == null || personas.isEmpty()) {
-            return;
+    /**
+     * 문항이 가리킬 면접관. 결과에 실린 면접관 명단 안의 값이어야 한다.
+     *
+     * <p>웹은 문항을 면접관별로 묶어 그린다. 명단에 없는 면접관을 가리키는 문항은 어느 묶음에도
+     * 들어가지 못해 화면에서 사라진다. 그래서 명단에 없으면 우리가 기록해둔 담당 면접관으로,
+     * 그마저 명단 밖이면 첫 면접관으로 돌린다 — 잘못된 묶음에 들어가는 편이 사라지는 것보다 낫다.
+     *
+     * <p>1:1은 면접관 명단 자체가 없다. 그때는 콜백 값을 그대로 둔다.
+     */
+    private Long resolveItemPersonaId(FeedbackEntity feedback, FeedbackCallbackRequest.Item item,
+                                      Set<Long> personaIds, RecordedCounts counts) {
+        if (personaIds.isEmpty()) {
+            return item.getPersonaId();
+        }
+        if (item.getPersonaId() != null && personaIds.contains(item.getPersonaId())) {
+            return item.getPersonaId();
         }
 
+        Long recorded = counts.personaByQuestion().get(parseQuestionId(item.getQuestionId()));
+        if (recorded != null && personaIds.contains(recorded)) {
+            log.warn("문항의 면접관이 결과 명단에 없어 기록된 담당 면접관으로 맞춥니다. feedbackId={}, questionId={}, 받은 값={}",
+                    feedback.getFeedbackId(), item.getQuestionId(), item.getPersonaId());
+            return recorded;
+        }
+
+        Long first = personaIds.iterator().next();
+        log.warn("문항의 면접관을 되짚지 못해 첫 면접관으로 맞춥니다. feedbackId={}, questionId={}, 받은 값={}",
+                feedback.getFeedbackId(), item.getQuestionId(), item.getPersonaId());
+        return first;
+    }
+
+    private Long parseQuestionId(String questionId) {
+        if (questionId == null) {
+            return null;
+        }
+        try {
+            return Long.valueOf(questionId);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 면접관별 종합을 면접 명단과 맞춰본다.
+     *
+     * <p>1:1 콜백에는 personas가 없다. 반대로 1:1 면접에 실려오면 버린다 — 면접관이 하나뿐인
+     * 면접에 면접관별 종합이 붙으면 화면에 있지도 않은 면접관 카드가 생긴다. 판정은 면접의
+     * 방식으로 한다. 명단이 비었다고 1:1로 보면, 명단을 읽지 못한 N:1의 채점까지 통째로 버린다.
+     *
+     * <p>명단에 없는 면접관은 버리지 않고 남긴다. 그 종합에도 채점 내용이 들어 있고, 지우면
+     * 되찾을 수 없다. 대신 어긋났다는 사실을 로그로 남긴다.
+     */
+    private List<FeedbackPersonaEntity> verifiedPersonas(FeedbackEntity feedback,
+                                                         List<FeedbackCallbackRequest.Persona> personas,
+                                                         RecordedCounts counts, Set<Long> members,
+                                                         InterviewMode mode) {
+        if (personas == null || personas.isEmpty()) {
+            return List.of();
+        }
+        if (mode == InterviewMode.SOLO) {
+            log.warn("1:1 면접의 채점 결과에 면접관별 종합이 실려와 버립니다. feedbackId={}, 받은 면접관={}건",
+                    feedback.getFeedbackId(), personas.size());
+            return List.of();
+        }
+
+        Set<Long> seen = new LinkedHashSet<>();
         List<FeedbackPersonaEntity> entities = new ArrayList<>();
-        for (int i = 0; i < personas.size(); i++) {
-            FeedbackCallbackRequest.Persona persona = personas.get(i);
+        for (FeedbackCallbackRequest.Persona persona : personas) {
+            if (persona.getPersonaId() == null) {
+                // 가리킬 수 없는 면접관이다. 남겨두면 문항이 이 자리를 참조할 수도 없다.
+                log.warn("면접관 id가 없는 종합이 있어 제외합니다. feedbackId={}, role={}",
+                        feedback.getFeedbackId(), persona.getPersonaRole());
+                continue;
+            }
+            if (!seen.add(persona.getPersonaId())) {
+                log.warn("같은 면접관의 종합이 두 번 실려와 뒤엣것을 버립니다. feedbackId={}, personaId={}",
+                        feedback.getFeedbackId(), persona.getPersonaId());
+                continue;
+            }
+            if (!members.contains(persona.getPersonaId())) {
+                log.warn("이 면접에 없던 면접관의 종합이 실려 있습니다. feedbackId={}, personaId={}, 면접 명단={}",
+                        feedback.getFeedbackId(), persona.getPersonaId(), members);
+            }
+
             entities.add(FeedbackPersonaEntity.builder()
                     .feedbackId(feedback.getFeedbackId())
                     .personaId(persona.getPersonaId())
                     .personaRole(persona.getPersonaRole())
-                    .sortOrder(i)
-                    .score(persona.getScore())
+                    .sortOrder(entities.size())
+                    .score(score(persona.getScore(),
+                            "면접관 " + persona.getPersonaId() + " 점수", feedback.getInterviewId()))
                     .comment(persona.getComment())
                     .strengths(persona.getStrengths())
                     .improvements(persona.getImprovements())
-                    .answeredCount(persona.getAnsweredCount())
-                    .questionCount(persona.getQuestionCount())
+                    .answeredCount(counts.answeredCountOfPersona(persona, feedback.getInterviewId()))
+                    .questionCount(counts.questionCountOfPersona(persona, feedback.getInterviewId()))
                     .build());
         }
-        feedbackPersonaRepository.saveAll(entities);
+
+        if (!members.isEmpty() && !seen.containsAll(members)) {
+            // 면접에 앉아 있던 면접관 중 종합이 오지 않은 사람이 있다. 그 카드는 화면에서 비게 된다.
+            log.warn("면접관별 종합이 면접 명단을 다 덮지 못했습니다. feedbackId={}, 받은 면접관={}, 면접 명단={}",
+                    feedback.getFeedbackId(), seen, members);
+        }
+        return entities;
+    }
+
+    /**
+     * 저장된 면접 기록으로 센 문항 수와 답변 수.
+     *
+     * <p>면접 중에 생긴 꼬리질문까지 모두 들어 있는 최종 기록이 여기다. 분석 서버가 보낸 수는
+     * 채점에 실제로 쓴 문항만 셌을 수 있어, 화면에 "3문항 중 2개 답변"처럼 기록과 다른 수가
+     * 걸리면 사용자는 어느 쪽이 맞는지 알 수 없다. 기록 쪽을 진실로 삼는다.
+     *
+     * <p>답변은 내용이 있는 것만 센다. 답하지 않고 넘어간 문항은 답변 행 자체가 없지만,
+     * 빈 답변이 저장된 기록도 있어 함께 걸러낸다.
+     */
+    private RecordedCounts recordedCounts(Long interviewId) {
+        List<QuestionEntity> questions =
+                questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(interviewId);
+        Set<Long> answered = answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(interviewId).stream()
+                .filter(answer -> answer.getContent() != null && !answer.getContent().isBlank())
+                .map(AnswerEntity::getQuestionId)
+                .collect(Collectors.toSet());
+
+        Map<Long, Long> personaByQuestion = new LinkedHashMap<>();
+        Map<Long, Integer> questionCountByPersona = new LinkedHashMap<>();
+        Map<Long, Integer> answeredCountByPersona = new LinkedHashMap<>();
+        int answeredCount = 0;
+
+        for (QuestionEntity question : questions) {
+            boolean hasAnswer = answered.contains(question.getQuestionId());
+            if (hasAnswer) {
+                answeredCount++;
+            }
+
+            // 꼬리질문은 부모의 면접관을 물려받는다. 부모는 늘 먼저 저장돼 한 번 훑으면 채워진다.
+            Long personaId = question.getPersonaId();
+            if (personaId == null && question.getParentId() != null) {
+                personaId = personaByQuestion.get(question.getParentId());
+            }
+            if (personaId == null) {
+                continue;
+            }
+
+            personaByQuestion.put(question.getQuestionId(), personaId);
+            questionCountByPersona.merge(personaId, 1, Integer::sum);
+            if (hasAnswer) {
+                answeredCountByPersona.merge(personaId, 1, Integer::sum);
+            }
+        }
+
+        return new RecordedCounts(questions.size(), answeredCount, personaByQuestion,
+                questionCountByPersona, answeredCountByPersona);
+    }
+
+    /** 기록으로 센 수. 분석 서버가 보낸 수와 어긋나면 기록 쪽을 쓰고 그 사실을 남긴다. */
+    private record RecordedCounts(int questionCount, int answeredCount,
+                                  Map<Long, Long> personaByQuestion,
+                                  Map<Long, Integer> questionCountByPersona,
+                                  Map<Long, Integer> answeredCountByPersona) {
+
+        Integer questionCountOr(Integer received, String label, Long interviewId) {
+            return reconcile(questionCount, received, label, interviewId);
+        }
+
+        Integer answeredCountOr(Integer received, String label, Long interviewId) {
+            return reconcile(answeredCount, received, label, interviewId);
+        }
+
+        Integer questionCountOfPersona(FeedbackCallbackRequest.Persona persona, Long interviewId) {
+            return reconcile(questionCountByPersona.getOrDefault(persona.getPersonaId(), 0),
+                    persona.getQuestionCount(),
+                    "면접관 " + persona.getPersonaId() + " 문항 수", interviewId);
+        }
+
+        Integer answeredCountOfPersona(FeedbackCallbackRequest.Persona persona, Long interviewId) {
+            return reconcile(answeredCountByPersona.getOrDefault(persona.getPersonaId(), 0),
+                    persona.getAnsweredCount(),
+                    "면접관 " + persona.getPersonaId() + " 답변 수", interviewId);
+        }
+
+        /**
+         * 기록으로 센 수를 쓴다.
+         *
+         * <p>기록이 통째로 비어 있을 때만 받은 값을 쓴다. 기록이 없는 것은 정상 흐름에 없지만,
+         * 그 때문에 이미 받아둔 채점의 수까지 0으로 지울 이유는 없다. 기록이 있는데 어떤 값이
+         * 0이라면 그것이 사실이다 — 담당 문항에 하나도 답하지 않은 면접관이 그렇다.
+         */
+        private Integer reconcile(int recorded, Integer received, String label, Long interviewId) {
+            if (questionCount == 0) {
+                return received;
+            }
+            if (received != null && received != recorded) {
+                log.warn("{}가 기록과 달라 기록 기준으로 저장합니다. interviewId={}, 받은 값={}, 기록={}",
+                        label, interviewId, received, recorded);
+            }
+            return recorded;
+        }
     }
 
     private void applyFailure(FeedbackEntity feedback, FeedbackCallbackRequest.Error error) {
