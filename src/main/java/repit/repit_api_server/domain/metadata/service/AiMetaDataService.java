@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
+import repit.repit_api_server.domain.metadata.dto.response.BrowserSafeResult;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
 import repit.repit_api_server.domain.metadata.dto.response.ResultResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
@@ -186,11 +187,12 @@ public class AiMetaDataService {
      * <p>콜백 전송과 구독 시점 되짚기가 같은 변환을 거치게 해, 어느 경로로 받든 클라이언트가
      * 보는 내용이 같도록 한다.
      */
+    /** 구독으로 흘러가는 값이라 채점 기준은 빼고 싣는다. */
     private CallbackSuccessResponse toResponse(AnalysisDataEntity data) {
         return CallbackSuccessResponse.builder()
                 .jobId(data.getJobId())
                 .status(statusName(data.getStatus()))
-                .result(data.getResult())
+                .result(BrowserSafeResult.withoutExpectedAnswers(data.getResult()))
                 .error(toError(data))
                 .build();
     }
@@ -233,7 +235,8 @@ public class AiMetaDataService {
         return ResultResponse.builder()
                 .jobId(data.getJobId())
                 .status(statusName(data.getStatus()))
-                .result(data.getResult())
+                // 브라우저가 읽는 자리다. 채점 기준은 API에서 채팅 서버로만 간다.
+                .result(BrowserSafeResult.withoutExpectedAnswers(data.getResult()))
                 .error(toError(data))
                 .build();
     }
