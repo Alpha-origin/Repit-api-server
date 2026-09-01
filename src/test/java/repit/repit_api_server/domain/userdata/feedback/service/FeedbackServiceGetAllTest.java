@@ -18,9 +18,15 @@ import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRe
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackPersonaRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
@@ -37,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -207,6 +214,37 @@ class FeedbackServiceGetAllTest {
         verify(feedbackRepository, never()).findAllByUserIdOrderByCreatedAtDesc(any());
     }
 
+    @Test
+    void 면접관의_성향과_난이도도_한_번에_읽어_피드백마다_붙인다() {
+        when(feedbackRepository.findAllByUserIdOrderByCreatedAtDesc(7L))
+                .thenReturn(List.of(feedback(10L, 100L), feedback(11L, 101L)));
+        when(feedbackPersonaRepository.findAllByFeedbackIdInOrderByFeedbackIdAscSortOrderAsc(List.of(10L, 11L)))
+                .thenReturn(List.of());
+        when(feedbackItemRepository.findAllByFeedbackIdInOrderByFeedbackIdAscSortOrderAsc(List.of(10L, 11L)))
+                .thenReturn(List.of());
+        // 1:1은 면접 행에 면접관이 적혀 있고, N:1은 면접관이 따로 걸려 있다.
+        when(interviewRepository.findAllById(List.of(100L, 101L)))
+                .thenReturn(List.of(interview(100L, InterviewMode.SOLO, 1L),
+                        interview(101L, InterviewMode.MULTI, null)));
+        when(interviewPersonaRepository.findAllByInterviewIdInOrderByInterviewIdAscPersonaOrderAsc(List.of(101L)))
+                .thenReturn(List.of(interviewPersona(101L, 2L, 0), interviewPersona(101L, 3L, 1)));
+        when(personaRepository.findAllById(any()))
+                .thenReturn(List.of(persona(1L, Type.STRESS, Level.HARD),
+                        persona(2L, Type.FRIENDLY, Level.EASY)));
+
+        List<FeedbackResponse> responses = service.getAllFeedbacks("Bearer token");
+
+        assertThat(responses).extracting(FeedbackResponse::getStyle)
+                .containsExactly(Type.STRESS, Type.FRIENDLY);
+        assertThat(responses).extracting(FeedbackResponse::getLevel)
+                .containsExactly(Level.HARD, Level.EASY);
+        // 면접 수만큼 조회가 늘지 않도록 면접관도 한 번에 읽는다.
+        verify(personaRepository, times(1)).findAllById(any());
+        verify(interviewPersonaRepository, times(1))
+                .findAllByInterviewIdInOrderByInterviewIdAscPersonaOrderAsc(any());
+        verify(interviewPersonaRepository, never()).findAllByInterviewIdOrderByPersonaOrderAsc(any());
+    }
+
     private UserResponse user(Long id) {
         UserResponse user = new UserResponse();
         ReflectionTestUtils.setField(user, "id", id);
@@ -226,10 +264,35 @@ class FeedbackServiceGetAllTest {
     }
 
     private InterviewEntity interview(Long interviewId, InterviewMode mode) {
+        return interview(interviewId, mode, null);
+    }
+
+    private InterviewEntity interview(Long interviewId, InterviewMode mode, Long personaId) {
         return InterviewEntity.builder()
                 .interviewId(interviewId)
                 .userId(7L)
                 .mode(mode)
+                .personaId(personaId)
+                .build();
+    }
+
+    private InterviewPersonaEntity interviewPersona(Long interviewId, Long personaId, int personaOrder) {
+        return InterviewPersonaEntity.builder()
+                .interviewId(interviewId)
+                .personaId(personaId)
+                .personaOrder(personaOrder)
+                .build();
+    }
+
+    private PersonaEntity persona(Long personaId, Type type, Level level) {
+        return PersonaEntity.builder()
+                .personaId(personaId)
+                .personaName("면접관-" + personaId)
+                .role(Role.TECH)
+                .type(type)
+                .level(level)
+                .career(5)
+                .gender(Gender.MALE)
                 .build();
     }
 

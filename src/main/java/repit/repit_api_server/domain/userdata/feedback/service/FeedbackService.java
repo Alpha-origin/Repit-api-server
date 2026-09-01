@@ -905,7 +905,11 @@ public class FeedbackService {
         List<FeedbackItemEntity> items =
                 feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(feedback.getFeedbackId());
 
-        return FeedbackResponse.of(feedback, modeOf(feedback.getInterviewId()), personas, items);
+        InterviewEntity interview = interviewRepository.findById(feedback.getInterviewId()).orElse(null);
+        List<InterviewEntity> interviews = interview == null ? List.of() : List.of(interview);
+
+        return FeedbackResponse.of(feedback, interview,
+                personasOf(interviews).get(feedback.getInterviewId()), personas, items);
     }
 
     /**
@@ -930,8 +934,8 @@ public class FeedbackService {
 
         List<Long> feedbackIds = feedbacks.stream().map(FeedbackEntity::getFeedbackId).toList();
 
-        // 면접 방식도 피드백마다 따로 읽지 않고 한 번에 읽어 면접별로 나눈다.
-        Map<Long, InterviewMode> modeByInterview = modesOf(
+        // 면접도 피드백마다 따로 읽지 않고 한 번에 읽어 면접별로 나눈다.
+        Map<Long, InterviewEntity> interviewById = interviewsOf(
                 feedbacks.stream().map(FeedbackEntity::getInterviewId).toList());
 
         // 피드백마다 따로 읽으면 건수만큼 쿼리가 늘어난다. 한 번에 읽고 피드백별로 나눈다.
@@ -944,34 +948,93 @@ public class FeedbackService {
                         .stream()
                         .collect(Collectors.groupingBy(FeedbackItemEntity::getFeedbackId));
 
+        // 성향·난이도의 원본인 면접관도 마찬가지로 한 번에 읽는다.
+        Map<Long, PersonaEntity> personaByInterview = personasOf(List.copyOf(interviewById.values()));
+
         return feedbacks.stream()
                 .map(feedback -> FeedbackResponse.of(
                         feedback,
-                        modeByInterview.get(feedback.getInterviewId()),
+                        interviewById.get(feedback.getInterviewId()),
+                        personaByInterview.get(feedback.getInterviewId()),
                         personasByFeedback.getOrDefault(feedback.getFeedbackId(), List.of()),
                         itemsByFeedback.getOrDefault(feedback.getFeedbackId(), List.of())))
                 .toList();
     }
 
-    /**
-     * 이 피드백이 나온 면접의 방식. 웹은 SOLO와 N:1을 다르게 그려야 해서 함께 실어 보낸다.
-     *
-     * <p>피드백에 따로 적어두지 않고 그때마다 면접에서 읽는다. 면접 방식의 원본은 면접 행이고,
-     * 복사해두면 두 곳이 어긋날 수 있다.
-     *
-     * <p>면접을 찾지 못하면 비워 둔다. 피드백만 남고 면접이 사라진 경우는 정상 흐름에 없지만,
-     * 그 때문에 이미 받아둔 채점까지 못 보게 만들 이유는 없다.
-     */
+    /** 이 면접의 방식. 면접을 찾지 못하면 비워 둔다. */
     private InterviewMode modeOf(Long interviewId) {
         return interviewRepository.findById(interviewId)
                 .map(InterviewEntity::getMode)
                 .orElse(null);
     }
 
-    /** 여러 면접의 방식을 한 번에. 목록 조회가 면접 수만큼 쿼리를 늘리지 않도록 한다. */
-    private Map<Long, InterviewMode> modesOf(List<Long> interviewIds) {
+    /**
+     * 여러 면접을 한 번에. 목록 조회가 면접 수만큼 쿼리를 늘리지 않도록 한다.
+     *
+     * <p>면접 방식(mode)과 면접관은 피드백에 따로 적어두지 않고 그때마다 면접에서 읽는다.
+     * 원본은 면접 행이고, 복사해두면 두 곳이 어긋날 수 있다.
+     *
+     * <p>면접을 찾지 못하면 그 자리를 비워 둔다. 피드백만 남고 면접이 사라진 경우는 정상 흐름에
+     * 없지만, 그 때문에 이미 받아둔 채점까지 못 보게 만들 이유는 없다.
+     */
+    private Map<Long, InterviewEntity> interviewsOf(List<Long> interviewIds) {
         return interviewRepository.findAllById(interviewIds).stream()
-                .collect(Collectors.toMap(InterviewEntity::getInterviewId, InterviewEntity::getMode));
+                .collect(Collectors.toMap(InterviewEntity::getInterviewId, interview -> interview));
+    }
+
+    /**
+     * 면접마다 그 면접을 대표하는 면접관. 성향(스타일)과 난이도가 여기에 있다.
+     *
+     * <p>채점 결과에는 두 값이 없다 — 분석 서버는 직책만 돌려준다. 면접 방식과 같은 이유로
+     * 피드백에 복사해두지 않고 조회할 때 면접관 행에서 읽는다.
+     *
+     * <p>N:1은 면접관이 셋이지만 성향·난이도는 셋이 같은 값으로 묶여 있어 하나로 대표할 수 있다.
+     * 진행 순서 맨 앞을 쓴다.
+     *
+     * <p>채점 결과의 면접관이 아니라 면접에 걸린 면접관을 읽는다. 채점 결과는 콜백이 와야 생기므로,
+     * 그쪽을 보면 아직 채점 중이거나 실패한 피드백에서 두 값이 비어버린다.
+     *
+     * <p>면접관이 지워졌으면 그 면접만 비고 나머지 채점 결과는 그대로 나간다.
+     */
+    private Map<Long, PersonaEntity> personasOf(List<InterviewEntity> interviews) {
+        if (interviews.isEmpty()) {
+            return Map.of();
+        }
+
+        // 면접별 대표 면접관 id. 1:1은 면접 행에 그대로 적혀 있다.
+        Map<Long, Long> personaIdByInterview = new LinkedHashMap<>();
+        List<Long> multiInterviewIds = new ArrayList<>();
+        for (InterviewEntity interview : interviews) {
+            if (interview.getPersonaId() != null) {
+                personaIdByInterview.put(interview.getInterviewId(), interview.getPersonaId());
+            } else {
+                multiInterviewIds.add(interview.getInterviewId());
+            }
+        }
+
+        // N:1은 면접관이 따로 걸려 있다. 면접 수만큼 늘리지 않도록 한 번에 읽는다.
+        if (!multiInterviewIds.isEmpty()) {
+            interviewPersonaRepository.findAllByInterviewIdInOrderByInterviewIdAscPersonaOrderAsc(multiInterviewIds)
+                    .forEach(member -> personaIdByInterview
+                            .putIfAbsent(member.getInterviewId(), member.getPersonaId()));
+        }
+
+        Set<Long> personaIds = new LinkedHashSet<>(personaIdByInterview.values());
+        if (personaIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, PersonaEntity> personaById = personaRepository.findAllById(personaIds).stream()
+                .collect(Collectors.toMap(PersonaEntity::getPersonaId, persona -> persona));
+
+        Map<Long, PersonaEntity> byInterview = new LinkedHashMap<>();
+        personaIdByInterview.forEach((interviewId, personaId) -> {
+            PersonaEntity persona = personaById.get(personaId);
+            if (persona != null) {
+                byInterview.put(interviewId, persona);
+            }
+        });
+        return byInterview;
     }
 
     /** 최근순으로 들어온 목록에서 면접마다 처음 만난 것, 곧 마지막 채점만 남긴다. */
