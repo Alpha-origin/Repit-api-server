@@ -119,4 +119,27 @@ class QuestionTailorResponseTest {
         // 되살릴 작업 자체가 없다. 면접 시작을 먼저 요청해야 한다.
         assertThat(response.isRetryable()).isFalse();
     }
+
+    /**
+     * 기대 답변은 채점의 유일한 기준이라 API에서 채팅 서버로만 간다.
+     * 준비 조회로 미리 내려가면 지원자가 아직 출제되지 않은 문항의 답을 맞춰둘 수 있다.
+     */
+    @Test
+    void 준비_조회에는_기대_답변을_싣지_않는다() {
+        QuestionTailorResponse response = QuestionTailorResponse.of(tailor(InterviewMode.SOLO)
+                .status(TailorStatus.SUCCEEDED)
+                .questions(List.of(question(1)))
+                .chatDelivered(true)
+                .build());
+
+        // 질문 본문과 담당 면접관은 그대로다. 웹이 면접관 전환을 그리는 근거다.
+        assertThat(response.getQuestions()).extracting(PreparedQuestionResponse::getQuestion)
+                .containsExactly("질문 1");
+        assertThat(response.getQuestions().getFirst())
+                .extracting(PreparedQuestionResponse::getId).isEqualTo(1);
+        // 기대 답변은 이 응답 타입에 자리 자체가 없다.
+        assertThat(PreparedQuestionResponse.class.getDeclaredFields())
+                .extracting(java.lang.reflect.Field::getName)
+                .doesNotContain("expectedAnswer");
+    }
 }
