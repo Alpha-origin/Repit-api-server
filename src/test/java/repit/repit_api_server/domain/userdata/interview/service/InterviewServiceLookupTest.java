@@ -8,6 +8,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
@@ -20,6 +21,7 @@ import repit.repit_api_server.domain.userdata.question.service.QuestionTailorSer
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
+import repit.repit_api_server.global.response.UserResponse;
 
 import java.util.Optional;
 
@@ -56,18 +58,24 @@ class InterviewServiceLookupTest {
 
     private InterviewService service;
 
+    private static final String TOKEN = "Bearer token";
+
     @BeforeEach
     void setUp() {
         service = new InterviewService(interviewRepository, questionRepository, chatServerClient,
                 authServerClient, answerRepository, personaRepository, questionTailorService,
                 interviewPersonaRepository);
+
+        UserResponse user = new UserResponse();
+        ReflectionTestUtils.setField(user, "id", 7L);
+        when(authServerClient.getUser(TOKEN)).thenReturn(user);
     }
 
     @Test
     void 없는_면접을_조회하면_404다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.getInterviewById(3L))
+        assertThatThrownBy(() -> service.getInterviewById(TOKEN, 3L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("면접을 찾을 수 없습니다")
                 .extracting(e -> ((BusinessException) e).getStatus())
@@ -85,6 +93,23 @@ class InterviewServiceLookupTest {
                 .status(Status.COMPLETED)
                 .build()));
 
-        assertThat(service.getInterviewById(3L).getInterviewId()).isEqualTo(3L);
+        assertThat(service.getInterviewById(TOKEN, 3L).getInterviewId()).isEqualTo(3L);
+    }
+
+    @Test
+    void 남의_면접을_조회하면_403이다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()
+                .interviewId(3L)
+                // 요청한 사용자(7L)와 다른 주인이다.
+                .userId(9L)
+                .mode(InterviewMode.SOLO)
+                .sessionId("sess-1")
+                .status(Status.COMPLETED)
+                .build()));
+
+        assertThatThrownBy(() -> service.getInterviewById(TOKEN, 3L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.FORBIDDEN);
     }
 }

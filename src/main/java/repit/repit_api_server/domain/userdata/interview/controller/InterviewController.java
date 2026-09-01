@@ -38,6 +38,21 @@ public class InterviewController {
         return ApiResponse.success(interviewService.prepareInterview(authorization, interviewId));
     }
 
+    /**
+     * 면접 준비 재시도.
+     *
+     * <p>질문을 만들지 못했으면 새로 만들고, 넘기지 못한 것뿐이면 전달만 다시 한다. 어느 쪽인지는
+     * 준비 조회의 {@code failureStage}가 가리킨다. 준비 중이거나 이미 열린 면접에는 새 작업을
+     * 만들지 않는다.
+     */
+    @PostMapping("/{interviewId}/preparation/retry")
+    public ApiResponse<InterviewPrepareResponse> retryPreparation(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long interviewId
+    ) {
+        return ApiResponse.success(interviewService.retryPreparation(authorization, interviewId));
+    }
+
     @GetMapping("/getAll")
     public ApiResponse<List<InterviewResponse>> getAllInterview(
             @RequestHeader("Authorization") String authorization) {
@@ -46,16 +61,19 @@ public class InterviewController {
 
     @GetMapping("/get")
     public ApiResponse<InterviewResponse> getInterview(
+            @RequestHeader("Authorization") String authorization,
             @RequestParam Long interviewId
     ) {
-        return ApiResponse.success(interviewService.getInterviewById(interviewId));
+        return ApiResponse.success(interviewService.getInterviewById(authorization, interviewId));
     }
 
+    // 다시보기. 면접 전문과 답변이 그대로 나가는 자리라 본인 것만 내려준다.
     @GetMapping("/chat")
     public ApiResponse<ChatInterviewAllResponse> getChatInterview(
+            @RequestHeader("Authorization") String authorization,
             @RequestParam Long interviewId
     ) {
-        return ApiResponse.success(interviewService.getChatInterview(interviewId));
+        return ApiResponse.success(interviewService.getChatInterview(authorization, interviewId));
     }
 
     // 채팅 서버 전용. 면접 기록을 저장하고, 이어서 채점까지 접수한다.

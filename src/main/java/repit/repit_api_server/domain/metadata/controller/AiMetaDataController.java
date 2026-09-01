@@ -18,8 +18,8 @@ import repit.repit_api_server.domain.metadata.sse.SseEmitterRepository;
 import repit.repit_api_server.domain.metadata.sse.SseEmitters;
 import repit.repit_api_server.domain.metadata.sse.SseNotifier;
 import repit.repit_api_server.domain.metadata.sse.SseSubscription;
-import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewReadyResponse;
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
+import repit.repit_api_server.global.auth.CurrentUser;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.common.ApiResponse;
 
@@ -40,14 +40,27 @@ public class AiMetaDataController {
     private final SseEmitterRepository sseEmitterRepository;
     private final SseNotifier sseNotifier;
     private final QuestionTailorService questionTailorService;
+    private final CurrentUser currentUser;
 
     private final AiServerClient aiServerClient;
     private final AnalysisLaunchService analysisLaunchService;
 
+    /**
+     * 구독도 남의 것을 들여다볼 수 있는 자리다. 흘러나가는 것은 분석 결과와 면접 준비 상태라
+     * 조회와 같은 기준으로 막는다 — 구독을 열기 전에 소유자인지부터 확인한다.
+     *
+     * <p>토큰은 헤더로 받는다. 쿼리 파라미터로 받으면 접속 URL이 프록시 로그와 브라우저 기록에
+     * 그대로 남는다. 브라우저 EventSource는 헤더를 실을 수 없으므로 웹은 헤더를 붙일 수 있는
+     * 구현으로 붙어야 한다.
+     */
     // 응답 타입을 못박아 둔다. 정하지 않으면 협상 결과에 따라 다른 타입으로 나갈 수 있고,
     // 그러면 중간의 프록시가 이벤트 스트림인 줄 모르고 버퍼에 모았다가 한꺼번에 흘려보낸다.
     @GetMapping(value = "/subscribe/{jobId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter subscribe(@PathVariable String jobId) {
+    public SseEmitter subscribe(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable String jobId) {
+        aiMetaDataService.verifyOwner(jobId, currentUser.require(authorization).getId());
+
         SseSubscription emitter = new SseSubscription(SSE_TIMEOUT);
 
         // 등록을 먼저 하고 결과를 확인한다. 순서를 뒤집으면 확인과 등록 사이에 도착한 콜백이
@@ -87,6 +100,9 @@ public class AiMetaDataController {
      *
      * <p>단계가 둘이라 하나만 보고 끝낼 수 없다. 분석만 끝났으면 구독을 이어두고 면접 준비를
      * 기다려야 하고, 준비까지 끝났으면 두 이벤트를 차례로 보내고 닫아야 한다.
+     *
+     * <p>준비가 실패로 끝난 것도 되짚는다. 성공만 되짚으면 실패한 뒤에 붙은 구독은 아무것도
+     * 받지 못한 채 타임아웃까지 매달려, 사용자는 준비 중인지 실패인지 끝내 알 수 없다.
      */
     private void replay(String jobId) {
         CallbackSuccessResponse finished = aiMetaDataService.findFinished(jobId);
@@ -97,9 +113,9 @@ public class AiMetaDataController {
 
         sseNotifier.sendAnalysisResult(jobId, finished.getStatus(), finished);
 
-        InterviewReadyResponse ready = questionTailorService.findReady(jobId);
-        if (ready != null) {
-            sseNotifier.sendFinal(jobId, SseNotifier.INTERVIEW_READY, ready);
+        QuestionTailorService.PreparationEvent prepared = questionTailorService.findPreparationEvent(jobId);
+        if (prepared != null) {
+            sseNotifier.sendFinal(jobId, prepared.eventName(), prepared.payload());
         }
     }
 
@@ -161,8 +177,11 @@ public class AiMetaDataController {
     // 분석 결과 조회. 면접 질문은 재작성이 끝나는 시점에 채팅 서버로 직접 넘어간다.
     @GetMapping
     public ApiResponse<ResultResponse> getResult(
+            @RequestHeader("Authorization") String authorization,
             @RequestParam String jobId
     ) {
+        // 분석 결과에는 질문의 기대 답변이 그대로 들어 있다. 본인 것만 내려준다.
+        aiMetaDataService.verifyOwner(jobId, currentUser.require(authorization).getId());
         return ApiResponse.success(aiMetaDataService.getResult(jobId));
     }
 }

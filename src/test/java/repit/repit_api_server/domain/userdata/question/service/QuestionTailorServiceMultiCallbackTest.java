@@ -21,6 +21,8 @@ import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEnti
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionTailorRepository;
 import repit.repit_api_server.domain.metadata.sse.SseNotifier;
+import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewReadyResponse;
+import repit.repit_api_server.domain.userdata.question.preparation.FailureStage;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
 import tools.jackson.databind.ObjectMapper;
@@ -31,6 +33,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -88,6 +91,7 @@ class QuestionTailorServiceMultiCallbackTest {
                 .interviewId(3L)
                 .userId(7L)
                 .jobId("job-1")
+                .analysisJobId("analysis-1")
                 .mode(InterviewMode.MULTI)
                 .status(TailorStatus.PENDING)
                 .chatDelivered(false)
@@ -127,6 +131,27 @@ class QuestionTailorServiceMultiCallbackTest {
                 .containsExactly(11L, 12L);
         // 신규 질문의 채점 기준은 이 값뿐이다. 버리면 되찾을 데가 없다.
         assertThat(saved.getQuestions().get(1).getExpectedAnswer()).isEqualTo("이 질문으로 확인할 것 6");
+    }
+
+    /**
+     * 실패를 알리지 않으면 구독은 15분 타임아웃까지 매달린다. 준비 제한 시간은 2분이라
+     * 사용자는 그 차이만큼 아무 소식 없이 준비 중 화면을 보게 된다.
+     */
+    @Test
+    void 질문을_만들지_못하면_실패를_구독에_알린다() {
+        service.handleMultiCallback(new QuestionTailorMultiCallbackRequest("job-1", "3", "failed", null,
+                new QuestionTailorMultiCallbackRequest.Error(502, "질문 생성에 실패했습니다.")));
+
+        ArgumentCaptor<InterviewReadyResponse> sent = ArgumentCaptor.forClass(InterviewReadyResponse.class);
+        verify(sseNotifier).sendFinal(eq("analysis-1"),
+                eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), sent.capture());
+
+        // 질문부터 다시 만들어야 하는 실패다. 전달만 다시 하면 되는 실패와 구분돼야 한다.
+        assertThat(sent.getValue().getFailureStage()).isEqualTo(FailureStage.QUESTION_GENERATION);
+        assertThat(sent.getValue().getRetryable()).isTrue();
+        assertThat(sent.getValue().getErrorMessage()).isEqualTo("질문 생성에 실패했습니다.");
+        // 넘길 질문이 없으니 채팅 서버로는 가지 않는다.
+        verify(chatInterviewHandoffService, never()).deliver(any());
     }
 
     @Test

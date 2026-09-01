@@ -208,23 +208,26 @@ public class InterviewService {
         }
         // N:1은 질문 재작성이 아니라 신규 생성이 섞인 multi tailor로 간다. 갈림길은 서비스 안에 있다.
         QuestionTailorEntity tailor = questionTailorService.requestTailor(interview, user);
-        return InterviewPrepareResponse.of(tailor, interview.getSessionId(), prepareMessage(tailor));
+        return InterviewPrepareResponse.of(tailor, interview.getSessionId());
     }
 
-    private String prepareMessage(QuestionTailorEntity tailor) {
-        if (tailor.getStatus() == TailorStatus.PENDING) {
-            return "질문을 면접자에 맞게 다시 쓰는 중입니다. 준비가 끝나면 면접이 열립니다.";
+    /**
+     * 준비가 실패로 끝난 면접을 다시 준비한다.
+     *
+     * <p>실패한 건을 그대로 두면 면접 시작을 다시 눌러도 그 실패가 그대로 돌아온다. 특히 N:1은
+     * 폴백할 원질문이 없어 한 번 실패하면 면접을 새로 만드는 것 말고는 길이 없었다.
+     */
+    public InterviewPrepareResponse retryPreparation(String authorization, Long interviewId) {
+        UserResponse user = currentUser(authorization);
+
+        InterviewEntity interview = interviewRepository.findById(interviewId)
+                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+        if (!user.getId().equals(interview.getUserId())) {
+            throw BusinessException.forbidden("본인의 면접만 다시 준비할 수 있습니다.");
         }
-        if (Boolean.TRUE.equals(tailor.getChatDelivered())) {
-            return "면접 준비가 끝났습니다.";
-        }
-        // N:1은 실패하면 폴백 없이 질문이 비어 있다. 전달 실패와 구분해서 알려야 재시도 여부가 갈린다.
-        if (tailor.getQuestions() == null || tailor.getQuestions().isEmpty()) {
-            return tailor.getErrorMessage() == null
-                    ? "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요."
-                    : tailor.getErrorMessage();
-        }
-        return "질문은 준비됐지만 채팅 서버에 전달하지 못했습니다. 잠시 후 다시 시도해주세요.";
+
+        QuestionTailorEntity tailor = questionTailorService.retryPreparation(interview, user);
+        return InterviewPrepareResponse.of(tailor, interview.getSessionId());
     }
 
     public List<InterviewResponse> getAllInterviewsByUserId(String authorization) {
@@ -235,10 +238,23 @@ public class InterviewService {
                 .toList();
     }
 
-    public InterviewResponse getInterviewById(Long interviewId) {
+    public InterviewResponse getInterviewById(String authorization, Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+        verifyOwner(interview, currentUser(authorization));
         return InterviewResponse.from(interview, personaIdsOf(interview));
+    }
+
+    /**
+     * 면접은 본인 것만 볼 수 있다.
+     *
+     * <p>면접 id는 순번이라 옆 번호를 넣어보는 것만으로 남의 면접에 닿는다. 그 안에는 면접
+     * 전문과 답변이 들어 있어, 소유자를 견주지 않으면 조회 한 번으로 그대로 새어나간다.
+     */
+    private void verifyOwner(InterviewEntity interview, UserResponse user) {
+        if (!user.getId().equals(interview.getUserId())) {
+            throw BusinessException.forbidden("본인의 면접만 볼 수 있습니다.");
+        }
     }
 
     /** N:1 면접관 목록. 1:1은 interview.personaId 하나로 끝나므로 조회하지 않는다. */
@@ -262,9 +278,10 @@ public class InterviewService {
      * <p>진행 중인 면접은 아직 우리 DB에 아무것도 없다. 채팅 면접 질문은 결과가 넘어올 때
      * 한꺼번에 들어오기 때문이다. 그 사이에는 채팅 서버 세션이 현재 상태를 들고 있다.
      */
-    public ChatInterviewAllResponse getChatInterview(Long interviewId) {
+    public ChatInterviewAllResponse getChatInterview(String authorization, Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+        verifyOwner(interview, currentUser(authorization));
 
         List<QuestionEntity> questions =
                 questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(interviewId);

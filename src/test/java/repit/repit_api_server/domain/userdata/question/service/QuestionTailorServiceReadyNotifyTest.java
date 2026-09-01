@@ -22,6 +22,7 @@ import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailo
 import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQuestionResponse;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
+import repit.repit_api_server.domain.userdata.question.preparation.FailureStage;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionTailorRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
@@ -169,33 +170,59 @@ class QuestionTailorServiceReadyNotifyTest {
         when(questionTailorRepository.findTopByAnalysisJobIdOrderByCreatedAtDesc("analysis-1"))
                 .thenReturn(Optional.of(delivered));
 
-        InterviewReadyResponse ready = service.findReady("analysis-1");
+        QuestionTailorService.PreparationEvent event = service.findPreparationEvent("analysis-1");
 
-        assertThat(ready).isNotNull();
-        assertThat(ready.getSessionId()).isEqualTo("sess-1");
+        assertThat(event).isNotNull();
+        assertThat(event.eventName()).isEqualTo(SseNotifier.INTERVIEW_READY);
+        assertThat(event.payload().getSessionId()).isEqualTo("sess-1");
     }
 
     /**
-     * 넘기는 중인 건은 준비된 것으로 보지 않는다. 전달은 권리를 먼저 차지하고 시작하므로,
-     * 그 사이에 되짚으면 아직 열리지도 않은 면접을 열렸다고 알리게 된다.
+     * 전달에 실패한 건은 준비된 것으로 보지 않는다. 그렇다고 아무것도 되짚지 않으면 그 사이에
+     * 붙은 구독은 타임아웃까지 매달리므로, 실패로 되짚어 보낸다.
      */
     @Test
-    void 전달에_실패한_건은_되짚지_않는다() {
+    void 전달에_실패한_건은_전달_단계_실패로_되짚는다() {
         QuestionTailorEntity failed = pendingTailor();
         failed.setStatus(TailorStatus.SUCCEEDED);
         failed.setChatDelivered(true);
         failed.setChatErrorMessage("채팅 서버에 오류가 발생했습니다.");
+        failed.setQuestions(failed.getSourceQuestions());
         when(questionTailorRepository.findTopByAnalysisJobIdOrderByCreatedAtDesc("analysis-1"))
                 .thenReturn(Optional.of(failed));
 
-        assertThat(service.findReady("analysis-1")).isNull();
+        QuestionTailorService.PreparationEvent event = service.findPreparationEvent("analysis-1");
+
+        assertThat(event.eventName()).isEqualTo(SseNotifier.INTERVIEW_PREPARATION_FAILED);
+        // 질문은 이미 준비돼 있다. 다시 만들 것 없이 전달만 다시 하면 된다.
+        assertThat(event.payload().getFailureStage()).isEqualTo(FailureStage.CHAT_DELIVERY);
+        assertThat(event.payload().getRetryable()).isTrue();
+    }
+
+    /** N:1이 폴백 없이 닫힌 건. 되짚지 않으면 웹은 준비 중 화면에서 15분을 기다린다. */
+    @Test
+    void 질문을_만들지_못한_건은_생성_단계_실패로_되짚는다() {
+        QuestionTailorEntity failed = pendingTailor();
+        failed.setMode(InterviewMode.MULTI);
+        failed.setStatus(TailorStatus.FAILED);
+        failed.setChatDelivered(false);
+        failed.setQuestions(null);
+        failed.setErrorMessage("질문을 준비하지 못했습니다.");
+        when(questionTailorRepository.findTopByAnalysisJobIdOrderByCreatedAtDesc("analysis-1"))
+                .thenReturn(Optional.of(failed));
+
+        QuestionTailorService.PreparationEvent event = service.findPreparationEvent("analysis-1");
+
+        assertThat(event.eventName()).isEqualTo(SseNotifier.INTERVIEW_PREPARATION_FAILED);
+        assertThat(event.payload().getFailureStage()).isEqualTo(FailureStage.QUESTION_GENERATION);
+        assertThat(event.payload().getErrorMessage()).isEqualTo("질문을 준비하지 못했습니다.");
     }
 
     @Test
-    void 아직_넘기지_않은_건은_되짚지_않는다() {
+    void 아직_준비_중인_건은_되짚지_않는다() {
         when(questionTailorRepository.findTopByAnalysisJobIdOrderByCreatedAtDesc("analysis-1"))
                 .thenReturn(Optional.of(pendingTailor()));
 
-        assertThat(service.findReady("analysis-1")).isNull();
+        assertThat(service.findPreparationEvent("analysis-1")).isNull();
     }
 }
