@@ -8,6 +8,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
+import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewAllResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewQnAResponse;
@@ -23,6 +24,7 @@ import repit.repit_api_server.domain.userdata.question.repository.QuestionReposi
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.client.ChatServerClient;
+import repit.repit_api_server.global.response.UserResponse;
 import repit.repit_api_server.global.exception.BusinessException;
 
 import java.time.LocalDateTime;
@@ -65,11 +67,18 @@ class InterviewServiceChatRecordTest {
 
     private InterviewService service;
 
+    private static final String TOKEN = "Bearer token";
+
     @BeforeEach
     void setUp() {
         service = new InterviewService(interviewRepository, questionRepository, chatServerClient,
                 authServerClient, answerRepository, personaRepository, questionTailorService,
                 interviewPersonaRepository);
+
+        // 다시보기는 본인 것만 볼 수 있다. 아래 면접의 주인과 같은 사용자로 요청한다.
+        UserResponse user = new UserResponse();
+        ReflectionTestUtils.setField(user, "id", 7L);
+        when(authServerClient.getUser(TOKEN)).thenReturn(user);
 
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()
                 .interviewId(3L)
@@ -139,7 +148,7 @@ class InterviewServiceChatRecordTest {
     void 끝난_면접은_채팅_서버에_묻지_않는다() {
         givenStoredRecord();
 
-        service.getChatInterview(3L);
+        service.getChatInterview(TOKEN, 3L);
 
         // 세션은 이미 지워졌다. 물으면 실패한다.
         verify(chatServerClient, never()).getInterview(anyString());
@@ -149,7 +158,7 @@ class InterviewServiceChatRecordTest {
     void 저장된_기록으로_면접_전체를_돌려준다() {
         givenStoredRecord();
 
-        ChatInterviewAllResponse response = service.getChatInterview(3L);
+        ChatInterviewAllResponse response = service.getChatInterview(TOKEN, 3L);
 
         assertThat(response.getSessionId()).isEqualTo("sess-1");
         assertThat(response.getInterviewId()).isEqualTo(3L);
@@ -164,7 +173,7 @@ class InterviewServiceChatRecordTest {
     void 질문_번호는_우리_PK로_내려간다() {
         givenStoredRecord();
 
-        List<ChatInterviewQnAResponse> qnAs = service.getChatInterview(3L).getQnAResponses();
+        List<ChatInterviewQnAResponse> qnAs = service.getChatInterview(TOKEN, 3L).getQnAResponses();
 
         // 채팅 서버 번호(1, -77, 2)는 면접 안에서만 유일해 밖에서는 가리키는 것이 없다.
         assertThat(qnAs).extracting(qnA -> qnA.getQuestion().getQuestionId())
@@ -179,7 +188,7 @@ class InterviewServiceChatRecordTest {
     void 답변을_질문에_매달아_내려준다() {
         givenStoredRecord();
 
-        List<ChatInterviewQnAResponse> qnAs = service.getChatInterview(3L).getQnAResponses();
+        List<ChatInterviewQnAResponse> qnAs = service.getChatInterview(TOKEN, 3L).getQnAResponses();
 
         assertThat(qnAs.get(0).getAnswer().getQuestionId()).isEqualTo(901L);
         assertThat(qnAs.get(0).getAnswer().getAnswerContent()).isEqualTo("스레드가 I/O 대기에 묶였습니다.");
@@ -192,7 +201,7 @@ class InterviewServiceChatRecordTest {
     void 답하지_않고_넘어간_질문은_답변을_비운다() {
         givenStoredRecord();
 
-        List<ChatInterviewQnAResponse> qnAs = service.getChatInterview(3L).getQnAResponses();
+        List<ChatInterviewQnAResponse> qnAs = service.getChatInterview(TOKEN, 3L).getQnAResponses();
 
         assertThat(qnAs.get(1).getAnswer()).isNull();
         assertThat(qnAs.get(2).getAnswer()).isNull();
@@ -204,7 +213,7 @@ class InterviewServiceChatRecordTest {
         when(questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(3L)).thenReturn(List.of());
         when(chatServerClient.getInterview("sess-1")).thenReturn(new ChatInterviewAllResponse());
 
-        service.getChatInterview(3L);
+        service.getChatInterview(TOKEN, 3L);
 
         verify(chatServerClient).getInterview("sess-1");
     }
@@ -213,7 +222,7 @@ class InterviewServiceChatRecordTest {
     void 없는_면접이면_알린다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.getChatInterview(3L))
+        assertThatThrownBy(() -> service.getChatInterview(TOKEN, 3L))
                 .isInstanceOf(BusinessException.class);
     }
 }

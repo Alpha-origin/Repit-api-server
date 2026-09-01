@@ -142,6 +142,29 @@ public class AiMetaDataService {
     }
 
     /**
+     * 이 분석이 요청한 사용자의 것인지 확인한다.
+     *
+     * <p>jobId는 추측할 수 있는 값이 아니지만 그것만으로 열어두면 결과가 유출됐을 때 막을
+     * 길이 없다. 분석 결과에는 포트폴리오 요약과 질문의 기대 답변이 그대로 들어 있다.
+     *
+     * <p>소유자가 비어 있는 행은 접수 응답을 받지 못해 사용자를 붙이지 못한 분석이다.
+     * 누구 것인지 모르는 자료라 아무에게도 내주지 않는다.
+     */
+    @Transactional(readOnly = true)
+    public void verifyOwner(String jobId, Long userId) {
+        AnalysisDataEntity data = analysisDataRepository.findById(jobId)
+                .orElseThrow(() -> BusinessException.notFound("분석 결과를 찾을 수 없습니다. jobId=" + jobId));
+
+        if (data.getUserId() == null) {
+            log.warn("소유자가 붙지 않은 분석을 조회하려 했습니다. jobId={}", jobId);
+            throw BusinessException.forbidden("본인의 분석 결과만 볼 수 있습니다.");
+        }
+        if (!data.getUserId().equals(userId)) {
+            throw BusinessException.forbidden("본인의 분석 결과만 볼 수 있습니다.");
+        }
+    }
+
+    /**
      * 구독에 흘려보낼 만큼 끝났는지.
      *
      * <p>성공은 result가 실제로 있어야 끝난 것으로 본다. status만 보면 결과가 저장된 적 없는

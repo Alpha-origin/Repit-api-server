@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResultResponse;
@@ -31,6 +32,9 @@ import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTail
 import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQuestionResponse;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
+import repit.repit_api_server.domain.userdata.question.preparation.FailureStage;
+import repit.repit_api_server.domain.userdata.question.preparation.PreparationState;
+import repit.repit_api_server.domain.userdata.question.preparation.PreparationStatus;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionTailorRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
@@ -101,16 +105,58 @@ public class QuestionTailorService {
      * 새로 요청하지 않고 그 상태를 그대로 돌려준다.
      */
     public QuestionTailorEntity requestTailor(InterviewEntity interview, UserResponse user) {
-        QuestionTailorEntity existing = questionTailorRepository
-                .findTopByInterviewIdOrderByCreatedAtDesc(interview.getInterviewId())
-                .orElse(null);
+        QuestionTailorEntity existing = latestTailor(interview.getInterviewId());
         if (existing != null) {
             expireIfTimedOut(existing);
-            // 이미 확정된 건은 채팅 서버 전달만 마저 시도하고 끝낸다.
-            deliverToChatServer(existing);
+            // 이미 확정된 건은 남은 뒷단만 마저 밟는다. 여기서 새 작업을 만들면 같은 면접이 두 번 준비된다.
+            completePreparation(existing);
             return existing;
         }
 
+        return startTailor(interview, user);
+    }
+
+    /**
+     * 면접 준비를 다시 시도한다.
+     *
+     * <p>멈춘 단계에 따라 하는 일이 다르다. 질문을 만들지 못했으면 처음부터 다시 만들고,
+     * 만들어둔 질문을 넘기지 못한 것뿐이면 전달만 다시 한다 — 그 경우까지 새로 만들면
+     * 이미 준비됐던 질문이 까닭 없이 바뀐다.
+     *
+     * <p>준비 중이거나 이미 열린 면접에는 새 작업을 만들지 않는다. 만들면 채팅 서버에 같은
+     * 면접을 여는 요청이 한 번 더 가고, 질문도 갈아치워진다.
+     */
+    public QuestionTailorEntity retryPreparation(InterviewEntity interview, UserResponse user) {
+        QuestionTailorEntity existing = latestTailor(interview.getInterviewId());
+        if (existing == null) {
+            throw BusinessException.conflict("아직 시작하지 않은 면접입니다. 면접 시작을 먼저 요청해주세요.");
+        }
+
+        // 콜백을 기다리다 시간만 지난 건은 여기서 실패로 확정한다. 그러지 않으면 이미 가망이
+        // 없는 작업 때문에 재시도가 "준비 중"에 막힌다.
+        expireIfTimedOut(existing);
+
+        PreparationState state = PreparationState.of(existing);
+        if (state.status() == PreparationStatus.PREPARING) {
+            throw BusinessException.conflict("질문을 준비하는 중입니다. 잠시 후 다시 시도해주세요.");
+        }
+        if (state.status() == PreparationStatus.READY) {
+            // 이미 열려 있다. 다시 만들 것이 없으니 지금 상태를 그대로 돌려준다.
+            return existing;
+        }
+        if (state.failureStage() == FailureStage.CHAT_DELIVERY) {
+            deliverToChatServer(existing);
+            return existing;
+        }
+        return startTailor(interview, user);
+    }
+
+    private QuestionTailorEntity latestTailor(Long interviewId) {
+        return questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId).orElse(null);
+    }
+
+    /** 분석 서버에 질문 준비를 새로 접수한다. 1:1과 N:1의 갈림길이 여기다. */
+    private QuestionTailorEntity startTailor(InterviewEntity interview, UserResponse user) {
         SourceQuestions source = loadOriginalQuestions(interview.getUserId());
         if (interview.getMode() == InterviewMode.MULTI) {
             return requestMultiTailor(interview, user, source);
@@ -411,15 +457,55 @@ public class QuestionTailorService {
     }
 
     /**
-     * 분석 서버는 콜백 전송에 실패하면 결과를 폐기한다.
-     * 그 경우 콜백이 영영 오지 않으므로, 오래 걸린 PENDING은 원질문 폴백으로 정리한다.
+     * 콜백을 기다리다 시간이 지난 준비 건을 걷어낸다.
+     *
+     * <p>판정이 요청 스레드에만 있으면, 폴링하지 않고 SSE만 기다리는 클라이언트는 이미 가망이
+     * 없는 작업을 구독 타임아웃까지 기다린다. 준비 제한 시간은 2분인데 구독은 15분이라 그
+     * 차이만큼 아무 소식 없이 매달려 있게 된다. 그래서 요청과 무관하게 주기적으로도 훑는다.
+     *
+     * <p>한 건이 걸려 넘어져도 나머지는 정리한다. 실패한 건 하나 때문에 스윕이 통째로 멈추면
+     * 그 뒤의 모든 면접이 같은 방식으로 매달린다.
      */
-    private void expireIfTimedOut(QuestionTailorEntity tailor) {
+    @Scheduled(fixedDelayString = "${app.question-tailor.sweep-interval:30s}")
+    public void sweepTimedOutPreparations() {
+        List<QuestionTailorEntity> stale = questionTailorRepository.findAllByStatusAndCreatedAtBefore(
+                TailorStatus.PENDING, LocalDateTime.now().minus(pendingTimeout));
+
+        for (QuestionTailorEntity tailor : stale) {
+            try {
+                if (expire(tailor)) {
+                    completePreparation(tailor);
+                }
+            } catch (RuntimeException e) {
+                log.error("시간이 지난 질문 준비 건을 정리하지 못했습니다. tailorId={}, interviewId={}",
+                        tailor.getTailorId(), tailor.getInterviewId(), e);
+            }
+        }
+    }
+
+    /**
+     * 분석 서버는 콜백 전송에 실패하면 결과를 폐기한다.
+     * 그 경우 콜백이 영영 오지 않으므로, 오래 걸린 PENDING은 실패로 정리한다.
+     */
+    private boolean expireIfTimedOut(QuestionTailorEntity tailor) {
         if (tailor.getStatus() != TailorStatus.PENDING || tailor.getCreatedAt() == null) {
-            return;
+            return false;
         }
         if (tailor.getCreatedAt().plus(pendingTimeout).isAfter(LocalDateTime.now())) {
-            return;
+            return false;
+        }
+        return expire(tailor);
+    }
+
+    /**
+     * 시간이 지난 건을 실패로 닫는다. 차지한 쪽만 참을 돌려받는다.
+     *
+     * <p>스윕과 조회가 같은 건을 동시에 집어들 수 있다. 읽어둔 값만 보고 판단하면 둘 다
+     * 실패로 닫고 각자 알려, 같은 실패가 두 번 나간다.
+     */
+    private boolean expire(QuestionTailorEntity tailor) {
+        if (questionTailorRepository.claimExpiration(tailor.getTailorId()) == 0) {
+            return false;
         }
 
         if (tailor.getMode() == InterviewMode.MULTI) {
@@ -428,7 +514,7 @@ public class QuestionTailorService {
 
             failWithoutFallback(tailor, "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.");
             questionTailorRepository.save(tailor);
-            return;
+            return true;
         }
 
         log.warn("질문 재작성 콜백이 {} 내에 도착하지 않아 원질문으로 진행합니다. tailorId={}, jobId={}",
@@ -436,6 +522,28 @@ public class QuestionTailorService {
 
         fallbackToOriginal(tailor, "질문 재작성 결과를 제때 받지 못해 원질문으로 진행합니다.");
         questionTailorRepository.save(tailor);
+        return true;
+    }
+
+    /**
+     * 확정된 준비 건의 남은 뒷단을 밟는다.
+     *
+     * <p>넘길 질문이 있으면 채팅 서버로 넘기고, 없으면 실패를 알린다. 알리지 않고 넘어가면
+     * 구독은 아무것도 받지 못한 채 남고, 웹은 준비가 끝나기를 기다리는 화면에 머문다.
+     *
+     * <p>같은 실패를 여러 번 알려도 안전하다. 구독은 이벤트 이름마다 한 번만 흘려보내고,
+     * 흘려보낸 뒤에는 닫힌다. 뒤늦게 붙은 구독은 그때 다시 되짚어 받는다.
+     */
+    private void completePreparation(QuestionTailorEntity tailor) {
+        if (tailor.getStatus() == TailorStatus.PENDING) {
+            return;
+        }
+        // 폴백 없이 실패한 N:1은 넘길 질문 자체가 없다. 1:1 실패는 원질문이 들어차 있어 여기 걸리지 않는다.
+        if (tailor.getQuestions() == null || tailor.getQuestions().isEmpty()) {
+            notifyPreparationFailed(tailor, FailureStage.QUESTION_GENERATION);
+            return;
+        }
+        deliverToChatServer(tailor);
     }
 
     /**
@@ -465,7 +573,7 @@ public class QuestionTailorService {
         }
 
         questionTailorRepository.save(tailor);
-        deliverToChatServer(tailor);
+        completePreparation(tailor);
     }
 
     /**
@@ -521,46 +629,83 @@ public class QuestionTailorService {
      * <p>웹은 분석 jobId 하나로 구독한 채 면접관을 고르고 면접 시작까지 진행한다. 그 구독을
      * 되찾는 열쇠가 재작성 건에 남겨둔 분석 jobId다.
      *
-     * <p>재작성이 실패했어도 준비 완료로 알린다. 그때는 원질문이 폴백으로 들어가 면접이 그대로
-     * 열리기 때문이다. 못 여는 것은 채팅 서버에 면접을 열지 못했을 때뿐이다.
+     * <p>1:1 재작성이 실패했어도 준비 완료로 알린다. 그때는 원질문이 폴백으로 들어가 면접이
+     * 그대로 열리기 때문이다. 이 자리에서 못 여는 것은 채팅 서버에 면접을 열지 못했을 때뿐이고,
+     * 만들 질문 자체가 없어 멈춘 N:1은 {@link #completePreparation}이 따로 알린다.
      */
     private void notifySubscriber(QuestionTailorEntity tailor, boolean delivered) {
+        if (!delivered) {
+            notifyPreparationFailed(tailor, FailureStage.CHAT_DELIVERY);
+            return;
+        }
+
         String analysisJobId = tailor.getAnalysisJobId();
         if (analysisJobId == null) {
             // 어느 분석에서 비롯됐는지 모르면 되찾을 구독도 없다. 웹은 조회로 확인해야 한다.
             log.warn("분석 작업을 알 수 없어 면접 준비 완료를 알리지 못했습니다. tailorId={}", tailor.getTailorId());
             return;
         }
-
-        if (delivered) {
-            sseNotifier.sendFinal(analysisJobId, SseNotifier.INTERVIEW_READY, toReady(tailor));
-            return;
-        }
-        sseNotifier.sendFinal(analysisJobId, SseNotifier.INTERVIEW_PREPARATION_FAILED,
-                InterviewReadyResponse.failed(tailor.getInterviewId(), tailor.getChatErrorMessage()));
+        sseNotifier.sendFinal(analysisJobId, SseNotifier.INTERVIEW_READY, toReady(tailor));
     }
 
     /**
-     * 뒤늦게 붙은 구독에 되짚어줄 면접 준비 상태. 아직 준비되지 않았으면 아무것도 돌려주지 않는다.
+     * 면접을 열지 못했음을 구독에 알린다.
+     *
+     * <p>어느 단계에서 멈췄는지를 함께 싣는다. 단계가 없으면 웹은 질문부터 다시 만들어야
+     * 하는지 전달만 다시 하면 되는지 모른 채 같은 안내를 보여주게 된다.
+     */
+    private void notifyPreparationFailed(QuestionTailorEntity tailor, FailureStage stage) {
+        String analysisJobId = tailor.getAnalysisJobId();
+        if (analysisJobId == null) {
+            log.warn("분석 작업을 알 수 없어 면접 준비 실패를 알리지 못했습니다. tailorId={}, 단계={}",
+                    tailor.getTailorId(), stage);
+            return;
+        }
+        sseNotifier.sendFinal(analysisJobId, SseNotifier.INTERVIEW_PREPARATION_FAILED,
+                InterviewReadyResponse.failed(tailor.getInterviewId(), stage, failureMessage(tailor, stage)));
+    }
+
+    private String failureMessage(QuestionTailorEntity tailor, FailureStage stage) {
+        return stage == FailureStage.CHAT_DELIVERY ? tailor.getChatErrorMessage() : tailor.getErrorMessage();
+    }
+
+    /**
+     * 되짚어 보낼 이벤트 한 건.
+     *
+     * @param eventName {@link SseNotifier#INTERVIEW_READY} 또는
+     *                  {@link SseNotifier#INTERVIEW_PREPARATION_FAILED}
+     */
+    public record PreparationEvent(String eventName, InterviewReadyResponse payload) {
+    }
+
+    /**
+     * 뒤늦게 붙은 구독에 되짚어줄 면접 준비 결과. 아직 준비 중이면 아무것도 돌려주지 않는다.
+     *
+     * <p>성공만 되짚으면 실패한 준비를 구독한 클라이언트는 아무것도 받지 못한 채 타임아웃까지
+     * 매달린다. SSE가 유실되든 클라이언트가 뒤늦게 붙든 같은 최종 상태에 닿아야 한다.
      *
      * <p>넘기는 중인 건은 준비된 것으로 보지 않는다. 채팅 서버 전달은 권리를 먼저 차지하고
      * 시작하므로, 그 사이에 조회하면 아직 열리지도 않은 면접을 열렸다고 알리게 된다.
-     * 전달이 끝나야 사유가 지워지므로 그것까지 함께 본다.
      */
     @Transactional(readOnly = true)
-    public InterviewReadyResponse findReady(String analysisJobId) {
+    public PreparationEvent findPreparationEvent(String analysisJobId) {
         if (analysisJobId == null) {
             return null;
         }
         QuestionTailorEntity tailor = questionTailorRepository
                 .findTopByAnalysisJobIdOrderByCreatedAtDesc(analysisJobId)
                 .orElse(null);
-        if (tailor == null
-                || !Boolean.TRUE.equals(tailor.getChatDelivered())
-                || tailor.getChatErrorMessage() != null) {
-            return null;
+
+        PreparationState state = PreparationState.of(tailor);
+        if (state.status() == PreparationStatus.READY) {
+            return new PreparationEvent(SseNotifier.INTERVIEW_READY, toReady(tailor));
         }
-        return toReady(tailor);
+        if (state.status() == PreparationStatus.FAILED) {
+            return new PreparationEvent(SseNotifier.INTERVIEW_PREPARATION_FAILED,
+                    InterviewReadyResponse.failed(tailor.getInterviewId(), state.failureStage(),
+                            failureMessage(tailor, state.failureStage())));
+        }
+        return null;
     }
 
     private InterviewReadyResponse toReady(QuestionTailorEntity tailor) {
@@ -600,7 +745,7 @@ public class QuestionTailorService {
         }
 
         questionTailorRepository.save(tailor);
-        deliverToChatServer(tailor);
+        completePreparation(tailor);
     }
 
     private void applyMultiSuccess(QuestionTailorEntity tailor, QuestionTailorMultiCallbackRequest.Result result) {
@@ -774,9 +919,9 @@ public class QuestionTailorService {
                     loadOriginalQuestions(interview.getUserId()).questions());
         }
 
-        // 폴링하는 클라이언트가 PENDING에 갇히지 않도록 조회 시점에도 판정하고, 밀린 전달을 마저 시도한다.
+        // 폴링하는 클라이언트가 PENDING에 갇히지 않도록 조회 시점에도 판정하고, 밀린 뒷단을 마저 밟는다.
         expireIfTimedOut(tailor);
-        deliverToChatServer(tailor);
+        completePreparation(tailor);
 
         return QuestionTailorResponse.of(tailor);
     }
