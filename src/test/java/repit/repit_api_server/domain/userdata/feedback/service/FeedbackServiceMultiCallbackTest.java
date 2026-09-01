@@ -18,12 +18,16 @@ import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRe
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackPersonaRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
+import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.client.AuthServerClient;
@@ -178,6 +182,85 @@ class FeedbackServiceMultiCallbackTest {
         verify(feedbackPersonaRepository).deleteAllByFeedbackId(5L);
     }
 
+    /** 901은 기술 면접관, 902는 거기 달린 꼬리질문, 903은 인사 면접관 몫이고 답하지 않았다. */
+    private void givenRecordedTranscript() {
+        when(questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(3L)).thenReturn(List.of(
+                QuestionEntity.builder().questionId(901L).interviewId(3L).personaId(11L)
+                        .type(Type.ORIGINAL).content("Redis를 캐시로 두신 이유는?").build(),
+                // 채팅 서버가 면접 중에 만든 꼬리질문. 면접관은 부모에게서 물려받는다.
+                QuestionEntity.builder().questionId(902L).interviewId(3L).parentId(901L)
+                        .type(Type.FOLLOW).content("무효화는 어떻게 하셨나요?").build(),
+                QuestionEntity.builder().questionId(903L).interviewId(3L).personaId(12L)
+                        .type(Type.ORIGINAL).content("팀에서 갈등이 있었다면?").build()));
+        when(answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(3L)).thenReturn(List.of(
+                AnswerEntity.builder().answerId(501L).interviewId(3L).questionId(901L).userId(7L)
+                        .content("조회가 쓰기보다 많아서요.").build(),
+                AnswerEntity.builder().answerId(502L).interviewId(3L).questionId(902L).userId(7L)
+                        .content("TTL을 짧게 뒀습니다.").build()));
+    }
+
+    private FeedbackEntity acceptedFeedback() {
+        return FeedbackEntity.builder()
+                .feedbackId(5L)
+                .interviewId(3L)
+                .userId(7L)
+                .sessionId("sess-1")
+                .jobId("job-1")
+                .status(FeedbackStatus.PENDING)
+                .build();
+    }
+
+    /**
+     * 문항 수는 면접 중에 생긴 꼬리질문까지 포함한 최종 기록 기준이어야 한다.
+     * 분석 서버가 센 수와 어긋나면 화면에 기록에 없는 수가 걸려 사용자가 어느 쪽이 맞는지 알 수 없다.
+     */
+    @Test
+    void 문항_수와_답변_수는_기록_기준으로_저장한다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenRecordedTranscript();
+
+        service.handleCallback(callback());
+
+        ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
+        verify(feedbackRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+        // 콜백은 6/7이라고 했지만 기록에는 문항 3개에 답변 2개가 남아 있다.
+        assertThat(saved.getValue().getQuestionCount()).isEqualTo(3);
+        assertThat(saved.getValue().getAnsweredCount()).isEqualTo(2);
+
+        verify(feedbackPersonaRepository).saveAll(savedPersonas.capture());
+        List<FeedbackPersonaEntity> personas = savedPersonas.getValue();
+        // 기술 면접관 몫은 원질문 하나와 거기 달린 꼬리질문 하나다.
+        assertThat(personas.getFirst().getQuestionCount()).isEqualTo(2);
+        assertThat(personas.getFirst().getAnsweredCount()).isEqualTo(2);
+        // 인사 면접관 몫은 한 문항이고 답하지 않았다.
+        assertThat(personas.get(1).getQuestionCount()).isEqualTo(1);
+        assertThat(personas.get(1).getAnsweredCount()).isZero();
+    }
+
+    /**
+     * 문항이 명단에 없는 면접관을 가리키면 웹의 어느 묶음에도 들어가지 못해 화면에서 사라진다.
+     * 기록해둔 담당 면접관으로 맞춰 되살린다.
+     */
+    @Test
+    void 명단_밖_면접관을_가리키는_문항은_기록된_담당으로_맞춘다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenRecordedTranscript();
+
+        FeedbackCallbackRequest request = callback();
+        FeedbackCallbackRequest.Item stray = new FeedbackCallbackRequest.Item(
+                "903", 99L, "팀에서 갈등이 있었다면?", "협업 태도",
+                null, "사실과 대응을 나눠 말한다.", List.of(), List.of(), "답하지 않았습니다.");
+        FeedbackCallbackRequest withStray = new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
+                new FeedbackCallbackRequest.Result(request.getResult().getOverall(),
+                        request.getResult().getPersonas(), List.of(stray)),
+                null);
+
+        service.handleCallback(withStray);
+
+        verify(feedbackItemRepository).saveAll(savedItems.capture());
+        assertThat(savedItems.getValue().getFirst().getPersonaId()).isEqualTo(12L);
+    }
+
     @Test
     void 세션도_면접도_모르면_아무것도_저장하지_않는다() {
         when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.empty());
@@ -188,5 +271,120 @@ class FeedbackServiceMultiCallbackTest {
 
         verify(feedbackRepository, never()).save(any());
         verify(feedbackPersonaRepository, never()).saveAll(any());
+    }
+
+    /** N:1 면접 명단. 채점 결과의 면접관은 이 안에 있어야 한다. */
+    private void givenInterviewMembers() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()
+                .interviewId(3L).userId(7L).mode(InterviewMode.MULTI)
+                .sessionId("sess-1").status(Status.COMPLETED).build()));
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(11L).personaOrder(0).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(12L).personaOrder(1).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(13L).personaOrder(2).build()));
+    }
+
+    private FeedbackCallbackRequest callbackWith(List<FeedbackCallbackRequest.Persona> personas,
+                                                 List<FeedbackCallbackRequest.Item> items) {
+        FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
+                72, 80, 61, "요약", List.of(), List.of(), List.of(), 1, 1);
+        return new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
+                new FeedbackCallbackRequest.Result(overall, personas, items), null);
+    }
+
+    private FeedbackCallbackRequest.Item item(String questionId, Long personaId) {
+        return new FeedbackCallbackRequest.Item(questionId, personaId, "질문", "의도",
+                "답변", "모범답변", List.of(), List.of(), "총평");
+    }
+
+    private FeedbackCallbackRequest.Persona persona(Long personaId, Integer score) {
+        return new FeedbackCallbackRequest.Persona(personaId, "TECH", score, "총평",
+                List.of(), List.of(), 1, 1);
+    }
+
+    /**
+     * 1:1 면접에 면접관별 종합이 붙으면 화면에 있지도 않은 면접관 카드가 생긴다.
+     * 판정은 명단이 비었는지가 아니라 면접 방식으로 한다.
+     */
+    @Test
+    void 일대일_면접에_실려온_면접관_종합은_버린다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()
+                .interviewId(3L).userId(7L).mode(InterviewMode.SOLO)
+                .sessionId("sess-1").status(Status.COMPLETED).build()));
+
+        service.handleCallback(callbackWith(List.of(persona(11L, 78)), List.of(item("2", 11L))));
+
+        verify(feedbackPersonaRepository).saveAll(savedPersonas.capture());
+        assertThat(savedPersonas.getValue()).isEmpty();
+    }
+
+    /** 같은 면접관이 두 번 오면 결과 화면에 같은 카드가 두 개 생긴다. */
+    @Test
+    void 같은_면접관의_종합이_두_번_오면_하나만_남긴다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenInterviewMembers();
+
+        service.handleCallback(callbackWith(
+                List.of(persona(11L, 78), persona(11L, 64)), List.of(item("2", 11L))));
+
+        verify(feedbackPersonaRepository).saveAll(savedPersonas.capture());
+        assertThat(savedPersonas.getValue()).hasSize(1);
+        assertThat(savedPersonas.getValue().getFirst().getScore()).isEqualTo(78);
+    }
+
+    /** 같은 문항이 두 번 나오면 결과에 같은 질문이 두 번 걸리고 문항 수도 기록과 어긋난다. */
+    @Test
+    void 같은_문항이_두_번_오면_하나만_남긴다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenInterviewMembers();
+
+        service.handleCallback(callbackWith(List.of(persona(11L, 78)),
+                List.of(item("2", 11L), item("2", 11L), item("3", 12L))));
+
+        verify(feedbackItemRepository).saveAll(savedItems.capture());
+        assertThat(savedItems.getValue()).extracting(FeedbackItemEntity::getQuestionId)
+                .containsExactly("2", "3");
+        // 남은 것들의 순번은 빈자리 없이 이어져야 한다.
+        assertThat(savedItems.getValue()).extracting(FeedbackItemEntity::getSortOrder)
+                .containsExactly(0, 1);
+    }
+
+    /** 눈금을 넘치거나 음수로 그리게 두면 사용자에게는 고장으로 보인다. */
+    @Test
+    void 범위를_벗어난_점수는_경계값으로_맞춘다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenInterviewMembers();
+
+        FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
+                150, -3, 61, "요약", List.of(), List.of(), List.of(), 1, 1);
+        service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
+                new FeedbackCallbackRequest.Result(overall, List.of(persona(11L, 120)),
+                        List.of(item("2", 11L))), null));
+
+        ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
+        verify(feedbackRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+        assertThat(saved.getValue().getTotalScore()).isEqualTo(100);
+        assertThat(saved.getValue().getIntentAlignmentScore()).isZero();
+
+        verify(feedbackPersonaRepository).saveAll(savedPersonas.capture());
+        assertThat(savedPersonas.getValue().getFirst().getScore()).isEqualTo(100);
+    }
+
+    /**
+     * 검증을 지우기 전에 끝내지 않으면, 걸러내다 멈춘 순간 이전 결과도 새 결과도 없는 상태로 남는다.
+     */
+    @Test
+    void 기존_결과는_새_결과를_다_확인한_뒤에_지운다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenInterviewMembers();
+
+        service.handleCallback(callbackWith(List.of(persona(11L, 78)), List.of(item("2", 11L))));
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(
+                questionRepository, feedbackItemRepository);
+        order.verify(questionRepository).findAllByInterviewIdOrderByQuestionIdAsc(3L);
+        order.verify(feedbackItemRepository).deleteAllByFeedbackId(5L);
+        order.verify(feedbackItemRepository).saveAll(any());
     }
 }
