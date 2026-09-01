@@ -43,10 +43,10 @@ public class QuestionTailorResponse {
     // 채팅 서버까지 데이터가 넘어갔는지. preparationStatus를 끌어낸 재료다.
     private boolean chatDelivered;
 
-    // 면접에 실제로 사용할 질문
-    private List<TailoredQuestionResponse> questions;
+    // 면접에 실제로 사용할 질문. 채점 기준인 기대 답변은 빠져 있다.
+    private List<PreparedQuestionResponse> questions;
     // 재작성 전 원질문. 재작성 결과와 대조할 수 있게 함께 내려준다.
-    private List<TailoredQuestionResponse> originalQuestions;
+    private List<PreparedQuestionResponse> originalQuestions;
     // questions의 개수. 질문을 감춘 경우에는 0이다.
     private int questionCount;
 
@@ -76,8 +76,8 @@ public class QuestionTailorResponse {
                 .status(tailor.getStatus())
                 .tailored(Boolean.TRUE.equals(tailor.getTailored()))
                 .chatDelivered(Boolean.TRUE.equals(tailor.getChatDelivered()))
-                .questions(questions)
-                .originalQuestions(source)
+                .questions(PreparedQuestionResponse.from(questions))
+                .originalQuestions(PreparedQuestionResponse.from(source))
                 .questionCount(questions.size())
                 // 어디서 멈췄든 사유가 응답에 남아야 한다. 채팅 서버 전달 실패는 재작성 쪽 사유가
                 // 비어 있어, 그것만 실으면 열리지 않는 이유가 통째로 사라진다.
@@ -111,8 +111,8 @@ public class QuestionTailorResponse {
                 .status(TailorStatus.NOT_REQUESTED)
                 .tailored(false)
                 .chatDelivered(false)
-                .questions(questions)
-                .originalQuestions(questions)
+                .questions(PreparedQuestionResponse.from(questions))
+                .originalQuestions(PreparedQuestionResponse.from(questions))
                 .questionCount(questions.size())
                 .build();
     }
