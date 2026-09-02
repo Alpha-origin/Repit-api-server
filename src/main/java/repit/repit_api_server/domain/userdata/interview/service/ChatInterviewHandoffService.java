@@ -5,8 +5,12 @@ import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.userdata.interview.dto.request.ChatInterviewPrepareRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatInterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQuestionResponse;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
@@ -25,13 +29,25 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ChatInterviewHandoffService {
 
+    /**
+     * 전공이 없는 면접관을 넘길 때 대신 채우는 값.
+     *
+     * <p>인사·CEO 면접관에게는 전공이 없지만 채팅 서버는 이 값을 필수로 받아, 비워 보내면
+     * 면접이 아예 열리지 않는다. 면접을 못 여는 것보다 낫다고 보고 하나를 채워 보낸다.
+     * 채팅 서버가 전공 없는 면접관을 받게 되면 이 대체는 걷어낸다.
+     */
+    private static final Major FALLBACK_MAJOR = Major.BACKEND;
+
     private final InterviewRepository interviewRepository;
     private final PersonaRepository personaRepository;
+    private final InterviewPersonaRepository interviewPersonaRepository;
     private final ChatServerClient chatServerClient;
 
     public ChatInterviewResponse deliver(QuestionTailorEntity tailor) {
         InterviewEntity interview = interviewRepository.findById(tailor.getInterviewId())
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+
+        PersonaEntity persona = representativePersona(interview);
 
         return chatServerClient.prepareInterview(ChatInterviewPrepareRequest.builder()
                 .sessionId(interview.getSessionId())
@@ -40,23 +56,57 @@ public class ChatInterviewHandoffService {
                 .status(interview.getStatus())
                 // 면접 방식. DB에서 NOT NULL로 SOLO/MULTI 중 하나가 이미 정해져 있어 그대로 싣는다.
                 .mode(interview.getMode())
-                .questions(toQuestions(tailor, defaultPersonaId(interview)))
+                // 면접관 설정 네 가지. 하나라도 비면 채팅 서버가 본문을 통째로 반려한다.
+                .personality(persona.getType())
+                .tone(persona.getTone())
+                .major(persona.getMajor() == null ? FALLBACK_MAJOR : persona.getMajor())
+                .level(persona.getLevel())
+                .questions(toQuestions(tailor, defaultPersonaId(interview, persona)))
                 .build());
+    }
+
+    /**
+     * 면접관 설정을 대표할 면접관 한 명.
+     *
+     * <p>채팅 서버는 성향·어조·전공·난이도를 면접 하나에 한 벌만 받는다. 1:1은 면접관이
+     * 한 명뿐이라 그대로지만, N:1은 여럿 중 하나를 골라야 한다.
+     *
+     * <p>N:1은 진행 순서 맨 앞을 쓴다. 그 자리는 생성할 때부터 기술 면접관으로 고정돼 있어
+     * 전공이 반드시 있고, 면접도 그 면접관으로 시작한다 — {@code InterviewService.orderForMulti} 참고.
+     * 나머지 면접관의 성향과 어조는 이 계약에서 표현되지 않는다. 질문별로 나누려면 채팅 서버가
+     * 질문마다 설정을 받도록 먼저 넓혀야 한다.
+     */
+    private PersonaEntity representativePersona(InterviewEntity interview) {
+        Long personaId = interview.getMode() == InterviewMode.MULTI
+                ? firstMemberPersonaId(interview.getInterviewId())
+                : interview.getPersonaId();
+        if (personaId == null) {
+            throw BusinessException.unprocessable("면접에 면접관이 지정되어 있지 않습니다.");
+        }
+        return personaRepository.findById(personaId)
+                .orElseThrow(() -> BusinessException.notFound("페르소나가 없습니다"));
+    }
+
+    /** N:1 면접의 진행 순서 첫 면접관. 생성 시점에 반드시 한 명 이상 저장돼 있다. */
+    private Long firstMemberPersonaId(Long interviewId) {
+        return interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(interviewId).stream()
+                .findFirst()
+                .map(InterviewPersonaEntity::getPersonaId)
+                .orElse(null);
     }
 
     /**
      * 질문에 면접관이 붙어 있지 않을 때 쓸 면접관.
      *
      * <p>1:1 면접은 질문마다 면접관을 나눌 일이 없어 전부 이 한 명이다. N:1 질문에는 분석 서버가
-     * 면접관을 달아 보내주므로 이 값이 쓰이지 않고, 실제로 {@code interview.persona_id}도 비어 있다.
+     * 면접관을 달아 보내주므로 여기서 대신 채우지 않는다. 대표 면접관으로 메우면 면접관이 빠진
+     * 질문이 조용히 기술 면접관 것으로 묻혀, 프론트가 면접관 전환을 잘못 읽는다.
      */
-    private Long defaultPersonaId(InterviewEntity interview) {
-        if (interview.getPersonaId() == null) {
+    private Long defaultPersonaId(InterviewEntity interview, PersonaEntity persona) {
+        if (interview.getMode() == InterviewMode.MULTI) {
             return null;
         }
-        return personaRepository.findById(interview.getPersonaId())
-                .orElseThrow(() -> BusinessException.notFound("페르소나가 없습니다"))
-                .getPersonaId();
+        return persona.getPersonaId();
     }
 
     /**

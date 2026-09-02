@@ -3,6 +3,10 @@ package repit.repit_api_server.domain.userdata.interview.dto.request;
 import org.junit.jupiter.api.Test;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.JsonNode;
 
@@ -26,6 +30,10 @@ class ChatInterviewPrepareRequestSerializationTest {
                 .userId(1L)
                 .status(Status.IN_PROGRESS)
                 .mode(InterviewMode.SOLO)
+                .personality(Type.METICULOUS)
+                .tone(InterviewTone.PRESSURING)
+                .major(Major.BACKEND)
+                .level(Level.HARD)
                 .questions(List.of(ChatInterviewPrepareRequest.Question.builder()
                         .id(1L)
                         .category("tech_choice")
@@ -39,10 +47,16 @@ class ChatInterviewPrepareRequestSerializationTest {
         JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(request));
 
         assertThat(json.propertyNames()).containsExactlyInAnyOrder(
-                "sessionId", "interviewId", "userId", "status", "mode", "questions");
+                "sessionId", "interviewId", "userId", "status", "mode",
+                "personality", "tone", "major", "level", "questions");
         assertThat(json.get("status").asString()).isEqualTo("IN_PROGRESS");
         // 면접 방식은 이름 그대로 나가야 채팅 서버가 읽는다.
         assertThat(json.get("mode").asString()).isEqualTo("SOLO");
+        // 면접관 설정 네 가지. 채팅 서버가 필수로 받아 하나라도 비면 면접이 열리지 않는다.
+        assertThat(json.get("personality").asString()).isEqualTo("METICULOUS");
+        assertThat(json.get("tone").asString()).isEqualTo("PRESSURING");
+        assertThat(json.get("major").asString()).isEqualTo("BACKEND");
+        assertThat(json.get("level").asString()).isEqualTo("HARD");
 
         JsonNode question = json.get("questions").get(0);
         assertThat(question.propertyNames()).containsExactlyInAnyOrder(
@@ -64,6 +78,10 @@ class ChatInterviewPrepareRequestSerializationTest {
                 .userId(1L)
                 .status(Status.IN_PROGRESS)
                 .mode(InterviewMode.MULTI)
+                .personality(Type.FRIENDLY)
+                .tone(InterviewTone.GENTLE)
+                .major(Major.FRONTEND)
+                .level(Level.EASY)
                 .questions(List.of())
                 .build();
 
