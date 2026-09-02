@@ -20,6 +20,7 @@ import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepo
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
@@ -135,7 +136,8 @@ class QuestionTailorServiceRequestTest {
                 .personaName("면접관 " + id)
                 .role(role)
                 .major(role == Role.TECH ? Major.BACKEND : null)
-                .type(Type.NEUTRAL)
+                .type(Type.REALISTIC)
+                .tone(InterviewTone.PRESSURING)
                 .level(Level.NORMAL)
                 .career(8)
                 .gender(Gender.MALE)
@@ -173,6 +175,20 @@ class QuestionTailorServiceRequestTest {
         service.requestTailor(interview(InterviewMode.SOLO), user);
 
         verify(aiServerClient).tailorQuestions(any(QuestionTailorRequest.class));
+    }
+
+    @Test
+    void 일대일도_면접관_성향과_어조를_함께_보낸다() {
+        givenAnalysisResult("요약이 문자열로 들어 있다");
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(11L, Role.TECH)));
+
+        service.requestTailor(interview(InterviewMode.SOLO), user);
+
+        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(sent.capture());
+        // 성향만 보내면 분석 서버가 질문의 세기를 성향에서 유추하게 된다. 두 축은 독립이다.
+        assertThat(sent.getValue().getProfile().getPersonaType()).isEqualTo("REALISTIC");
+        assertThat(sent.getValue().getProfile().getPersonaTone()).isEqualTo("PRESSURING");
     }
 
     @Test
@@ -256,6 +272,9 @@ class QuestionTailorServiceRequestTest {
         assertThat(request.getTechPersona().getRole()).isEqualTo("TECH");
         assertThat(request.getOtherPersonas()).extracting(QuestionTailorMultiRequest.Persona::getRole)
                 .containsExactly("HR", "CEO");
+        // 성향과 어조는 독립된 축이라 둘 다 실려야 면접관마다 무엇을 어떻게 물을지가 정해진다.
+        assertThat(request.getTechPersona().getStyle()).isEqualTo("REALISTIC");
+        assertThat(request.getTechPersona().getTone()).isEqualTo("PRESSURING");
         // snake_case로 저장된 요약이 camelCase로 옮겨져야 근거가 살아서 넘어간다.
         assertThat(request.getProjectSummary().getOverview()).isEqualTo("주문 처리를 맡는 백엔드");
         assertThat(request.getProjectSummary().getTechStack()).containsExactly("Spring", "Redis");

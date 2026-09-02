@@ -25,7 +25,7 @@ class QuestionTailorRequestSerializationTest {
                     .userId("7")
                     .profile(QuestionTailorRequest.Profile.builder()
                             .jobRole("BACKEND")
-                            .personaType("STRESS")
+                            .personaType("METICULOUS")
                             .build())
                     .questions(List.of(QuestionTailorRequest.Question.builder()
                             .id(1)

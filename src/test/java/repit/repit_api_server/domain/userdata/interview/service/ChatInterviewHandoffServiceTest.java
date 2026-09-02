@@ -16,6 +16,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
@@ -62,7 +63,8 @@ class ChatInterviewHandoffServiceTest {
                 .personaId(1L)
                 .personaName("압박 면접관")
                 .major(Major.BACKEND)
-                .type(Type.STRESS)
+                .type(Type.METICULOUS)
+                .tone(InterviewTone.PRESSURING)
                 .level(Level.HARD)
                 .career(10)
                 .gender(Gender.MALE)

@@ -26,6 +26,7 @@ import repit.repit_api_server.domain.userdata.interview.repository.InterviewPers
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
@@ -116,7 +117,8 @@ class FeedbackServiceFinishedInterviewTest {
                 .personaId(5L)
                 .personaName("김테크")
                 .role(Role.TECH)
-                .type(Type.NEUTRAL)
+                .type(Type.REALISTIC)
+                .tone(InterviewTone.DIRECT)
                 .level(Level.NORMAL)
                 .career(7)
                 .gender(Gender.MALE)

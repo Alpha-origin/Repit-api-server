@@ -256,12 +256,14 @@ public class FeedbackService {
 
     private FeedbackSoloRequest toSoloRequest(InterviewEntity interview) {
         Transcript transcript = loadTranscript(interview);
+        PersonaEntity persona = soloPersonaOf(interview);
 
         return FeedbackSoloRequest.builder()
                 .sessionId(interview.getSessionId())
                 .interviewId(String.valueOf(interview.getInterviewId()))
                 .userId(String.valueOf(interview.getUserId()))
-                .personaType(personaTypeOf(interview))
+                .personaType(enumName(persona == null ? null : persona.getType()))
+                .personaTone(enumName(persona == null ? null : persona.getTone()))
                 .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
                 .questions(transcript.questions().stream()
                         .map(question -> toQuestion(question, transcript.questionIds()))
@@ -297,7 +299,8 @@ public class FeedbackService {
                         .map(persona -> FeedbackMultiRequest.Persona.builder()
                                 .personaId(String.valueOf(persona.getPersonaId()))
                                 .role(persona.getRole() == null ? null : persona.getRole().name())
-                                .style(persona.getType() == null ? null : persona.getType().name())
+                                .style(enumName(persona.getType()))
+                                .tone(enumName(persona.getTone()))
                                 .build())
                         .toList())
                 .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
@@ -468,19 +471,21 @@ public class FeedbackService {
     }
 
     /**
-     * 면접관 성향. 채팅 서버는 이 값을 모른다 — 면접을 열 때 넘기지 않으므로 돌려받을 수도 없다.
-     * 우리 DB가 원본이라 여기서 직접 읽는다.
+     * 1:1 면접의 면접관. 채팅 서버는 성향·어조를 모른다 — 면접을 열 때 넘기지 않으므로
+     * 돌려받을 수도 없다. 우리 DB가 원본이라 여기서 직접 읽는다.
      *
-     * <p>N:1 면접은 면접관이 여럿이라 interview.personaId가 비어 있다. 그때는 성향 없이 보낸다.
+     * <p>N:1 면접은 면접관이 여럿이라 interview.personaId가 비어 있다. 그때는 null이고,
+     * 면접관 명단은 별도로 실어 보낸다.
      */
-    private String personaTypeOf(InterviewEntity interview) {
+    private PersonaEntity soloPersonaOf(InterviewEntity interview) {
         if (interview.getPersonaId() == null) {
             return null;
         }
-        return personaRepository.findById(interview.getPersonaId())
-                .map(PersonaEntity::getType)
-                .map(Enum::name)
-                .orElse(null);
+        return personaRepository.findById(interview.getPersonaId()).orElse(null);
+    }
+
+    private String enumName(Enum<?> value) {
+        return value == null ? null : value.name();
     }
 
     /**

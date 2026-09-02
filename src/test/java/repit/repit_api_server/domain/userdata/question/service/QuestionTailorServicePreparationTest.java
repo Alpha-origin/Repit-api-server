@@ -22,6 +22,7 @@ import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepo
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
@@ -132,7 +133,8 @@ class QuestionTailorServicePreparationTest {
                 .personaName("면접관")
                 .role(Role.TECH)
                 .major(Major.BACKEND)
-                .type(Type.NEUTRAL)
+                .type(Type.REALISTIC)
+                .tone(InterviewTone.DIRECT)
                 .level(Level.NORMAL)
                 .career(8)
                 .gender(Gender.MALE)

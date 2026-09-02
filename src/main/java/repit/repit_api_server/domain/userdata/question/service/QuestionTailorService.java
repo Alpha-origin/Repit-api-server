@@ -269,7 +269,8 @@ public class QuestionTailorService {
         return QuestionTailorMultiRequest.Persona.builder()
                 .personaId(String.valueOf(persona.getPersonaId()))
                 .role(persona.getRole() == null ? null : persona.getRole().name())
-                .style(persona.getType() == null ? null : persona.getType().name())
+                .style(enumName(persona.getType()))
+                .tone(enumName(persona.getTone()))
                 .questionCount(questionCount)
                 .build();
     }
@@ -442,7 +443,8 @@ public class QuestionTailorService {
         if (jobRole == null && persona != null && persona.getMajor() != null) {
             jobRole = persona.getMajor().name();
         }
-        String personaType = persona == null || persona.getType() == null ? null : persona.getType().name();
+        String personaType = persona == null ? null : enumName(persona.getType());
+        String personaTone = persona == null ? null : enumName(persona.getTone());
 
         if (jobRole == null && personaType == null) {
             throw BusinessException.unprocessable("질문을 다시 쓸 사전 정보가 없습니다.");
@@ -453,6 +455,7 @@ public class QuestionTailorService {
                 // persona.career는 면접관 설정이지 지원자 경력이 아니다. 지원자 경력은 아직 수집하지 않는다.
                 .experienceLevel(null)
                 .personaType(personaType)
+                .personaTone(personaTone)
                 .build();
     }
 
@@ -943,6 +946,10 @@ public class QuestionTailorService {
 
     private String blankToNull(String value) {
         return isBlank(value) ? null : value;
+    }
+
+    private String enumName(Enum<?> value) {
+        return value == null ? null : value.name();
     }
 
     /**

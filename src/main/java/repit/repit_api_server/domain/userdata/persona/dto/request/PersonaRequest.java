@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
@@ -25,6 +26,9 @@ public class PersonaRequest {
     private Major major;
 
     private Type type;
+
+    // 필수. GENTLE / DIRECT / PRESSURING.
+    private InterviewTone tone;
 
     // 필수. EASY / NORMAL / HARD.
     private Level level;

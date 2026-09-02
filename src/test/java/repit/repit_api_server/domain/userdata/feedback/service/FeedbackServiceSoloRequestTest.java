@@ -25,6 +25,7 @@ import repit.repit_api_server.domain.userdata.interview.repository.InterviewPers
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
@@ -96,7 +97,7 @@ class FeedbackServiceSoloRequestTest {
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.COMPLETED, 5L)));
         when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.empty());
         when(feedbackRepository.save(any(FeedbackEntity.class))).thenAnswer(call -> call.getArgument(0));
-        when(personaRepository.findById(5L)).thenReturn(Optional.of(persona(Type.NEUTRAL)));
+        when(personaRepository.findById(5L)).thenReturn(Optional.of(persona(Type.REALISTIC)));
 
         when(questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(3L)).thenReturn(questions());
         when(answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(3L)).thenReturn(answers());
@@ -119,6 +120,7 @@ class FeedbackServiceSoloRequestTest {
                 .personaName("박인사")
                 .role(Role.HR)
                 .type(Type.FRIENDLY)
+                .tone(InterviewTone.GENTLE)
                 .level(Level.NORMAL)
                 .career(5)
                 .gender(Gender.FEMALE)
@@ -131,6 +133,7 @@ class FeedbackServiceSoloRequestTest {
                 .personaName("김테크")
                 .role(Role.TECH)
                 .type(type)
+                .tone(InterviewTone.PRESSURING)
                 .level(Level.NORMAL)
                 .career(7)
                 .gender(Gender.MALE)
@@ -226,11 +229,21 @@ class FeedbackServiceSoloRequestTest {
 
     @Test
     void 면접관_성향은_우리_DB에서_읽는다() {
-        when(personaRepository.findById(5L)).thenReturn(Optional.of(persona(Type.STRESS)));
+        when(personaRepository.findById(5L)).thenReturn(Optional.of(persona(Type.METICULOUS)));
 
         service.requestFeedback("Bearer token", 3L);
 
-        assertThat(captureRequest().getPersonaType()).isEqualTo("STRESS");
+        assertThat(captureRequest().getPersonaType()).isEqualTo("METICULOUS");
+    }
+
+    @Test
+    void 면접관_어조도_성향과_함께_보낸다() {
+        when(personaRepository.findById(5L)).thenReturn(Optional.of(persona(Type.METICULOUS)));
+
+        service.requestFeedback("Bearer token", 3L);
+
+        // 어조는 성향과 독립된 축이다. 성향만 보내면 분석 서버가 세기를 성향에서 유추하게 된다.
+        assertThat(captureRequest().getPersonaTone()).isEqualTo("PRESSURING");
     }
 
     @Test
@@ -239,7 +252,7 @@ class FeedbackServiceSoloRequestTest {
         when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
                 InterviewPersonaEntity.builder().interviewId(3L).personaId(5L).personaOrder(0).build(),
                 InterviewPersonaEntity.builder().interviewId(3L).personaId(6L).personaOrder(1).build()));
-        when(personaRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(persona(Type.NEUTRAL), hrPersona()));
+        when(personaRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(persona(Type.REALISTIC), hrPersona()));
 
         service.requestFeedback("Bearer token", 3L);
 
@@ -251,6 +264,10 @@ class FeedbackServiceSoloRequestTest {
         FeedbackMultiRequest request = sent.getValue();
         assertThat(request.getPersonas()).extracting(FeedbackMultiRequest.Persona::getRole)
                 .containsExactly("TECH", "HR");
+        assertThat(request.getPersonas()).extracting(FeedbackMultiRequest.Persona::getStyle)
+                .containsExactly("REALISTIC", "FRIENDLY");
+        assertThat(request.getPersonas()).extracting(FeedbackMultiRequest.Persona::getTone)
+                .containsExactly("PRESSURING", "GENTLE");
         assertThat(request.getQuestions()).extracting(FeedbackMultiRequest.Question::getPersonaId)
                 .containsExactly("5", "5");
     }
@@ -261,7 +278,7 @@ class FeedbackServiceSoloRequestTest {
         when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
                 InterviewPersonaEntity.builder().interviewId(3L).personaId(5L).personaOrder(0).build(),
                 InterviewPersonaEntity.builder().interviewId(3L).personaId(6L).personaOrder(1).build()));
-        when(personaRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(persona(Type.NEUTRAL), hrPersona()));
+        when(personaRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(persona(Type.REALISTIC), hrPersona()));
         when(questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(3L)).thenReturn(List.of(
                 QuestionEntity.builder()
                         .questionId(901L)

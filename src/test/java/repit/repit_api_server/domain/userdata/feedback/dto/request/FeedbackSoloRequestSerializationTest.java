@@ -28,7 +28,7 @@ class FeedbackSoloRequestSerializationTest {
                     .sessionId("sess-1")
                     .interviewId("1")
                     .userId("7")
-                    .personaType("NEUTRAL")
+                    .personaType("REALISTIC")
                     .callbackUrl("https://example.com/api/feedbacks/callback")
                     .questions(List.of(FeedbackSoloRequest.Question.builder()
                             .questionId("11")

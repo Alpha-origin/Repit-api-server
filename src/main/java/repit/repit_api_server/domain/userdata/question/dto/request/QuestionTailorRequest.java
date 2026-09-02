@@ -31,6 +31,8 @@ public class QuestionTailorRequest {
         private String jobRole;
         private String experienceLevel;
         private String personaType;
+        // 면접관 어조. 성향(personaType)과 독립된 축이다.
+        private String personaTone;
     }
 
     /** /generate 산출물(interview[])을 그대로 되돌려주는 형태. 1~10개, id 중복 불가. */

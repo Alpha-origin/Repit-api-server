@@ -26,7 +26,7 @@ class FeedbackMultiRequestSerializationTest {
                 .userId("7")
                 .personas(List.of(
                         FeedbackMultiRequest.Persona.builder()
-                                .personaId("11").role("TECH").style("STRESS").build(),
+                                .personaId("11").role("TECH").style("METICULOUS").build(),
                         FeedbackMultiRequest.Persona.builder()
                                 .personaId("12").role("HR").style("FRIENDLY").build()))
                 .questions(List.of(FeedbackMultiRequest.Question.builder()

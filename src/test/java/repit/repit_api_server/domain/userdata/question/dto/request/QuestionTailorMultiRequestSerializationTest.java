@@ -28,7 +28,7 @@ class QuestionTailorMultiRequestSerializationTest {
                 .techPersona(QuestionTailorMultiRequest.Persona.builder()
                         .personaId("11")
                         .role("TECH")
-                        .style("STRESS")
+                        .style("METICULOUS")
                         .questionCount(2)
                         .build())
                 .otherPersonas(List.of(QuestionTailorMultiRequest.Persona.builder()

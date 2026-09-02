@@ -23,7 +23,7 @@ class CreateInterviewRequestDeserializationTest {
                     {
                       "personaName": "압박 면접관",
                       "major": "BACKEND",
-                      "type": "STRESS",
+                      "type": "METICULOUS",
                       "career": 10,
                       "gender": "MALE"
                     }
