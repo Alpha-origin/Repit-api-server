@@ -20,6 +20,7 @@ import repit.repit_api_server.domain.userdata.interview.repository.InterviewPers
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
@@ -92,7 +93,8 @@ class InterviewServiceMultiCreateTest {
                 .personaName("면접관 " + id)
                 .role(role)
                 .major(role == Role.TECH ? Major.BACKEND : null)
-                .type(Type.NEUTRAL)
+                .type(Type.REALISTIC)
+                .tone(InterviewTone.DIRECT)
                 .career(8)
                 .gender(Gender.FEMALE)
                 .build();

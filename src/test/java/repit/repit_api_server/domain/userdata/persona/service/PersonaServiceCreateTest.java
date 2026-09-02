@@ -13,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
@@ -54,6 +55,7 @@ class PersonaServiceCreateTest {
         request.setMajor(major);
         request.setLevel(Level.HARD);
         request.setType(Type.FRIENDLY);
+        request.setTone(InterviewTone.PRESSURING);
         request.setCareer(5);
         request.setGender(Gender.FEMALE);
         return request;
@@ -103,6 +105,28 @@ class PersonaServiceCreateTest {
 
         verify(personaRepository).save(saved.capture());
         assertThat(saved.getValue().getLevel()).isEqualTo(Level.HARD);
+    }
+
+    @Test
+    void 요청한_어조가_그대로_저장된다() {
+        service.createPersona(request(Role.CEO, null));
+
+        verify(personaRepository).save(saved.capture());
+        // 성향이 FRIENDLY라고 어조까지 부드럽게 채워지면 안 된다. 두 축은 독립이다.
+        assertThat(saved.getValue().getTone()).isEqualTo(InterviewTone.PRESSURING);
+    }
+
+    @Test
+    void 어조를_안_보내면_422다() {
+        PersonaRequest request = request(Role.CEO, null);
+        request.setTone(null);
+
+        assertThatThrownBy(() -> service.createPersona(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+
+        verify(personaRepository, never()).save(any());
     }
 
     @Test

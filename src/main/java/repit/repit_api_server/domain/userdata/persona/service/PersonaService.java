@@ -26,6 +26,10 @@ public class PersonaService {
         if (request.getLevel() == null) {
             throw BusinessException.unprocessable("면접 난이도(level)를 지정해주세요.");
         }
+        // 어조도 마찬가지다. 성향에서 유추해 채우면 부드럽게 묻는 꼼꼼형이 압박형으로 저장된다.
+        if (request.getTone() == null) {
+            throw BusinessException.unprocessable("면접관 어조(tone)를 지정해주세요.");
+        }
         Role role = request.getRole();
         // 전공은 기술 면접관에게만 있는 값이다. DB CHECK와 같은 규칙을 여기서 먼저 걸러 메시지를 남긴다.
         if (role == Role.TECH && request.getMajor() == null) {
@@ -36,6 +40,7 @@ public class PersonaService {
                 .personaName(request.getPersonaName())
                 .role(role)
                 .type(request.getType())
+                .tone(request.getTone())
                 .level(request.getLevel())
                 .major(role == Role.TECH ? request.getMajor() : null)
                 .career(request.getCareer())

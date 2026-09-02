@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
@@ -38,6 +39,11 @@ public class PersonaEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Type type;
+
+    // 어조. 성향(type)과 독립된 축이라 성향에서 유추하지 않고 따로 받는다.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private InterviewTone tone;
 
     // 난이도. 직책과 마찬가지로 기본값을 두지 않는다.
     @Enumerated(EnumType.STRING)

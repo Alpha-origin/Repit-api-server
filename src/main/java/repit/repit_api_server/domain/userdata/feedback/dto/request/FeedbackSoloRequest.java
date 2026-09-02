@@ -18,6 +18,8 @@ public class FeedbackSoloRequest {
     private String interviewId;
     private String userId;
     private String personaType;
+    // 면접관 어조. 성향(personaType)과 독립된 축이다.
+    private String personaTone;
     private String callbackUrl;
     private List<Question> questions;
     private List<Answer> answers;

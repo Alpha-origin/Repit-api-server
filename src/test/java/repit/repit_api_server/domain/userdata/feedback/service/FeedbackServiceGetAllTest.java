@@ -229,13 +229,13 @@ class FeedbackServiceGetAllTest {
         when(interviewPersonaRepository.findAllByInterviewIdInOrderByInterviewIdAscPersonaOrderAsc(List.of(101L)))
                 .thenReturn(List.of(interviewPersona(101L, 2L, 0), interviewPersona(101L, 3L, 1)));
         when(personaRepository.findAllById(any()))
-                .thenReturn(List.of(persona(1L, Type.STRESS, Level.HARD),
+                .thenReturn(List.of(persona(1L, Type.METICULOUS, Level.HARD),
                         persona(2L, Type.FRIENDLY, Level.EASY)));
 
         List<FeedbackResponse> responses = service.getAllFeedbacks("Bearer token");
 
         assertThat(responses).extracting(FeedbackResponse::getStyle)
-                .containsExactly(Type.STRESS, Type.FRIENDLY);
+                .containsExactly(Type.METICULOUS, Type.FRIENDLY);
         assertThat(responses).extracting(FeedbackResponse::getLevel)
                 .containsExactly(Level.HARD, Level.EASY);
         // 면접 수만큼 조회가 늘지 않도록 면접관도 한 번에 읽는다.

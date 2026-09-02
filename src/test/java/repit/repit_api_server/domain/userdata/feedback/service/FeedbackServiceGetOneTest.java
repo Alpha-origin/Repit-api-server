@@ -128,11 +128,11 @@ class FeedbackServiceGetOneTest {
         when(interviewRepository.findById(100L))
                 .thenReturn(Optional.of(interview(InterviewMode.SOLO, 5L)));
         when(personaRepository.findAllById(any()))
-                .thenReturn(List.of(persona(5L, Type.STRESS, Level.HARD)));
+                .thenReturn(List.of(persona(5L, Type.METICULOUS, Level.HARD)));
 
         FeedbackResponse response = service.getFeedback("Bearer token", 100L);
 
-        assertThat(response.getStyle()).isEqualTo(Type.STRESS);
+        assertThat(response.getStyle()).isEqualTo(Type.METICULOUS);
         assertThat(response.getLevel()).isEqualTo(Level.HARD);
     }
 
@@ -144,11 +144,11 @@ class FeedbackServiceGetOneTest {
         when(interviewPersonaRepository.findAllByInterviewIdInOrderByInterviewIdAscPersonaOrderAsc(List.of(100L)))
                 .thenReturn(List.of(interviewPersona(5L, 0), interviewPersona(6L, 1)));
         when(personaRepository.findAllById(any()))
-                .thenReturn(List.of(persona(5L, Type.STRESS, Level.HARD)));
+                .thenReturn(List.of(persona(5L, Type.METICULOUS, Level.HARD)));
 
         FeedbackResponse response = service.getFeedback("Bearer token", 100L);
 
-        assertThat(response.getStyle()).isEqualTo(Type.STRESS);
+        assertThat(response.getStyle()).isEqualTo(Type.METICULOUS);
         assertThat(response.getLevel()).isEqualTo(Level.HARD);
     }
 

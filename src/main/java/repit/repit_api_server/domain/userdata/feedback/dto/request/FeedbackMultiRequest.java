@@ -30,7 +30,7 @@ public class FeedbackMultiRequest {
     private List<Answer> answers;
     private String callbackUrl;
 
-    /** role(직책)이 채점 관점을, style(말투)이 피드백 어조를 정한다. */
+    /** role(직책)이 채점 관점을, style(성향)이 짚을 대상을, tone(어조)이 피드백 어조를 정한다. */
     @Getter
     @Builder
     @NoArgsConstructor
@@ -39,6 +39,7 @@ public class FeedbackMultiRequest {
         private String personaId;
         private String role;
         private String style;
+        private String tone;
     }
 
     @Getter

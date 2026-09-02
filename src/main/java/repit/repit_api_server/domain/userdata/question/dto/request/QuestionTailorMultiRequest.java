@@ -36,7 +36,7 @@ public class QuestionTailorMultiRequest {
     private ProjectSummary projectSummary;
     private String callbackUrl;
 
-    /** 면접관 한 명. role(직책)이 질문 관점을, style(말투)이 어조를 정한다. */
+    /** 면접관 한 명. role(직책)이 질문 관점을, style(성향)이 파고들 대상을, tone(어조)이 세기를 정한다. */
     @Getter
     @Builder
     @NoArgsConstructor
@@ -45,6 +45,7 @@ public class QuestionTailorMultiRequest {
         private String personaId;
         private String role;
         private String style;
+        private String tone;
         private Integer questionCount;
     }
 

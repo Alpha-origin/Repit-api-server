@@ -16,6 +16,7 @@ import repit.repit_api_server.domain.userdata.interview.repository.InterviewPers
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
@@ -81,7 +82,8 @@ class InterviewServiceCreateTest {
                 .personaId(1L)
                 .personaName("압박 면접관")
                 .major(Major.BACKEND)
-                .type(Type.STRESS)
+                .type(Type.METICULOUS)
+                .tone(InterviewTone.PRESSURING)
                 .career(10)
                 .gender(Gender.MALE)
                 .build();
