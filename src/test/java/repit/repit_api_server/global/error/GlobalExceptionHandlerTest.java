@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.exception.ExternalApiException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,6 +31,17 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/unexpected")
         public String unexpected() {
             throw new IllegalStateException("내부 시크릿 정보가 담긴 예외 메시지");
+        }
+
+        // 구독은 끝나지 않는 스트림이라 응답 타입을 못박아 둔다. 예외도 이 타입 아래에서 나간다.
+        @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+        public String stream() {
+            throw BusinessException.forbidden("본인의 분석 결과만 볼 수 있습니다.");
+        }
+
+        @GetMapping("/business")
+        public String business() {
+            throw BusinessException.notFound("분석 결과를 찾을 수 없습니다.");
         }
 
         @GetMapping("/external")
@@ -73,6 +85,28 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/unexpected"))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.message").value("서버 내부 오류가 발생했습니다."));
+    }
+
+    @Test
+    void BusinessException은_지정한_상태코드와_메시지로_응답한다() throws Exception {
+        mockMvc.perform(get("/business"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("분석 결과를 찾을 수 없습니다."));
+    }
+
+    /**
+     * 구독처럼 응답 타입을 못박은 자리에서도 오류는 오류대로 나가야 한다.
+     *
+     * <p>오류 본문에 타입을 지정하지 않으면 스프링이 요청의 Accept와 협상해 쓸 타입을 고른다.
+     * 구독을 여는 요청은 {@code text/event-stream}만 받겠다고 하므로 JSON을 고를 수 없어
+     * 협상이 깨지고, 그 예외는 예외 핸들러 안에서 난 것이라 다시 처리되지 못한 채 본문 없는
+     * 500으로 나간다. 그러면 토큰이 만료된 것인지 남의 것을 본 것인지 클라이언트가 알 수 없다.
+     */
+    @Test
+    void 이벤트_스트림만_받는_요청에도_오류는_상태코드와_메시지로_나간다() throws Exception {
+        mockMvc.perform(get("/stream").accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("본인의 분석 결과만 볼 수 있습니다."));
     }
 
     @Test

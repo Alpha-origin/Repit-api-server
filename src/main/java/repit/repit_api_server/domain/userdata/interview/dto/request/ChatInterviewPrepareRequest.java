@@ -6,6 +6,10 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 
 import java.util.List;
 
@@ -17,8 +21,9 @@ import java.util.List;
  * 어긋나도 거절당하지 않고 그 값만 조용히 사라진다. 넘길 값이 늘어야 한다면 채팅 서버 쪽 수신
  * 형태를 먼저 넓히고 여기를 맞춘다.
  *
- * <p>면접관 성향(personaType)은 채팅 서버가 받지 않아 넘기지 않는다. 어조를 성향으로 정하게
- * 하려면 채팅 서버가 그 필드를 받도록 먼저 넓혀야 한다.
+ * <p>면접관 설정 네 가지(성향·어조·전공·난이도)는 채팅 서버가 면접을 열 때 필수로 받는다.
+ * 하나라도 비면 채팅 서버가 본문을 통째로 반려한다. enum은 서로 다른 클래스지만 JSON에 나가는
+ * 문자열이 같아 그대로 맞물린다.
  */
 @Getter
 @Builder
@@ -38,6 +43,29 @@ public class ChatInterviewPrepareRequest {
      * 열 때 이미 정해져 있으므로 그대로 실어 보낸다.
      */
     private InterviewMode mode;
+    /**
+     * 면접관 성향. 이 면접관이 무엇을 파고드는지를 가리킨다.
+     *
+     * <p>어조와는 다른 축이다. 꼼꼼한 면접관이 부드럽게 물을 수도 있어 성향에서 어조를 유추하지 않는다.
+     */
+    private Type personality;
+    // 면접관 어조. 같은 성향이어도 몰아붙이는 정도가 다르다.
+    private InterviewTone tone;
+    /**
+     * 기술 면접관의 세부 전공.
+     *
+     * <p>우리 쪽에서는 인사·CEO 면접관에게 이 값이 없지만 채팅 서버는 필수로 받는다.
+     * 비워 보내면 면접이 열리지 않으므로 넘기는 쪽에서 채운다 — {@code ChatInterviewHandoffService} 참고.
+     */
+    private Major major;
+    // 면접 난이도.
+    private Level level;
+    /**
+     * 면접 질문 목록.
+     *
+     * <p>위의 면접관 설정 네 가지는 면접 하나에 한 벌뿐이다. N:1은 질문마다 면접관이 다르지만
+     * 채팅 서버가 최상위에서만 받으므로 진행 순서 첫 면접관의 값이 대표로 나간다.
+     */
     private List<Question> questions;
 
     /**
