@@ -46,6 +46,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -442,6 +443,44 @@ class QuestionTailorServiceRequestTest {
         assertThat(request.getTechPersona().getQuestionCount()).isEqualTo(2);
         assertThat(request.getOtherPersonas())
                 .allSatisfy(persona -> assertThat(persona.getQuestionCount()).isEqualTo(2));
+    }
+
+    /**
+     * 인원이 곧 문항 수다. 기술 면접관이 두 문항, 나머지가 한 명당 두 문항을 맡으므로
+     * 면접관 2·3·4명은 각각 네·여섯·여덟 문항이 된다.
+     *
+     * <p>면접관별 questionCount만 보면 한 명을 통째로 흘려도 알아채지 못한다. 남은 사람들의
+     * 몫은 여전히 2라 검사를 통과하고, 질문 없이 앉아 있는 면접관은 면접이 열린 뒤에야 드러난다.
+     * 합계까지 봐야 인원이 문항으로 옮겨졌는지가 잡힌다.
+     */
+    @Test
+    void 면접관이_둘_셋_넷이면_문항은_넷_여섯_여덟이다() {
+        givenMembers(11L, 12L);
+        service.requestTailor(interview(InterviewMode.MULTI), user);
+
+        givenMembers(11L, 12L, 13L);
+        service.requestTailor(interview(InterviewMode.MULTI), user);
+
+        givenMembers(11L, 12L, 13L, 15L);
+        service.requestTailor(interview(InterviewMode.MULTI), user);
+
+        ArgumentCaptor<QuestionTailorMultiRequest> sent =
+                ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
+        verify(aiServerClient, times(3)).tailorQuestionsMulti(sent.capture());
+
+        assertThat(sent.getAllValues()).extracting(this::totalQuestionCount)
+                .containsExactly(4, 6, 8);
+        // 기술 면접관을 뺀 인원이 그대로 otherPersonas에 실려야 위 합계가 인원에서 나온 것이 된다.
+        assertThat(sent.getAllValues()).extracting(request -> request.getOtherPersonas().size())
+                .containsExactly(1, 2, 3);
+    }
+
+    /** 이 요청으로 열릴 면접의 문항 수. 기술 면접관 몫에 나머지 면접관 몫을 더한 값이다. */
+    private int totalQuestionCount(QuestionTailorMultiRequest request) {
+        return request.getTechPersona().getQuestionCount()
+                + request.getOtherPersonas().stream()
+                        .mapToInt(QuestionTailorMultiRequest.Persona::getQuestionCount)
+                        .sum();
     }
 
     /**
