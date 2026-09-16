@@ -147,6 +147,9 @@ class InterviewServiceMultiCreateTest {
         assertThat(response.getPersonaIds()).containsExactly(11L, 12L, 13L, 15L);
 
         verify(interviewPersonaRepository).saveAll(savedMembers.capture());
+        // 돌려준 명단과 저장한 명단이 같아야 한다. 진행 순서를 읽는 쪽은 저장된 personaOrder를 본다.
+        assertThat(savedMembers.getValue()).extracting(InterviewPersonaEntity::getPersonaId)
+                .containsExactly(11L, 12L, 13L, 15L);
         assertThat(savedMembers.getValue()).extracting(InterviewPersonaEntity::getPersonaOrder)
                 .containsExactly(0, 1, 2, 3);
     }
