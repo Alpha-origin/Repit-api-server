@@ -10,6 +10,7 @@ import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
@@ -20,10 +21,14 @@ import repit.repit_api_server.domain.userdata.question.service.QuestionTailorSer
 import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -87,6 +92,51 @@ class InterviewServiceLookupTest {
                 .build()));
 
         assertThat(service.getInterviewById(USER_ID, 3L).getInterviewId()).isEqualTo(3L);
+    }
+
+    /**
+     * N:1 조회는 면접관 명단을 저장된 진행 순서 그대로 내려준다.
+     *
+     * <p>웹은 이 명단으로 면접관 카드를 그린다. 한 명이라도 빠지면 그 자리가 화면에서 사라지고,
+     * 순서가 흐트러지면 질문 묶음과 면접관이 어긋난다. 담당 문항이 아직 없는 면접관도
+     * 마찬가지다 — 질문은 면접이 끝나야 들어오지만 면접관은 면접을 만들 때 이미 정해져 있다.
+     */
+    @Test
+    void N대1은_담당_문항이_없어도_면접관_전원을_순서대로_돌려준다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()
+                .interviewId(3L)
+                .userId(7L)
+                // N:1은 면접관이 여럿이라 단일 personaId가 비어 있다.
+                .personaId(null)
+                .mode(InterviewMode.MULTI)
+                .sessionId("sess-1")
+                .status(Status.IN_PROGRESS)
+                .build()));
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(11L).personaOrder(0).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(12L).personaOrder(1).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(15L).personaOrder(2).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(13L).personaOrder(3).build()));
+
+        // 질문은 아직 하나도 없다. 그래도 면접관은 전원 나와야 한다.
+        assertThat(service.getInterviewById(USER_ID, 3L).getPersonaIds())
+                .containsExactly(11L, 12L, 15L, 13L);
+    }
+
+    /** 1:1은 명단 자체가 없다. 없는 것을 읽으러 가면 조회마다 빈 질의가 한 번씩 더 나간다. */
+    @Test
+    void 일대일은_면접관_명단을_읽지_않는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()
+                .interviewId(3L)
+                .userId(7L)
+                .personaId(5L)
+                .mode(InterviewMode.SOLO)
+                .sessionId("sess-1")
+                .status(Status.COMPLETED)
+                .build()));
+
+        assertThat(service.getInterviewById(USER_ID, 3L).getPersonaIds()).isEmpty();
+        verify(interviewPersonaRepository, never()).findAllByInterviewIdOrderByPersonaOrderAsc(any());
     }
 
     @Test
