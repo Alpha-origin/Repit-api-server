@@ -13,6 +13,7 @@ import repit.repit_api_server.domain.userdata.interview.dto.response.ChatIntervi
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatQuestionResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewPrepareResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
+import repit.repit_api_server.domain.userdata.interview.MultiInterviewPanel;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
@@ -51,24 +52,6 @@ import java.util.stream.Collectors;
 public class InterviewService {
 
     private static final Logger log = LoggerFactory.getLogger(InterviewService.class);
-
-    /**
-     * N:1 면접의 기술 외 면접관 수 하한.
-     *
-     * <p>기술 면접관 한 명은 따로 반드시 있어야 한다. 원질문을 다시 쓰는 몫이 그 자리라 대신할
-     * 면접관이 없다. 거기에 다른 직책이 최소 한 명은 붙어야 면접관이 교대하고, 그 교대가 곧
-     * N:1이 1:1과 갈리는 지점이다. 기술 면접관만 남으면 1:1을 N:1이라 부르는 것과 다르지 않다.
-     */
-    private static final int MIN_OTHER_PERSONA_COUNT = 1;
-
-    /**
-     * N:1 면접의 기술 외 면접관 수 상한.
-     *
-     * <p>분석 서버 {@code /questions/tailor/multi}가 otherPersonas를 네 명까지만 받는다. 더 보내면
-     * 422로 거부당하는데, 그 실패는 면접 시작을 누른 뒤에야 드러난다. 여기서 막아 생성 시점에
-     * 알린다. 상한을 올리려면 분석 서버 계약이 먼저 넓어져야 한다.
-     */
-    private static final int MAX_OTHER_PERSONA_COUNT = 4;
 
     private final InterviewRepository interviewRepository;
     private final QuestionRepository questionRepository;
@@ -145,12 +128,12 @@ public class InterviewService {
      *
      * <p>기술 면접관이 없으면 다시 쓸 원질문을 맡을 사람이 없고, 같은 직책이 둘이면 슬롯이
      * 겹쳐 면접이 성립하지 않는다. 기술 외 인원이
-     * {@link #MIN_OTHER_PERSONA_COUNT}..{@link #MAX_OTHER_PERSONA_COUNT}명을 벗어나도 면접을 열 수
-     * 없다. 셋 다 생성 시점에 막는다 — 여기를 지나면 질문을 만드는 쪽에서는 이미 구성이 맞다고
-     * 보고 문항을 나눈다.
+     * {@link MultiInterviewPanel#MIN_OTHER_COUNT}..{@link MultiInterviewPanel#MAX_OTHER_COUNT}명을
+     * 벗어나도 면접을 열 수 없다. 셋 다 생성 시점에 막는다 — 여기를 지나면 질문을 만드는 쪽에서는
+     * 이미 구성이 맞다고 보고 문항을 나눈다.
      *
-     * <p>인원이 곧 문항 수다. 기술 면접관이 두 문항, 나머지가 한 명당 두 문항을 맡아 N:1 면접은
-     * 네 문항에서 열 문항 사이가 된다 — {@code QuestionTailorService.OTHER_QUESTION_COUNT} 참고.
+     * <p>인원이 곧 문항 수다. 기술 면접관이 두 문항, 나머지가 한 명당 두 문항을 맡아 면접관
+     * 2·3·4명이 각각 네·여섯·여덟 문항이 된다 — {@code QuestionTailorService.OTHER_QUESTION_COUNT} 참고.
      */
     private List<PersonaEntity> orderForMulti(List<PersonaEntity> personas) {
         List<PersonaEntity> tech = personas.stream()
@@ -163,9 +146,10 @@ public class InterviewService {
         List<PersonaEntity> others = personas.stream()
                 .filter(persona -> persona.getRole() != Role.TECH)
                 .toList();
-        if (others.size() < MIN_OTHER_PERSONA_COUNT || others.size() > MAX_OTHER_PERSONA_COUNT) {
+        if (!MultiInterviewPanel.isOtherCountAllowed(others.size())) {
             throw BusinessException.unprocessable("N:1 면접에는 기술 외 면접관을 "
-                    + MIN_OTHER_PERSONA_COUNT + "명 이상 " + MAX_OTHER_PERSONA_COUNT + "명 이하로 지정해야 합니다.");
+                    + MultiInterviewPanel.MIN_OTHER_COUNT + "명 이상 "
+                    + MultiInterviewPanel.MAX_OTHER_COUNT + "명 이하로 지정해야 합니다.");
         }
 
         Set<Role> seen = EnumSet.noneOf(Role.class);

@@ -132,43 +132,43 @@ class InterviewServiceMultiCreateTest {
         assertThat(response.getPersonaIds()).containsExactly(11L, 12L);
     }
 
-    /** 분석 서버가 otherPersonas를 네 명까지 받는다. 그 상한까지는 그대로 열려야 한다. */
+    /** 기술 외 셋이 상한이다. 총 네 명짜리 면접까지는 그대로 열려야 한다. */
     @Test
-    void 기술_외_면접관이_넷이면_다섯_명짜리_N대1로_열린다() {
-        when(personaRepository.findAllById(List.of(12L, 13L, 15L, 16L, 11L))).thenReturn(List.of(
+    void 기술_외_면접관이_셋이면_네_명짜리_N대1로_열린다() {
+        when(personaRepository.findAllById(List.of(12L, 13L, 15L, 11L))).thenReturn(List.of(
                 persona(12L, Role.HR), persona(13L, Role.CEO), persona(15L, Role.PM),
-                persona(16L, Role.DESIGN), persona(11L, Role.TECH)));
+                persona(11L, Role.TECH)));
 
         InterviewResponse response = service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(12L, 13L, 15L, 16L, 11L)));
+                new CreateInterviewRequest(null, null, List.of(12L, 13L, 15L, 11L)));
 
         assertThat(response.getMode()).isEqualTo(InterviewMode.MULTI);
         // 기술 면접관만 맨 앞으로 올라오고 나머지는 고른 순서 그대로다.
-        assertThat(response.getPersonaIds()).containsExactly(11L, 12L, 13L, 15L, 16L);
+        assertThat(response.getPersonaIds()).containsExactly(11L, 12L, 13L, 15L);
 
         verify(interviewPersonaRepository).saveAll(savedMembers.capture());
         assertThat(savedMembers.getValue()).extracting(InterviewPersonaEntity::getPersonaOrder)
-                .containsExactly(0, 1, 2, 3, 4);
+                .containsExactly(0, 1, 2, 3);
     }
 
     /**
-     * 분석 서버는 otherPersonas가 넷을 넘으면 요청을 422로 거부한다. 그 실패는 면접 시작을 누른
+     * 분석 서버는 otherPersonas가 셋을 넘으면 요청을 422로 거부한다. 그 실패는 면접 시작을 누른
      * 뒤에야 드러나므로, 면접을 만들 때 막는다.
      *
-     * <p>지금은 기술 외 직책이 네 가지뿐이라 다섯 명이면 직책도 반드시 겹친다. 그래도 걸러야
-     * 하는 것은 인원이므로, 인원 사유로 막혔는지를 메시지로 확인한다 — 직책이 늘어나 겹치지
-     * 않게 되어도 이 상한은 그대로 남아야 한다.
+     * <p>직책이 겹치지 않는 네 명으로 짠다. 직책 중복으로 걸러지면 인원 상한이 사라져도 이
+     * 테스트가 그대로 통과해, 상한이 지워진 것을 눈치채지 못한다. 인원 사유로 막혔는지는
+     * 메시지로 확인한다.
      */
     @Test
-    void 기술_외_면접관이_다섯이면_422다() {
-        when(personaRepository.findAllById(List.of(11L, 12L, 13L, 15L, 16L, 17L))).thenReturn(List.of(
+    void 기술_외_면접관이_넷이면_422다() {
+        when(personaRepository.findAllById(List.of(11L, 12L, 13L, 15L, 16L))).thenReturn(List.of(
                 persona(11L, Role.TECH), persona(12L, Role.HR), persona(13L, Role.CEO),
-                persona(15L, Role.PM), persona(16L, Role.DESIGN), persona(17L, Role.HR)));
+                persona(15L, Role.PM), persona(16L, Role.DESIGN)));
 
         assertThatThrownBy(() -> service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(11L, 12L, 13L, 15L, 16L, 17L))))
+                new CreateInterviewRequest(null, null, List.of(11L, 12L, 13L, 15L, 16L))))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("1명 이상 4명 이하")
+                .hasMessageContaining("1명 이상 3명 이하")
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
 
