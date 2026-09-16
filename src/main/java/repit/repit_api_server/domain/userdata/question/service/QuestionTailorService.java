@@ -12,6 +12,7 @@ import repit.repit_api_server.domain.metadata.dto.response.GeneratedQuestionResp
 import repit.repit_api_server.domain.metadata.dto.response.ProjectSummaryResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.domain.userdata.interview.MultiInterviewPanel;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
@@ -203,7 +204,8 @@ public class QuestionTailorService {
      * <p>원질문을 전부 넘기지는 않는다. 다 쓰면 다른 면접관 몫이 더해져 면접이 너무 길어진다.
      * 기술 면접관 몫인 {@link #TECH_QUESTION_COUNT}개는 {@link #loadOriginalQuestions}가 이미 골라 넘겨준다.
      * 나머지 면접관은 한 명당 {@link #OTHER_QUESTION_COUNT} 문항씩 맡으므로, 면접 길이는 면접관 수를
-     * 따라간다 — 인원 범위는 {@code InterviewService.orderForMulti}가 정한다.
+     * 따라간다 — 면접관 2·3·4명이 각각 네·여섯·여덟 문항이다. 인원 범위는
+     * {@link MultiInterviewPanel}에 있다.
      */
     private QuestionTailorEntity requestMultiTailor(InterviewEntity interview, UserResponse user,
                                                     SourceQuestions source) {
@@ -249,7 +251,12 @@ public class QuestionTailorService {
      * <p>맨 앞은 반드시 기술 면접관이고, 뒤에 다른 직책이 한 명 이상 붙는다. 원질문을 맡을 자리가
      * 기술 면접관뿐이라 그가 없으면 요청을 만들 수 없고, 뒤가 비면 신규 질문을 맡을 면접관이 없어
      * N:1이 성립하지 않는다. 면접 생성에서 이미 걸러지지만 그 사이에 면접관이 지워질 수 있어
-     * 여기서도 확인한다. 인원 상한은 생성 시점에만 본다 — 지워져서 줄어들 뿐 늘지는 않는다.
+     * 여기서도 확인한다.
+     *
+     * <p>인원 상한도 여기서 다시 본다. 상한은 면접을 만들 때만 보므로, 상한을 좁히기 전에 열린
+     * 면접은 그 시절 인원을 그대로 들고 남아 있다. 그대로 보내면 분석 서버가 422로 돌려주는데,
+     * 그 실패는 면접 시작을 누르고 한참 뒤에야, 그것도 우리 말이 아닌 형태로 돌아온다. 여기서
+     * 막아 무엇을 해야 하는지까지 함께 알린다.
      */
     private List<PersonaEntity> orderedPersonas(Long interviewId) {
         List<Long> personaIds = interviewPersonaRepository
@@ -271,6 +278,11 @@ public class QuestionTailorService {
 
         if (ordered.size() < 2 || ordered.getFirst().getRole() != Role.TECH) {
             throw BusinessException.unprocessable("N:1 면접의 면접관 구성이 올바르지 않습니다.");
+        }
+        // 맨 앞이 기술 면접관이고 직책은 겹칠 수 없으므로, 나머지가 그대로 기술 외 인원이다.
+        if (!MultiInterviewPanel.isOtherCountAllowed(ordered.size() - 1)) {
+            throw BusinessException.unprocessable("면접관이 " + ordered.size() + "명이라 질문을 준비할 수 없습니다. "
+                    + "면접관을 " + MultiInterviewPanel.MAX_TOTAL_COUNT + "명 이하로 골라 면접을 새로 만들어 주세요.");
         }
         return ordered;
     }

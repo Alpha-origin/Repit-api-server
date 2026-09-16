@@ -28,7 +28,7 @@ public class QuestionTailorMultiRequest {
     private String experienceLevel;
     // 기술 면접관. questionCount는 아래 questions 개수와 반드시 같아야 한다.
     private Persona techPersona;
-    // 비개발 면접관 1~4명. 직책이 겹치면 안 된다.
+    // 비개발 면접관 1~3명. 직책이 겹치면 안 된다.
     private List<Persona> otherPersonas;
     // 기술 면접관이 쓸 원질문. /generate 산출물 중 이 서버가 고른 것이다.
     private List<Question> questions;

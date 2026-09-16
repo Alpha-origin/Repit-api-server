@@ -167,13 +167,26 @@ class QuestionTailorServiceRequestTest {
                 .build();
     }
 
+    /** 기술 + HR + CEO. 인원을 따지지 않는 테스트가 쓰는 기본 구성이다. */
     private void givenMultiPersonas() {
-        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(11L).personaOrder(0).build(),
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(12L).personaOrder(1).build(),
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(13L).personaOrder(2).build()));
-        when(personaRepository.findAllById(List.of(11L, 12L, 13L))).thenReturn(List.of(
-                persona(11L, Role.TECH), persona(12L, Role.HR), persona(13L, Role.CEO)));
+        givenMembers(11L, 12L, 13L);
+    }
+
+    /** 저장된 면접관 명단. 첫 id가 기술 면접관이고 나머지는 HR/CEO/PM/DESIGN 순으로 붙는다. */
+    private void givenMembers(Long... personaIds) {
+        List<Role> otherRoles = List.of(Role.HR, Role.CEO, Role.PM, Role.DESIGN);
+
+        List<InterviewPersonaEntity> members = new ArrayList<>();
+        List<PersonaEntity> personas = new ArrayList<>();
+        for (int order = 0; order < personaIds.length; order++) {
+            members.add(InterviewPersonaEntity.builder()
+                    .interviewId(3L).personaId(personaIds[order]).personaOrder(order).build());
+            personas.add(persona(personaIds[order],
+                    order == 0 ? Role.TECH : otherRoles.get(order - 1)));
+        }
+
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(members);
+        when(personaRepository.findAllById(List.of(personaIds))).thenReturn(personas);
     }
 
     /**
@@ -412,16 +425,8 @@ class QuestionTailorServiceRequestTest {
      * 여기서 인원을 흘리면 그만큼의 면접관이 질문 없이 앉아 있게 된다.
      */
     @Test
-    void N대1은_면접관이_넷_더_붙어도_그대로_실어_보낸다() {
-        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(11L).personaOrder(0).build(),
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(12L).personaOrder(1).build(),
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(13L).personaOrder(2).build(),
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(15L).personaOrder(3).build(),
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(16L).personaOrder(4).build()));
-        when(personaRepository.findAllById(List.of(11L, 12L, 13L, 15L, 16L))).thenReturn(List.of(
-                persona(11L, Role.TECH), persona(12L, Role.HR), persona(13L, Role.CEO),
-                persona(15L, Role.PM), persona(16L, Role.DESIGN)));
+    void N대1은_면접관이_셋_더_붙어도_그대로_실어_보낸다() {
+        givenMembers(11L, 12L, 13L, 15L);
 
         service.requestTailor(interview(InterviewMode.MULTI), user);
 
@@ -432,12 +437,33 @@ class QuestionTailorServiceRequestTest {
 
         // 저장된 진행 순서 그대로 나가야 질문 배열도 그 순서로 돌아온다.
         assertThat(request.getOtherPersonas()).extracting(QuestionTailorMultiRequest.Persona::getRole)
-                .containsExactly("HR", "CEO", "PM", "DESIGN");
+                .containsExactly("HR", "CEO", "PM");
         // 기술 면접관 몫은 인원이 늘어도 그대로다. 늘어나는 것은 신규 질문 쪽뿐이다.
         assertThat(request.getTechPersona().getQuestionCount()).isEqualTo(2);
         assertThat(request.getOtherPersonas())
                 .allSatisfy(persona -> assertThat(persona.getQuestionCount()).isEqualTo(2));
     }
+
+    /**
+     * 상한을 좁히기 전에 열린 면접은 그 시절 인원을 그대로 들고 남아 있다.
+     *
+     * <p>그대로 보내면 분석 서버가 otherPersonas 상한에 걸려 422로 돌려준다. 사용자는 면접
+     * 시작을 누르고 한참 기다린 끝에, 무엇을 해야 하는지 알 수 없는 실패를 본다. 요청을 보내기
+     * 전에 막고 면접을 새로 만들라고 알린다.
+     */
+    @Test
+    void 상한을_넘겨_열린_면접은_준비_요청을_보내기_전에_막는다() {
+        givenMembers(11L, 12L, 13L, 15L, 16L);
+
+        assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.MULTI), user))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("4명 이하")
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+
+        verify(aiServerClient, never()).tailorQuestionsMulti(any());
+    }
+
 
     /** 기대 답변이 비면 분석 서버가 요청 전체를 422로 거부한다. 콜백까지 갔다 오기 전에 막는다. */
     @Test

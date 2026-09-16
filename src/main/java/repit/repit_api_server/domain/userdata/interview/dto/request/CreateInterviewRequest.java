@@ -25,7 +25,8 @@ import java.util.List;
 public class CreateInterviewRequest {
     private Long personaId;
     private String personaName;
-    // N:1 면접관 명단. 기술 면접관 한 명에 다른 직책을 한 명 이상 담는다. 직책은 겹칠 수 없고,
-    // 진행 순서에서 기술 면접관을 맨 앞으로 올리는 것 말고는 담아 보낸 순서를 그대로 쓴다.
+    // N:1 면접관 명단. 기술 면접관 한 명에 다른 직책을 한 명에서 세 명까지 담아 모두 2~4명이다.
+    // 직책은 겹칠 수 없고, 진행 순서에서 기술 면접관을 맨 앞으로 올리는 것 말고는 담아 보낸
+    // 순서를 그대로 쓴다.
     private List<Long> personaIds;
 }
