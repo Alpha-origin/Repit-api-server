@@ -126,6 +126,20 @@ class FeedbackServiceSoloRequestTest {
                 .build();
     }
 
+    /** 기술·인사 말고 다른 직책의 면접관. 인원만 채우면 되므로 성향과 어조는 한 값으로 둔다. */
+    private PersonaEntity otherPersona(long personaId, Role role) {
+        return PersonaEntity.builder()
+                .personaId(personaId)
+                .personaName("면접관 " + personaId)
+                .role(role)
+                .type(Type.REALISTIC)
+                .tone(InterviewTone.GENTLE)
+                .level(Level.NORMAL)
+                .career(5)
+                .gender(Gender.FEMALE)
+                .build();
+    }
+
     private PersonaEntity persona(Type type) {
         return PersonaEntity.builder()
                 .personaId(5L)
@@ -269,6 +283,37 @@ class FeedbackServiceSoloRequestTest {
                 .containsExactly("PRESSURING", "GENTLE");
         assertThat(request.getQuestions()).extracting(FeedbackMultiRequest.Question::getPersonaId)
                 .containsExactly("5", "5");
+    }
+
+    /**
+     * 면접관 상한을 좁히기 전에 열린 면접도 채점까지는 그대로 간다.
+     *
+     * <p>상한은 면접을 만들 때만 보므로, 기술 외 네 명짜리 면접이 이미 남아 있다. 그 면접의
+     * 채점은 상한 축소에 걸리지 않아야 한다 — 분석 서버 /feedback/multi 는 personas 를 여섯
+     * 명까지 받아 다섯 명도 계약 안이고, 면접을 이미 끝낸 사용자에게서 결과를 빼앗을 이유도 없다.
+     *
+     * <p>여기가 무너지면 상한을 좁힌 날 이전에 면접을 마친 사람들의 채점이 통째로 막힌다.
+     */
+    @Test
+    void 기술_외_면접관이_넷인_기존_면접도_전원을_실어_채점한다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.COMPLETED, null)));
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(5L).personaOrder(0).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(6L).personaOrder(1).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(7L).personaOrder(2).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(8L).personaOrder(3).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(9L).personaOrder(4).build()));
+        when(personaRepository.findAllById(List.of(5L, 6L, 7L, 8L, 9L))).thenReturn(List.of(
+                persona(Type.REALISTIC), hrPersona(),
+                otherPersona(7L, Role.CEO), otherPersona(8L, Role.PM), otherPersona(9L, Role.DESIGN)));
+
+        service.requestFeedback(USER_ID, 3L);
+
+        ArgumentCaptor<FeedbackMultiRequest> sent = ArgumentCaptor.forClass(FeedbackMultiRequest.class);
+        verify(aiServerClient).requestMultiFeedback(sent.capture());
+        // 다섯 명이 그대로, 저장된 진행 순서대로 나가야 결과 화면의 면접관 카드가 비지 않는다.
+        assertThat(sent.getValue().getPersonas()).extracting(FeedbackMultiRequest.Persona::getRole)
+                .containsExactly("TECH", "HR", "CEO", "PM", "DESIGN");
     }
 
     @Test
