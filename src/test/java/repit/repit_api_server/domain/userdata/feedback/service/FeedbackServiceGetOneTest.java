@@ -48,7 +48,7 @@ import static org.mockito.Mockito.when;
  *
  * <p>면접관의 성향(스타일)과 난이도도 같이 나간다. 채점 결과에는 없는 값이라 면접관 행에서 읽어
  * 붙인다. 압박형 HARD에서 받은 70점과 친화형 EASY에서 받은 70점은 같은 점수가 아니다.
- * N:1도 면접관 셋이 같은 성향·난이도로 묶이므로 면접마다 값 하나로 족하다.
+ * N:1도 면접관이 모두 같은 성향·난이도로 묶이므로 면접마다 값 하나로 족하다.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -139,7 +139,7 @@ class FeedbackServiceGetOneTest {
     void N대1은_면접에_걸린_면접관에서_성향과_난이도를_읽는다() {
         when(interviewRepository.findById(100L))
                 .thenReturn(Optional.of(interview(InterviewMode.MULTI, null)));
-        // 면접관 셋은 성향·난이도가 같은 값으로 묶여 있어 맨 앞 하나로 대표한다.
+        // 면접관은 성향·난이도가 같은 값으로 묶여 있어 맨 앞 하나로 대표한다.
         when(interviewPersonaRepository.findAllByInterviewIdInOrderByInterviewIdAscPersonaOrderAsc(List.of(100L)))
                 .thenReturn(List.of(interviewPersona(5L, 0), interviewPersona(6L, 1)));
         when(personaRepository.findAllById(any()))
