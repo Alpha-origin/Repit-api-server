@@ -28,7 +28,9 @@ public class InterviewRecordingEntity {
     @Column(nullable = false)
     private Long userId;
 
-    // 채팅 서버 질문 번호. 우리 질문 PK가 아니다 — 질문 행은 면접이 끝나야 생긴다.
+    // 채팅 서버 질문 번호. 우리 질문 PK가 아니다 — 질문 행은 면접이 끝나야 생기고, 기록이 다시 오면
+    // 지웠다가 새로 만들어져 PK가 바뀐다. 이 번호는 한 면접 안에서 변하지 않아 질문과 잇는 기준이 된다.
+    // 업로드에서 필수지만, 필수가 되기 전에 올라온 행은 비어 있을 수 있다.
     private Long chatQuestionId;
 
     @Column(name = "s3_key", nullable = false, length = 512)

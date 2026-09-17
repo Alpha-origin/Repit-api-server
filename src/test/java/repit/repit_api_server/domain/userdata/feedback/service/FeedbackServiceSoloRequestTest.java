@@ -269,7 +269,7 @@ class FeedbackServiceSoloRequestTest {
     void 답변_영상을_채점_요청에_함께_싣는다() {
         List<FeedbackRecording> recordings = List.of(FeedbackRecording.builder()
                 .recordingId("301").questionId("901").videoUrl("https://signed").contentType("video/mp4").build());
-        when(recordingLoader.load(eq(3L), anyList())).thenReturn(recordings);
+        when(recordingLoader.load(eq(3L), anyList(), anyList())).thenReturn(recordings);
 
         service.requestFeedback(USER_ID, 3L);
 
@@ -291,7 +291,7 @@ class FeedbackServiceSoloRequestTest {
                 InterviewPersonaEntity.builder().interviewId(3L).personaId(6L).personaOrder(1).build()));
         when(personaRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(persona(Type.REALISTIC), hrPersona()));
         List<FeedbackRecording> recordings = List.of(FeedbackRecording.builder().recordingId("301").build());
-        when(recordingLoader.load(eq(3L), anyList())).thenReturn(recordings);
+        when(recordingLoader.load(eq(3L), anyList(), anyList())).thenReturn(recordings);
 
         service.requestFeedback(USER_ID, 3L);
 

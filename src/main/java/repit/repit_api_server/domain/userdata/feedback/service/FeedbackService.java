@@ -273,7 +273,7 @@ public class FeedbackService {
                                 .createdAt(toUtc(answer.getCreatedAt()))
                                 .build())
                         .toList())
-                .recordings(recordingLoader.load(interview.getInterviewId(), transcript.questions()))
+                .recordings(recordingLoader.load(interview.getInterviewId(), transcript.questions(), transcript.answers()))
                 .build();
     }
 
@@ -313,7 +313,7 @@ public class FeedbackService {
                                 .createdAt(toUtc(answer.getCreatedAt()))
                                 .build())
                         .toList())
-                .recordings(recordingLoader.load(interview.getInterviewId(), transcript.questions()))
+                .recordings(recordingLoader.load(interview.getInterviewId(), transcript.questions(), transcript.answers()))
                 .build();
     }
 

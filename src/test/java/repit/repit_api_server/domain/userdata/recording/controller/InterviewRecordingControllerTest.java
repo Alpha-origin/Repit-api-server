@@ -26,15 +26,14 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 웹이 부르는 모양 그대로 받는지 본다 — multipart의 {@code file} 파트와 선택인 {@code questionId}.
+ * 웹이 부르는 모양 그대로 받는지 본다 — multipart의 {@code file} 파트와 필수인 {@code questionId}.
  * 이 이름이 어긋나면 웹은 400만 받고 영상은 사라진다.
  */
 @ExtendWith(MockitoExtension.class)
@@ -80,15 +79,13 @@ class InterviewRecordingControllerTest {
                 .andExpect(jsonPath("$.data.questionId").value(3));
     }
 
+    /** 질문 번호가 없으면 어느 답변의 영상인지 알 수 없다. 받아두면 채점에서 버려질 뿐이다. */
     @Test
-    void 질문_번호는_빠져도_된다() throws Exception {
-        when(recordingService.upload(eq(USER_ID), eq(42L), isNull(), any()))
-                .thenReturn(new InterviewRecordingResponse(100L, 42L, null, 12L, LocalDateTime.now()));
-
+    void 질문_번호가_없으면_400() throws Exception {
         mockMvc.perform(multipart("/api/interviews/42/recordings").file(mp4()))
-                .andExpect(status().isCreated());
+                .andExpect(status().isBadRequest());
 
-        verify(recordingService).upload(eq(USER_ID), eq(42L), isNull(), any());
+        verifyNoInteractions(recordingService);
     }
 
     @Test
@@ -102,7 +99,7 @@ class InterviewRecordingControllerTest {
         when(recordingService.upload(eq(USER_ID), eq(42L), any(), any()))
                 .thenThrow(new BusinessException("MP4 파일만 올릴 수 있습니다.", HttpStatus.UNSUPPORTED_MEDIA_TYPE));
 
-        mockMvc.perform(multipart("/api/interviews/42/recordings").file(mp4()))
+        mockMvc.perform(multipart("/api/interviews/42/recordings").file(mp4()).param("questionId", "3"))
                 .andExpect(status().isUnsupportedMediaType())
                 .andExpect(jsonPath("$.message").value("MP4 파일만 올릴 수 있습니다."));
     }

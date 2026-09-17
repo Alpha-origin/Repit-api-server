@@ -58,6 +58,9 @@ public class InterviewRecordingService {
         if (!userId.equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접에만 녹화 파일을 올릴 수 있습니다.");
         }
+        if (questionId == null) {
+            throw new BusinessException("녹화한 질문 번호(questionId)가 필요합니다.", HttpStatus.BAD_REQUEST);
+        }
         if (file == null || file.isEmpty()) {
             throw new BusinessException("녹화 파일이 비어 있습니다.", HttpStatus.BAD_REQUEST);
         }

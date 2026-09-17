@@ -101,11 +101,9 @@ class InterviewRecordingServiceTest {
     }
 
     @Test
-    void 질문_번호가_없어도_받는다() {
-        InterviewRecordingResponse response = service.upload(USER_ID, INTERVIEW_ID, null, mp4File());
-
-        assertThat(response.questionId()).isNull();
-        verify(s3Client).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    void 질문_번호가_없으면_400이고_S3에_닿지_않는다() {
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, mp4File()), HttpStatus.BAD_REQUEST);
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
     @Test
