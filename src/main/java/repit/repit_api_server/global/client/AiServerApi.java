@@ -15,8 +15,6 @@ import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailo
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorAcceptedResponse;
-import repit.repit_api_server.domain.userdata.recording.dto.request.RecordingAnalysisRequest;
-import repit.repit_api_server.domain.userdata.recording.dto.response.RecordingAnalysisAcceptedResponse;
 import repit.repit_api_server.global.common.ApiResponse;
 
 public interface AiServerApi {
@@ -45,10 +43,6 @@ public interface AiServerApi {
     // 면접 시작 직전 원질문 재작성. 마찬가지로 202 접수 후 결과는 콜백으로 온다.
     @PostExchange("/questions/tailor")
     QuestionTailorAcceptedResponse tailorQuestions(@RequestBody QuestionTailorRequest request);
-
-    // 면접 녹화 분석. 질문·답변과 답변 영상 주소를 한 번에 넘기고, 202 접수 후 결과는 콜백으로 온다.
-    @PostExchange("/recordings/analyze")
-    RecordingAnalysisAcceptedResponse requestRecordingAnalysis(@RequestBody RecordingAnalysisRequest request);
 
     // N:1 질문 구성. 기술 원질문 재작성과 비개발 면접관 질문 생성이 한 번에 돈다.
     @PostExchange("/questions/tailor/multi")

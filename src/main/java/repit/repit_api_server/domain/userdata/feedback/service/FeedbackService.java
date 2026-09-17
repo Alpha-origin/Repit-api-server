@@ -70,6 +70,7 @@ public class FeedbackService {
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
     private final AiServerClient aiServerClient;
+    private final FeedbackRecordingLoader recordingLoader;
 
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
@@ -272,6 +273,7 @@ public class FeedbackService {
                                 .createdAt(toUtc(answer.getCreatedAt()))
                                 .build())
                         .toList())
+                .recordings(recordingLoader.load(interview.getInterviewId(), transcript.questions()))
                 .build();
     }
 
@@ -311,6 +313,7 @@ public class FeedbackService {
                                 .createdAt(toUtc(answer.getCreatedAt()))
                                 .build())
                         .toList())
+                .recordings(recordingLoader.load(interview.getInterviewId(), transcript.questions()))
                 .build();
     }
 
