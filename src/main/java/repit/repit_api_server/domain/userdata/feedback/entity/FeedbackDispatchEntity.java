@@ -35,14 +35,24 @@ public class FeedbackDispatchEntity {
     @Column(nullable = false)
     private LocalDateTime lastActivityAt;
 
+    // 차지할 때마다 하나씩 오른다. 조건부 갱신으로만 바꾼다.
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer attemptCount = 0;
+
+    // SENDING으로 차지한 시각. 이보다 오래 끝나지 않으면 스윕이 WAITING으로 되돌린다.
+    private LocalDateTime claimedAt;
+
+    // 일시적 실패 뒤 다시 시도해도 되는 가장 이른 시각. 비어 있으면 곧바로 가능하다.
+    private LocalDateTime nextAttemptAt;
+
+    @Column(columnDefinition = "TEXT")
+    private String lastError;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
-
-    public void markDone() {
-        this.status = FeedbackDispatchStatus.DONE;
-    }
 }
