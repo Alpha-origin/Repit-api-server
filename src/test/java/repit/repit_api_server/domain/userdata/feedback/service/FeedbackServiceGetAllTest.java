@@ -74,6 +74,8 @@ class FeedbackServiceGetAllTest {
     private AnswerRepository answerRepository;
     @Mock
     private AiServerClient aiServerClient;
+    @Mock
+    private FeedbackRecordingLoader recordingLoader;
 
     /** 인증을 마친 요청의 주인. 확인은 시큐리티 필터가 끝냈고, 서비스는 id만 받는다. */
     private static final Long USER_ID = 7L;
@@ -84,7 +86,7 @@ class FeedbackServiceGetAllTest {
     void setUp() {
         service = new FeedbackService(feedbackRepository, feedbackItemRepository, feedbackPersonaRepository,
                 interviewRepository, interviewPersonaRepository, personaRepository, questionRepository,
-                answerRepository, aiServerClient);
+                answerRepository, aiServerClient, recordingLoader);
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
         ReflectionTestUtils.setField(service, "pendingTimeout", Duration.ofMinutes(5));
 

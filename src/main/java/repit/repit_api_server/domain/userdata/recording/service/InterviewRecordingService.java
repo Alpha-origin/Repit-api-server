@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import repit.repit_api_server.domain.userdata.feedback.service.FeedbackDispatchService;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.recording.dto.response.InterviewRecordingResponse;
@@ -40,7 +41,7 @@ public class InterviewRecordingService {
     private final InterviewRepository interviewRepository;
     private final InterviewRecordingRepository recordingRepository;
     private final S3Client s3Client;
-    private final RecordingAnalysisService recordingAnalysisService;
+    private final FeedbackDispatchService feedbackDispatchService;
 
     @Value("${spring.cloud.aws.s3.bucket}")
     private String bucketName;
@@ -56,6 +57,9 @@ public class InterviewRecordingService {
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
         if (!userId.equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접에만 녹화 파일을 올릴 수 있습니다.");
+        }
+        if (questionId == null) {
+            throw new BusinessException("녹화한 질문 번호(questionId)가 필요합니다.", HttpStatus.BAD_REQUEST);
         }
         if (file == null || file.isEmpty()) {
             throw new BusinessException("녹화 파일이 비어 있습니다.", HttpStatus.BAD_REQUEST);
@@ -82,11 +86,11 @@ public class InterviewRecordingService {
             throw e;
         }
 
-        // 영상은 이미 저장됐다. 분석 전달이 넘어져도 업로드는 성공으로 답한다 — 실패로 답하면 웹이 같은 영상을 또 올린다.
+        // 영상은 이미 저장됐다. 채점 준비가 넘어져도 업로드는 성공으로 답한다 — 실패로 답하면 웹이 같은 영상을 또 올린다.
         try {
-            recordingAnalysisService.onRecordingUploaded(interviewId);
+            feedbackDispatchService.onRecordingUploaded(interviewId);
         } catch (RuntimeException e) {
-            log.error("녹화 파일을 받은 뒤 분석 전달을 처리하지 못했습니다. interviewId={}", interviewId, e);
+            log.error("녹화 파일을 받은 뒤 채점 준비를 처리하지 못했습니다. interviewId={}", interviewId, e);
         }
         return InterviewRecordingResponse.from(recording);
     }

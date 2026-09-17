@@ -4,8 +4,8 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 500MB
-      max-request-size: 500MB
+      max-file-size: 1024MB
+      max-request-size: 1024MB
 
   task:
     execution:
@@ -87,19 +87,27 @@ app:
   feedback:
     # 이 시간을 넘도록 분석 서버 콜백이 오지 않으면 실패로 처리하고 재요청을 허용한다.
     pending-timeout: 10m
+    # 채점 요청에 싣는 답변 영상의 서명 주소 유효 시간. 접수 뒤 작업이 밀려도 만료되지 않을 만큼 둔다.
+    recording-url-ttl: 6h
+    dispatch:
+      # 면접 기록은 받았는데 영상이 덜 모였을 때, 마지막으로 무언가 들어오고 이만큼 조용하면 있는 영상만 싣고 채점을 요청한다.
+      # 텍스트로 답한 질문은 영상이 오지 않으므로 그런 면접은 이 시간만큼 채점이 늦게 시작된다.
+      upload-grace: 2m
+      # 조용해진 면접, 다시 시도할 때가 된 면접, 요청 도중 끊긴 면접을 훑는 간격.
+      sweep-interval: 30s
+      # 채점 요청을 차지한 뒤 이만큼 끝나지 않으면 요청하던 프로세스가 사라진 것으로 보고 다시 기다리게 한다.
+      # 분석 서버 읽기 제한(60초)보다 넉넉히 길어야 멀쩡히 요청 중인 건을 가로채지 않는다.
+      claim-timeout: 5m
+      # 분석 서버 5xx·타임아웃, DB·S3 오류처럼 다시 해볼 만한 실패는 이 횟수까지 시도하고 FAILED로 닫는다.
+      max-attempts: 5
+      # n번째 실패 뒤 기다리는 시간 = retry-base-delay * 2^(n-1), retry-max-delay까지.
+      retry-base-delay: 30s
+      retry-max-delay: 10m
   question-tailor:
     # 면접 시작 직전에 도는 작업이라 오래 기다릴 수 없다. 넘기면 원질문으로 면접을 연다.
     pending-timeout: 2m
     # 시간이 지난 준비 건을 훑는 간격. 폴링하지 않는 클라이언트에게도 이 주기로 실패가 나간다.
     sweep-interval: 30s
-  recording-analysis:
-    # 면접 기록은 받았는데 영상이 덜 모였을 때, 마지막으로 무언가 들어오고 이만큼 조용하면 있는 영상만 보낸다.
-    # 텍스트로 답한 질문은 영상이 오지 않으므로 이 시간이 지나야 보내진다.
-    upload-grace: 2m
-    # 조용해진 면접을 훑는 간격.
-    sweep-interval: 30s
-    # 분석 서버에 넘기는 서명된 영상 주소의 유효 시간. 접수 뒤 작업이 밀려도 만료되지 않을 만큼 둔다.
-    video-url-ttl: 6h
   sse:
     # 구독에 빈 줄을 흘려보내는 간격(ms). 이보다 오래 조용하면 중간의 프록시가 연결을 끊는다.
     heartbeat-interval-ms: 15000

@@ -14,8 +14,6 @@ import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailo
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorAcceptedResponse;
-import repit.repit_api_server.domain.userdata.recording.dto.request.RecordingAnalysisRequest;
-import repit.repit_api_server.domain.userdata.recording.dto.response.RecordingAnalysisAcceptedResponse;
 import repit.repit_api_server.global.common.ApiResponse;
 
 import java.util.function.Supplier;
@@ -77,12 +75,6 @@ public class AiServerClient {
     public QuestionTailorAcceptedResponse tailorQuestionsMulti(QuestionTailorMultiRequest request) {
         return executor.execute(SERVER_NAME,
                 () -> aiServerApi.tailorQuestionsMulti(request),
-                this::resolveMessage, false);
-    }
-
-    public RecordingAnalysisAcceptedResponse requestRecordingAnalysis(RecordingAnalysisRequest request) {
-        return executor.execute(SERVER_NAME,
-                () -> aiServerApi.requestRecordingAnalysis(request),
                 this::resolveMessage, false);
     }
 
