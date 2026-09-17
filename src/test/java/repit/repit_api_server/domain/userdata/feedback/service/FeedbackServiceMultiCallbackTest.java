@@ -69,6 +69,8 @@ class FeedbackServiceMultiCallbackTest {
     private AnswerRepository answerRepository;
     @Mock
     private AiServerClient aiServerClient;
+    @Mock
+    private FeedbackRecordingLoader recordingLoader;
 
     @Captor
     private ArgumentCaptor<List<FeedbackPersonaEntity>> savedPersonas;
@@ -81,7 +83,7 @@ class FeedbackServiceMultiCallbackTest {
     void setUp() {
         service = new FeedbackService(feedbackRepository, feedbackItemRepository, feedbackPersonaRepository,
                 interviewRepository, interviewPersonaRepository, personaRepository, questionRepository,
-                answerRepository, aiServerClient);
+                answerRepository, aiServerClient, recordingLoader);
 
         when(feedbackRepository.save(any(FeedbackEntity.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));

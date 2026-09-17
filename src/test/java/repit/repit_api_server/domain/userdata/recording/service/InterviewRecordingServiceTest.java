@@ -11,6 +11,7 @@ import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
+import repit.repit_api_server.domain.userdata.feedback.service.FeedbackDispatchService;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
@@ -61,13 +62,13 @@ class InterviewRecordingServiceTest {
     @Mock
     private S3Client s3Client;
     @Mock
-    private RecordingAnalysisService recordingAnalysisService;
+    private FeedbackDispatchService feedbackDispatchService;
 
     private InterviewRecordingService service;
 
     @BeforeEach
     void setUp() {
-        service = new InterviewRecordingService(interviewRepository, recordingRepository, s3Client, recordingAnalysisService);
+        service = new InterviewRecordingService(interviewRepository, recordingRepository, s3Client, feedbackDispatchService);
         ReflectionTestUtils.setField(service, "bucketName", BUCKET);
         when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(interview(USER_ID)));
         when(recordingRepository.save(any())).thenAnswer(invocation -> {
@@ -165,15 +166,15 @@ class InterviewRecordingServiceTest {
     }
 
     @Test
-    void 저장한_뒤에_녹화_분석에_알린다() {
+    void 저장한_뒤에_채점_대기에_알린다() {
         service.upload(USER_ID, INTERVIEW_ID, QUESTION_ID, mp4File());
 
-        verify(recordingAnalysisService).onRecordingUploaded(INTERVIEW_ID);
+        verify(feedbackDispatchService).onRecordingUploaded(INTERVIEW_ID);
     }
 
     @Test
-    void 녹화_분석이_실패해도_업로드는_성공으로_답한다() {
-        doThrow(new IllegalStateException("ai down")).when(recordingAnalysisService).onRecordingUploaded(INTERVIEW_ID);
+    void 채점_대기_처리가_실패해도_업로드는_성공으로_답한다() {
+        doThrow(new IllegalStateException("ai down")).when(feedbackDispatchService).onRecordingUploaded(INTERVIEW_ID);
 
         InterviewRecordingResponse response = service.upload(USER_ID, INTERVIEW_ID, QUESTION_ID, mp4File());
 
@@ -182,12 +183,12 @@ class InterviewRecordingServiceTest {
     }
 
     @Test
-    void 기록이_실패하면_녹화_분석에_알리지_않는다() {
+    void 기록이_실패하면_채점_대기에_알리지_않는다() {
         doThrow(new IllegalStateException("db down")).when(recordingRepository).save(any());
 
         assertThatThrownBy(() -> service.upload(USER_ID, INTERVIEW_ID, QUESTION_ID, mp4File()))
                 .isInstanceOf(IllegalStateException.class);
-        verify(recordingAnalysisService, never()).onRecordingUploaded(any());
+        verify(feedbackDispatchService, never()).onRecordingUploaded(any());
     }
 
     private static MockMultipartFile mp4File() {
