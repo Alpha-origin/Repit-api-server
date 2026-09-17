@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.userdata.feedback.service.FeedbackService;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
+import repit.repit_api_server.domain.userdata.recording.service.RecordingAnalysisService;
 import repit.repit_api_server.global.exception.BusinessException;
 
 /**
@@ -24,6 +25,7 @@ public class ChatInterviewResultService {
 
     private final InterviewService interviewService;
     private final FeedbackService feedbackService;
+    private final RecordingAnalysisService recordingAnalysisService;
 
     /**
      * 저장이 먼저고 채점이 나중이다. 채점은 우리 DB에 저장된 질문과 답변을 읽어 분석 서버로
@@ -44,6 +46,14 @@ public class ChatInterviewResultService {
                     request.getInterviewId(), e.getMessage());
         } catch (RuntimeException e) {
             log.error("면접 기록을 받은 뒤 채점을 접수하지 못했습니다. interviewId={}",
+                    request.getInterviewId(), e);
+        }
+
+        // 녹화 분석도 저장된 질문·답변을 읽으므로 저장 뒤에 부른다. 실패해도 채팅 서버 응답은 성공으로 둔다.
+        try {
+            recordingAnalysisService.onTranscriptSaved(request.getInterviewId());
+        } catch (RuntimeException e) {
+            log.error("면접 기록을 받은 뒤 녹화 분석을 처리하지 못했습니다. interviewId={}",
                     request.getInterviewId(), e);
         }
     }

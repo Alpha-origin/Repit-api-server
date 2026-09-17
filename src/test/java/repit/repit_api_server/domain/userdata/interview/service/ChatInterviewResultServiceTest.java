@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import repit.repit_api_server.domain.userdata.feedback.service.FeedbackService;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.recording.service.RecordingAnalysisService;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.exception.ExternalApiException;
 
@@ -35,13 +36,15 @@ class ChatInterviewResultServiceTest {
     private InterviewService interviewService;
     @Mock
     private FeedbackService feedbackService;
+    @Mock
+    private RecordingAnalysisService recordingAnalysisService;
 
     private ChatInterviewResultService service;
     private SaveInterviewRequest request;
 
     @BeforeEach
     void setUp() {
-        service = new ChatInterviewResultService(interviewService, feedbackService);
+        service = new ChatInterviewResultService(interviewService, feedbackService, recordingAnalysisService);
         request = new SaveInterviewRequest("sess-1", 3L, 7L, Status.COMPLETED, null, List.of());
     }
 
@@ -64,6 +67,7 @@ class ChatInterviewResultServiceTest {
                 .isInstanceOf(BusinessException.class);
 
         verify(feedbackService, never()).requestFeedbackForFinishedInterview(3L);
+        verify(recordingAnalysisService, never()).onTranscriptSaved(3L);
     }
 
     @Test
@@ -80,6 +84,34 @@ class ChatInterviewResultServiceTest {
                 .when(feedbackService).requestFeedbackForFinishedInterview(3L);
 
         // 기록은 이미 저장됐다. 여기서 실패를 돌려주면 채팅 서버의 완료 처리까지 끊긴다.
+        assertThatCode(() -> service.handleResult(request)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void 기록을_저장한_뒤에_녹화_분석에_알린다() {
+        service.handleResult(request);
+
+        // 녹화 분석도 저장된 질문·답변을 읽어 보낸다.
+        InOrder order = inOrder(interviewService, recordingAnalysisService);
+        order.verify(interviewService).saveInterview(request);
+        order.verify(recordingAnalysisService).onTranscriptSaved(3L);
+    }
+
+    @Test
+    void 채점_접수가_실패해도_녹화_분석은_알린다() {
+        doThrow(new ExternalApiException("분석 서버 오류", HttpStatus.INTERNAL_SERVER_ERROR, null))
+                .when(feedbackService).requestFeedbackForFinishedInterview(3L);
+
+        service.handleResult(request);
+
+        verify(recordingAnalysisService).onTranscriptSaved(3L);
+    }
+
+    @Test
+    void 녹화_분석이_실패해도_면접_완료_처리를_끊지_않는다() {
+        doThrow(new IllegalStateException("db down"))
+                .when(recordingAnalysisService).onTranscriptSaved(3L);
+
         assertThatCode(() -> service.handleResult(request)).doesNotThrowAnyException();
     }
 }

@@ -60,12 +60,14 @@ class InterviewRecordingServiceTest {
     private InterviewRecordingRepository recordingRepository;
     @Mock
     private S3Client s3Client;
+    @Mock
+    private RecordingAnalysisService recordingAnalysisService;
 
     private InterviewRecordingService service;
 
     @BeforeEach
     void setUp() {
-        service = new InterviewRecordingService(interviewRepository, recordingRepository, s3Client);
+        service = new InterviewRecordingService(interviewRepository, recordingRepository, s3Client, recordingAnalysisService);
         ReflectionTestUtils.setField(service, "bucketName", BUCKET);
         when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(interview(USER_ID)));
         when(recordingRepository.save(any())).thenAnswer(invocation -> {
@@ -160,6 +162,32 @@ class InterviewRecordingServiceTest {
         ArgumentCaptor<DeleteObjectRequest> delete = ArgumentCaptor.forClass(DeleteObjectRequest.class);
         verify(s3Client).deleteObject(delete.capture());
         assertThat(delete.getValue().key()).isEqualTo(put.getValue().key());
+    }
+
+    @Test
+    void 저장한_뒤에_녹화_분석에_알린다() {
+        service.upload(USER_ID, INTERVIEW_ID, QUESTION_ID, mp4File());
+
+        verify(recordingAnalysisService).onRecordingUploaded(INTERVIEW_ID);
+    }
+
+    @Test
+    void 녹화_분석이_실패해도_업로드는_성공으로_답한다() {
+        doThrow(new IllegalStateException("ai down")).when(recordingAnalysisService).onRecordingUploaded(INTERVIEW_ID);
+
+        InterviewRecordingResponse response = service.upload(USER_ID, INTERVIEW_ID, QUESTION_ID, mp4File());
+
+        // 실패로 답하면 웹은 이미 저장된 영상을 다시 올린다.
+        assertThat(response.recordingId()).isEqualTo(100L);
+    }
+
+    @Test
+    void 기록이_실패하면_녹화_분석에_알리지_않는다() {
+        doThrow(new IllegalStateException("db down")).when(recordingRepository).save(any());
+
+        assertThatThrownBy(() -> service.upload(USER_ID, INTERVIEW_ID, QUESTION_ID, mp4File()))
+                .isInstanceOf(IllegalStateException.class);
+        verify(recordingAnalysisService, never()).onRecordingUploaded(any());
     }
 
     private static MockMultipartFile mp4File() {
