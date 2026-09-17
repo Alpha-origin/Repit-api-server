@@ -40,6 +40,7 @@ public class InterviewRecordingService {
     private final InterviewRepository interviewRepository;
     private final InterviewRecordingRepository recordingRepository;
     private final S3Client s3Client;
+    private final RecordingAnalysisService recordingAnalysisService;
 
     @Value("${spring.cloud.aws.s3.bucket}")
     private String bucketName;
@@ -66,20 +67,28 @@ public class InterviewRecordingService {
         String key = KEY_PREFIX + interviewId + "/" + UUID.randomUUID() + ".mp4";
         putObject(key, file);
 
+        InterviewRecordingEntity recording;
         try {
-            InterviewRecordingEntity recording = recordingRepository.save(InterviewRecordingEntity.builder()
+            recording = recordingRepository.save(InterviewRecordingEntity.builder()
                     .interviewId(interviewId)
                     .userId(userId)
                     .chatQuestionId(questionId)
                     .s3Key(key)
                     .fileSize(file.getSize())
                     .build());
-            return InterviewRecordingResponse.from(recording);
         } catch (RuntimeException e) {
             // 기록이 없으면 이 영상은 아무도 찾지 못한다. 버킷에 주인 없는 영상을 남기지 않는다.
             deleteQuietly(key);
             throw e;
         }
+
+        // 영상은 이미 저장됐다. 분석 전달이 넘어져도 업로드는 성공으로 답한다 — 실패로 답하면 웹이 같은 영상을 또 올린다.
+        try {
+            recordingAnalysisService.onRecordingUploaded(interviewId);
+        } catch (RuntimeException e) {
+            log.error("녹화 파일을 받은 뒤 분석 전달을 처리하지 못했습니다. interviewId={}", interviewId, e);
+        }
+        return InterviewRecordingResponse.from(recording);
     }
 
     private boolean isMp4(MultipartFile file) {
