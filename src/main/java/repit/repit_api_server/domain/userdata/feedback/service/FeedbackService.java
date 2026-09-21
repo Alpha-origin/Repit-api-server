@@ -274,6 +274,7 @@ public class FeedbackService {
                                 .build())
                         .toList())
                 .recordings(recordingLoader.load(interview.getInterviewId(), transcript.questions(), transcript.answers()))
+                .interviewVideo(recordingLoader.loadInterviewVideo(interview.getInterviewId()))
                 .build();
     }
 
@@ -314,6 +315,7 @@ public class FeedbackService {
                                 .build())
                         .toList())
                 .recordings(recordingLoader.load(interview.getInterviewId(), transcript.questions(), transcript.answers()))
+                .interviewVideo(recordingLoader.loadInterviewVideo(interview.getInterviewId()))
                 .build();
     }
 

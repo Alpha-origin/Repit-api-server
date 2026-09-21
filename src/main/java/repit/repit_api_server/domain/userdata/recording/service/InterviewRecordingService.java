@@ -12,6 +12,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.recording.dto.response.InterviewRecordingResponse;
 import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordingEntity;
+import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 import repit.repit_api_server.domain.userdata.recording.repository.InterviewRecordingRepository;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.exception.ExternalApiException;
@@ -23,8 +24,6 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.UUID;
 
 @Service
@@ -33,10 +32,8 @@ public class InterviewRecordingService {
 
     private static final Logger log = LoggerFactory.getLogger(InterviewRecordingService.class);
 
-    private static final String MP4_CONTENT_TYPE = "video/mp4";
     private static final String KEY_PREFIX = "interview-recordings/";
-    // MP4는 첫 박스가 ftyp다. 앞 4바이트는 박스 크기라 그 뒤 4바이트를 본다.
-    private static final byte[] MP4_BOX_TYPE = "ftyp".getBytes(StandardCharsets.US_ASCII);
+    private static final int HEADER_BYTES = 12;
 
     private final InterviewRepository interviewRepository;
     private final InterviewRecordingRepository recordingRepository;
@@ -47,10 +44,13 @@ public class InterviewRecordingService {
     private String bucketName;
 
     /**
-     * 웹이 녹화한 MP4 하나를 받아 S3에 올리고 기록을 남긴다.
+     * 웹이 올린 면접 파일 하나를 S3에 두고 기록을 남긴다.
      *
-     * <p>파일 형식은 확장자나 Content-Type이 아니라 앞 바이트로 판단한다. 둘 다 보내는 쪽이
-     * 마음대로 붙이는 값이라, 믿고 받으면 MP4가 아닌 파일이 뒤에서 분석으로 넘어간다.
+     * <p>질문 번호가 붙어 오면 그 질문의 답변 파일이고, 붙지 않으면 면접 화면 전체를 담은 영상이다.
+     * 웹은 답할 때마다 앞엣것을, 면접을 멈출 때 뒤엣것을 올린다.
+     *
+     * <p>형식은 확장자나 Content-Type이 아니라 파일 앞 바이트로 판단한다. 둘 다 보내는 쪽이 붙이는
+     * 값이라, 믿고 받으면 열리지도 않는 파일이 그대로 분석으로 넘어간다.
      */
     public InterviewRecordingResponse upload(Long userId, Long interviewId, Long questionId, MultipartFile file) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
@@ -58,35 +58,35 @@ public class InterviewRecordingService {
         if (!userId.equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접에만 녹화 파일을 올릴 수 있습니다.");
         }
-        if (questionId == null) {
-            throw new BusinessException("녹화한 질문 번호(questionId)가 필요합니다.", HttpStatus.BAD_REQUEST);
-        }
         if (file == null || file.isEmpty()) {
             throw new BusinessException("녹화 파일이 비어 있습니다.", HttpStatus.BAD_REQUEST);
         }
-        if (!isMp4(file)) {
-            throw new BusinessException("MP4 파일만 올릴 수 있습니다.", HttpStatus.UNSUPPORTED_MEDIA_TYPE);
-        }
 
-        String key = KEY_PREFIX + interviewId + "/" + UUID.randomUUID() + ".mp4";
-        putObject(key, file);
+        RecordingKind kind = questionId == null ? RecordingKind.FULL_INTERVIEW : RecordingKind.ANSWER;
+        RecordingFormat format = detectFormat(file);
+        String contentType = contentTypeOf(kind, format, file.getContentType());
+
+        String key = KEY_PREFIX + interviewId + "/" + UUID.randomUUID() + "." + format.extension();
+        putObject(key, contentType, file);
 
         InterviewRecordingEntity recording;
         try {
             recording = recordingRepository.save(InterviewRecordingEntity.builder()
                     .interviewId(interviewId)
                     .userId(userId)
+                    .kind(kind)
                     .chatQuestionId(questionId)
+                    .contentType(contentType)
                     .s3Key(key)
                     .fileSize(file.getSize())
                     .build());
         } catch (RuntimeException e) {
-            // 기록이 없으면 이 영상은 아무도 찾지 못한다. 버킷에 주인 없는 영상을 남기지 않는다.
+            // 기록이 없으면 이 파일은 아무도 찾지 못한다. 버킷에 주인 없는 파일을 남기지 않는다.
             deleteQuietly(key);
             throw e;
         }
 
-        // 영상은 이미 저장됐다. 채점 준비가 넘어져도 업로드는 성공으로 답한다 — 실패로 답하면 웹이 같은 영상을 또 올린다.
+        // 파일은 이미 저장됐다. 채점 준비가 넘어져도 업로드는 성공으로 답한다 — 실패로 답하면 웹이 같은 파일을 또 올린다.
         try {
             feedbackDispatchService.onRecordingUploaded(interviewId);
         } catch (RuntimeException e) {
@@ -95,20 +95,44 @@ public class InterviewRecordingService {
         return InterviewRecordingResponse.from(recording);
     }
 
-    private boolean isMp4(MultipartFile file) {
+    private RecordingFormat detectFormat(MultipartFile file) {
+        byte[] header;
         try (InputStream in = file.getInputStream()) {
-            byte[] header = in.readNBytes(8);
-            return header.length == 8 && Arrays.equals(header, 4, 8, MP4_BOX_TYPE, 0, 4);
+            header = in.readNBytes(HEADER_BYTES);
         } catch (IOException e) {
             throw new BusinessException("녹화 파일을 읽지 못했습니다.", HttpStatus.BAD_REQUEST);
         }
+        RecordingFormat format = RecordingFormat.detect(header);
+        if (format == null) {
+            throw new BusinessException("올릴 수 없는 파일 형식입니다. MP4, WebM, Ogg, MP3, WAV만 받습니다.",
+                    HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+        }
+        return format;
     }
 
-    private void putObject(String key, MultipartFile file) {
+    /**
+     * 저장해 둘 형식 이름.
+     *
+     * <p>컨테이너는 앞 바이트로 정해지지만 그 안에 그림이 있는지까지는 열어봐야 안다. 그래서 MP4나 WebM처럼
+     * 둘 다 담을 수 있는 형식은 요청에 붙은 Content-Type의 앞머리만 참고한다. 틀려도 컨테이너는 맞으므로
+     * 분석 서버가 파일을 열면 바로 잡힌다.
+     */
+    private String contentTypeOf(RecordingKind kind, RecordingFormat format, String declaredContentType) {
+        if (kind == RecordingKind.FULL_INTERVIEW) {
+            if (!format.canHoldVideo()) {
+                throw new BusinessException("면접 화면 녹화는 영상 파일이어야 합니다.", HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+            }
+            return format.videoContentType();
+        }
+        boolean declaredVideo = declaredContentType != null && declaredContentType.startsWith("video/");
+        return declaredVideo && format.canHoldVideo() ? format.videoContentType() : format.audioContentType();
+    }
+
+    private void putObject(String key, String contentType, MultipartFile file) {
         PutObjectRequest request = PutObjectRequest.builder()
                 .bucket(bucketName)
                 .key(key)
-                .contentType(MP4_CONTENT_TYPE)
+                .contentType(contentType)
                 .build();
         try (InputStream in = file.getInputStream()) {
             s3Client.putObject(request, RequestBody.fromInputStream(in, file.getSize()));

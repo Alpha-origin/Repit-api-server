@@ -15,6 +15,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import repit.repit_api_server.domain.userdata.recording.dto.response.InterviewRecordingResponse;
+import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 import repit.repit_api_server.domain.userdata.recording.service.InterviewRecordingService;
 import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.error.GlobalExceptionHandler;
@@ -26,15 +27,15 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 웹이 부르는 모양 그대로 받는지 본다 — multipart의 {@code file} 파트와 필수인 {@code questionId}.
- * 이 이름이 어긋나면 웹은 400만 받고 영상은 사라진다.
+ * 웹이 부르는 모양 그대로 받는지 본다 — multipart의 {@code file} 파트와, 붙을 수도 안 붙을 수도 있는
+ * {@code questionId}. 이 이름이 어긋나면 웹은 400만 받고 파일은 사라진다.
  */
 @ExtendWith(MockitoExtension.class)
 class InterviewRecordingControllerTest {
@@ -68,24 +69,31 @@ class InterviewRecordingControllerTest {
     @Test
     void 파일과_질문_번호를_받아_201로_답한다() throws Exception {
         when(recordingService.upload(eq(USER_ID), eq(42L), eq(3L), any()))
-                .thenReturn(new InterviewRecordingResponse(100L, 42L, 3L, 12L, LocalDateTime.now()));
+                .thenReturn(new InterviewRecordingResponse(100L, 42L, RecordingKind.ANSWER, 3L, "audio/mpeg", 12L,
+                        LocalDateTime.now()));
 
         mockMvc.perform(multipart("/api/interviews/42/recordings")
-                        .file(mp4())
+                        .file(mp3())
                         .param("questionId", "3"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.recordingId").value(100))
+                .andExpect(jsonPath("$.data.kind").value("ANSWER"))
                 .andExpect(jsonPath("$.data.questionId").value(3));
     }
 
-    /** 질문 번호가 없으면 어느 답변의 영상인지 알 수 없다. 받아두면 채점에서 버려질 뿐이다. */
+    /** 질문 번호 없이 오는 것은 면접을 멈출 때 올라오는 면접 화면 전체 영상이다. */
     @Test
-    void 질문_번호가_없으면_400() throws Exception {
-        mockMvc.perform(multipart("/api/interviews/42/recordings").file(mp4()))
-                .andExpect(status().isBadRequest());
+    void 질문_번호가_없으면_면접_전체_영상으로_받는다() throws Exception {
+        when(recordingService.upload(eq(USER_ID), eq(42L), isNull(), any()))
+                .thenReturn(new InterviewRecordingResponse(101L, 42L, RecordingKind.FULL_INTERVIEW, null, "video/mp4",
+                        12L, LocalDateTime.now()));
 
-        verifyNoInteractions(recordingService);
+        mockMvc.perform(multipart("/api/interviews/42/recordings").file(mp4()))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.recordingId").value(101))
+                .andExpect(jsonPath("$.data.kind").value("FULL_INTERVIEW"))
+                .andExpect(jsonPath("$.data.questionId").doesNotExist());
     }
 
     @Test
@@ -97,15 +105,20 @@ class InterviewRecordingControllerTest {
     @Test
     void 서비스가_거절하면_그_상태와_메시지로_답한다() throws Exception {
         when(recordingService.upload(eq(USER_ID), eq(42L), any(), any()))
-                .thenThrow(new BusinessException("MP4 파일만 올릴 수 있습니다.", HttpStatus.UNSUPPORTED_MEDIA_TYPE));
+                .thenThrow(new BusinessException("올릴 수 없는 파일 형식입니다.", HttpStatus.UNSUPPORTED_MEDIA_TYPE));
 
         mockMvc.perform(multipart("/api/interviews/42/recordings").file(mp4()).param("questionId", "3"))
                 .andExpect(status().isUnsupportedMediaType())
-                .andExpect(jsonPath("$.message").value("MP4 파일만 올릴 수 있습니다."));
+                .andExpect(jsonPath("$.message").value("올릴 수 없는 파일 형식입니다."));
     }
 
     private static MockMultipartFile mp4() {
         return new MockMultipartFile("file", "interview-1.mp4", "video/mp4",
                 new byte[]{0, 0, 0, 0x18, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'});
+    }
+
+    private static MockMultipartFile mp3() {
+        return new MockMultipartFile("file", "answer-1.mp3", "audio/mpeg",
+                new byte[]{'I', 'D', '3', 3, 0, 0, 0, 0, 0, 0, 0, 0});
     }
 }
