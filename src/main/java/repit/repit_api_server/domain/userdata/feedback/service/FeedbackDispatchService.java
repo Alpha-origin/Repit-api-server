@@ -15,6 +15,7 @@ import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackDispat
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordingEntity;
+import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 import repit.repit_api_server.domain.userdata.recording.repository.InterviewRecordingRepository;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.exception.ExternalApiException;
@@ -33,15 +34,18 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 면접이 끝난 뒤 피드백 요청을 답변 영상이 모일 때까지 미루고, 실패하면 다시 시도한다.
+ * 면접이 끝난 뒤 피드백 요청을 면접 파일이 모일 때까지 미루고, 실패하면 다시 시도한다.
  *
- * <p>질문·답변은 채팅 서버가 면접을 마칠 때, 영상은 웹이 답변을 마칠 때마다 따로 들어온다.
- * 어느 쪽이 먼저 올지 정해져 있지 않아서 두 입구 모두에서 "다 모였는지"를 본다.
+ * <p>질문·답변은 채팅 서버가 면접을 마칠 때, 답변 음성은 웹이 답변을 마칠 때마다, 면접 화면 전체를
+ * 담은 영상은 웹이 면접을 멈출 때 따로 들어온다. 어느 쪽이 먼저 올지 정해져 있지 않아서 모든
+ * 입구에서 "다 모였는지"를 본다.
  *
  * <ul>
- *   <li>다 모였다 = 기록이 저장됐고, 답한 질문마다 영상이 있다. 그러면 곧바로 요청한다.</li>
- *   <li>텍스트로 답한 질문은 영상이 영영 오지 않는다. 그래서 마지막으로 무언가 들어온 뒤
- *       유예 시간이 지나면 주기 스윕이 있는 영상만으로 요청한다. 영상이 없어도 채점은 한다.</li>
+ *   <li>다 모였다 = 기록이 저장됐고, 답한 질문마다 음성이 있고, 면접 화면 영상이 있다. 그러면 곧바로 요청한다.</li>
+ *   <li>텍스트로 답한 질문은 음성이 영영 오지 않는다. 그래서 마지막으로 무언가 들어온 뒤
+ *       유예 시간이 지나면 주기 스윕이 있는 파일만으로 요청한다. 파일이 없어도 채점은 한다.</li>
+ *   <li>면접 화면 영상은 면접 전체 길이라 업로드가 오래 걸린다. 음성이 한 번이라도 올라온 면접은
+ *       그 영상이 뒤따르므로 더 긴 유예를 준다.</li>
  * </ul>
  *
  * <p>요청 결과에 따라 닫는 방식이 다르다.
@@ -76,6 +80,11 @@ public class FeedbackDispatchService {
     @Value("${app.feedback.dispatch.upload-grace:2m}")
     private Duration uploadGrace;
 
+    // 면접 화면 영상이 아직 없을 때 더 기다리는 시간. 면접 전체를 담은 파일이라 업로드가 몇 분 걸릴 수 있고,
+    // 올라오는 동안에는 활동 시각을 새로 찍을 일이 없어 짧은 유예로는 영상을 두고 먼저 보내게 된다.
+    @Value("${app.feedback.dispatch.full-video-grace:10m}")
+    private Duration fullVideoGrace;
+
     // 차지한 뒤 이만큼 끝나지 않으면 요청하던 프로세스가 사라진 것으로 본다. 한 번의 요청이 걸리는
     // 가장 긴 시간(분석 서버 읽기 제한 60초)보다 넉넉히 길어야 멀쩡히 요청 중인 건을 가로채지 않는다.
     @Value("${app.feedback.dispatch.claim-timeout:5m}")
@@ -107,7 +116,7 @@ public class FeedbackDispatchService {
         dispatchIfComplete(dispatch);
     }
 
-    /** 웹이 영상을 하나 올린 뒤 부른다. 기록이 아직 오지 않았으면 기록이 올 때 함께 본다. */
+    /** 웹이 면접 파일을 하나 올린 뒤 부른다. 기록이 아직 오지 않았으면 기록이 올 때 함께 본다. */
     public void onRecordingUploaded(Long interviewId) {
         FeedbackDispatchEntity dispatch = dispatchRepository.findByInterviewId(interviewId).orElse(null);
         if (dispatch == null) {
@@ -115,7 +124,7 @@ public class FeedbackDispatchService {
         }
         if (dispatchRepository.touchIfWaiting(interviewId, now()) == 0) {
             // 이미 채점을 요청했거나 요청하는 중에 도착한 영상이다. 이번 채점에는 들어가지 않는다.
-            log.warn("피드백을 이미 요청한 면접에 영상이 늦게 올라왔습니다. interviewId={}, status={}",
+            log.warn("피드백을 이미 요청한 면접에 파일이 늦게 올라왔습니다. interviewId={}, status={}",
                     interviewId, dispatch.getStatus());
             return;
         }
@@ -137,6 +146,9 @@ public class FeedbackDispatchService {
         }
 
         for (FeedbackDispatchEntity dispatch : dispatchRepository.findDue(now.minus(uploadGrace), now)) {
+            if (stillWaitingForInterviewVideo(dispatch, now)) {
+                continue;
+            }
             try {
                 dispatch(dispatch.getDispatchId());
             } catch (RuntimeException e) {
@@ -163,15 +175,40 @@ public class FeedbackDispatchService {
         if (dispatch.getStatus() != FeedbackDispatchStatus.WAITING) {
             return;
         }
-        if (hasRecordingForEveryAnswer(dispatch.getInterviewId())) {
+        Long interviewId = dispatch.getInterviewId();
+        if (recordingRepository.existsByInterviewIdAndKind(interviewId, RecordingKind.FULL_INTERVIEW)
+                && hasRecordingForEveryAnswer(interviewId)) {
             dispatch(dispatch.getDispatchId());
         }
     }
 
     /**
-     * 답한 질문마다 영상이 있는지.
+     * 면접 화면 영상이 아직 오지 않아 더 기다릴 건인지.
      *
-     * <p>웹은 영상에 채팅 서버 질문 번호를 붙여 보내고, 답변은 우리 질문 PK를 가리킨다. 그래서 질문을
+     * <p>영상은 면접을 멈출 때 한 번에 올라오고 면접 전체 길이라 업로드가 몇 분 걸린다. 그동안에는
+     * 아무것도 들어오지 않아 짧은 유예만으로는 영상을 두고 먼저 보내게 된다.
+     *
+     * <p>답변 음성이 하나도 없는 면접은 음성으로 답한 적이 없다는 뜻이라 영상도 오지 않는다. 그런 면접까지
+     * 붙잡아 두면 텍스트 면접의 피드백만 늦어진다. 이미 한 번이라도 보낸 건은 재시도라 유예와 상관없다.
+     */
+    private boolean stillWaitingForInterviewVideo(FeedbackDispatchEntity dispatch, LocalDateTime now) {
+        if (dispatch.getAttemptCount() > 0) {
+            return false;
+        }
+        Long interviewId = dispatch.getInterviewId();
+        if (recordingRepository.existsByInterviewIdAndKind(interviewId, RecordingKind.FULL_INTERVIEW)) {
+            return false;
+        }
+        if (!recordingRepository.existsByInterviewIdAndKind(interviewId, RecordingKind.ANSWER)) {
+            return false;
+        }
+        return dispatch.getLastActivityAt().isAfter(now.minus(fullVideoGrace));
+    }
+
+    /**
+     * 답한 질문마다 답변 음성이 있는지.
+     *
+     * <p>웹은 파일에 채팅 서버 질문 번호를 붙여 보내고, 답변은 우리 질문 PK를 가리킨다. 그래서 질문을
      * 거쳐 같은 번호 체계로 맞춘 뒤 견준다. 답변이 하나도 없으면 무엇을 기다려야 할지 모르므로 스윕에 맡긴다.
      */
     private boolean hasRecordingForEveryAnswer(Long interviewId) {
@@ -187,7 +224,8 @@ public class FeedbackDispatchService {
             return false;
         }
 
-        Set<Long> recordedChatIds = recordingRepository.findAllByInterviewIdOrderByRecordingIdAsc(interviewId).stream()
+        Set<Long> recordedChatIds = recordingRepository
+                .findAllByInterviewIdAndKindOrderByRecordingIdAsc(interviewId, RecordingKind.ANSWER).stream()
                 .map(InterviewRecordingEntity::getChatQuestionId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());

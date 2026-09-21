@@ -19,6 +19,7 @@ import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordingEntity;
+import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 import repit.repit_api_server.domain.userdata.recording.repository.InterviewRecordingRepository;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.exception.ExternalApiException;
@@ -50,11 +51,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 면접이 끝난 뒤 피드백 요청을 답변 영상이 모일 때까지 미루고, 실패하면 다시 시도하는지.
+ * 면접이 끝난 뒤 피드백 요청을 면접 파일이 모일 때까지 미루고, 실패하면 다시 시도하는지.
  *
- * <p>질문·답변과 영상은 채팅 서버와 웹에서 따로, 순서 없이 들어온다. 어느 쪽이 먼저 와도 다
- * 모이는 순간 채점을 요청해야 하고, 영상이 끝내 덜 모이면 조용해진 뒤에 요청해야 한다. 같은 면접을
- * 두 번 요청해서는 안 되고, 일시적인 실패로 자동 채점이 영영 멈춰서도 안 된다.
+ * <p>질문·답변은 채팅 서버가, 답변 음성과 면접 화면 영상은 웹이 따로, 순서 없이 보낸다. 어느 쪽이
+ * 먼저 와도 다 모이는 순간 채점을 요청해야 하고, 끝내 덜 모이면 조용해진 뒤에 요청해야 한다.
+ * 면접 화면 영상은 업로드가 길어 더 기다려주되 마냥 붙잡아서는 안 된다. 같은 면접을 두 번 요청해서는
+ * 안 되고, 일시적인 실패로 자동 채점이 영영 멈춰서도 안 된다.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -83,13 +85,17 @@ class FeedbackDispatchServiceTest {
 
     /** DB에 있는 대기 행 하나. 없으면 null. 조건부 갱신도 이 행에 실제 쿼리와 같은 조건으로 적용한다. */
     private FeedbackDispatchEntity stored;
+    /** 질문별 답변 음성. */
     private final List<InterviewRecordingEntity> recordings = new ArrayList<>();
+    /** 면접 화면 전체 영상이 올라와 있는지. */
+    private boolean hasInterviewVideo;
 
     @BeforeEach
     void setUp() {
         service = new FeedbackDispatchService(dispatchRepository, recordingRepository, questionRepository,
                 answerRepository, feedbackService);
         ReflectionTestUtils.setField(service, "uploadGrace", Duration.ofMinutes(2));
+        ReflectionTestUtils.setField(service, "fullVideoGrace", Duration.ofMinutes(10));
         ReflectionTestUtils.setField(service, "claimTimeout", Duration.ofMinutes(5));
         ReflectionTestUtils.setField(service, "maxAttempts", MAX_ATTEMPTS);
         ReflectionTestUtils.setField(service, "retryBaseDelay", Duration.ofSeconds(30));
@@ -98,7 +104,12 @@ class FeedbackDispatchServiceTest {
 
         when(questionRepository.findAllByInterviewId(INTERVIEW_ID)).thenReturn(List.of(ORIGINAL, FOLLOW));
         when(answerRepository.findAllByInterviewId(INTERVIEW_ID)).thenReturn(List.of(answer(201L, 101L), answer(202L, 102L)));
-        when(recordingRepository.findAllByInterviewIdOrderByRecordingIdAsc(INTERVIEW_ID)).thenAnswer(i -> List.copyOf(recordings));
+        when(recordingRepository.findAllByInterviewIdAndKindOrderByRecordingIdAsc(INTERVIEW_ID, RecordingKind.ANSWER))
+                .thenAnswer(i -> List.copyOf(recordings));
+        when(recordingRepository.existsByInterviewIdAndKind(INTERVIEW_ID, RecordingKind.ANSWER))
+                .thenAnswer(i -> !recordings.isEmpty());
+        when(recordingRepository.existsByInterviewIdAndKind(INTERVIEW_ID, RecordingKind.FULL_INTERVIEW))
+                .thenAnswer(i -> hasInterviewVideo);
 
         when(dispatchRepository.findByInterviewId(INTERVIEW_ID)).thenAnswer(i -> Optional.ofNullable(stored));
         when(dispatchRepository.findById(DISPATCH_ID)).thenAnswer(i -> Optional.ofNullable(stored));
@@ -139,7 +150,7 @@ class FeedbackDispatchServiceTest {
     // ---- 언제 요청하나 ----
 
     @Test
-    void 영상이_먼저_다_와_있으면_기록을_받는_순간_채점을_요청한다() {
+    void 면접_파일이_먼저_다_와_있으면_기록을_받는_순간_채점을_요청한다() {
         recordAll();
 
         service.onTranscriptSaved(INTERVIEW_ID);
@@ -149,16 +160,64 @@ class FeedbackDispatchServiceTest {
     }
 
     @Test
-    void 기록이_먼저_오면_기다렸다가_마지막_영상이_올라오는_순간_요청한다() {
+    void 기록이_먼저_오면_기다렸다가_마지막_파일이_올라오는_순간_요청한다() {
         recordings.add(recording(301L, 1L));
         service.onTranscriptSaved(INTERVIEW_ID);
 
-        // 영상이 채점 재료라 덜 모인 채로 요청하면 그 답변은 영상 없이 채점된다.
+        // 음성이 채점 재료라 덜 모인 채로 요청하면 그 답변은 음성 없이 채점된다.
         verify(feedbackService, never()).requestFeedbackForFinishedInterview(anyLong());
         assertThat(stored.getStatus()).isEqualTo(FeedbackDispatchStatus.WAITING);
 
         recordings.add(recording(302L, -5L));
         service.onRecordingUploaded(INTERVIEW_ID);
+
+        // 면접 화면 영상은 면접을 멈출 때 마지막으로 올라온다. 아직 오지 않았다.
+        verify(feedbackService, never()).requestFeedbackForFinishedInterview(anyLong());
+
+        hasInterviewVideo = true;
+        service.onRecordingUploaded(INTERVIEW_ID);
+
+        verify(feedbackService).requestFeedbackForFinishedInterview(INTERVIEW_ID);
+        assertThat(stored.getStatus()).isEqualTo(FeedbackDispatchStatus.DONE);
+    }
+
+    /** 답변 음성이 다 와도 면접 화면 영상이 채점 재료로 남는다. 영상 없이 보내면 그 면접은 화면을 못 본 채 채점된다. */
+    @Test
+    void 면접_화면_영상이_오기_전에는_답변_음성이_다_모여도_요청하지_않는다() {
+        recordings.add(recording(301L, 1L));
+        recordings.add(recording(302L, -5L));
+
+        service.onTranscriptSaved(INTERVIEW_ID);
+
+        verify(feedbackService, never()).requestFeedbackForFinishedInterview(anyLong());
+        assertThat(stored.getStatus()).isEqualTo(FeedbackDispatchStatus.WAITING);
+    }
+
+    /**
+     * 면접 화면 영상은 면접 전체 길이라 업로드가 몇 분 걸린다. 올라오는 동안에는 아무것도 들어오지 않아
+     * 짧은 유예만 보면 조용해진 것으로 보이는데, 거기서 보내면 영상은 늘 늦는 쪽이 된다.
+     */
+    @Test
+    void 면접_화면_영상을_기다리는_동안은_스윕도_보내지_않는다() {
+        recordings.add(recording(301L, 1L));
+        service.onTranscriptSaved(INTERVIEW_ID);
+        dueForSweep();
+
+        service.sweep();
+
+        verify(feedbackService, never()).requestFeedbackForFinishedInterview(anyLong());
+        assertThat(stored.getStatus()).isEqualTo(FeedbackDispatchStatus.WAITING);
+    }
+
+    /** 영상 업로드가 끝내 실패할 수도 있다. 그 면접의 피드백까지 영영 나오지 않게 둘 수는 없다. */
+    @Test
+    void 면접_화면_영상_유예가_지나면_영상_없이_요청한다() {
+        recordings.add(recording(301L, 1L));
+        service.onTranscriptSaved(INTERVIEW_ID);
+        set("lastActivityAt", LocalDateTime.now().minusMinutes(11));
+        dueForSweep();
+
+        service.sweep();
 
         verify(feedbackService).requestFeedbackForFinishedInterview(INTERVIEW_ID);
         assertThat(stored.getStatus()).isEqualTo(FeedbackDispatchStatus.DONE);
@@ -195,7 +254,7 @@ class FeedbackDispatchServiceTest {
     }
 
     @Test
-    void 요청한_뒤에_늦게_올라온_영상으로는_다시_요청하지_않는다() {
+    void 요청한_뒤에_늦게_올라온_파일로는_다시_요청하지_않는다() {
         recordAll();
         service.onTranscriptSaved(INTERVIEW_ID);
 
@@ -206,9 +265,10 @@ class FeedbackDispatchServiceTest {
     }
 
     @Test
-    void 영상이_덜_모인_채_조용해지면_스윕이_요청한다() {
-        // 꼬리질문은 텍스트로 답해 영상이 오지 않는다.
+    void 답변_음성이_덜_모인_채_조용해지면_스윕이_요청한다() {
+        // 꼬리질문은 텍스트로 답해 음성이 오지 않는다.
         recordings.add(recording(301L, 1L));
+        hasInterviewVideo = true;
         service.onTranscriptSaved(INTERVIEW_ID);
         dueForSweep();
 
@@ -219,13 +279,13 @@ class FeedbackDispatchServiceTest {
     }
 
     @Test
-    void 영상이_하나도_없어도_조용해지면_채점은_요청한다() {
+    void 파일이_하나도_없어도_조용해지면_채점은_요청한다() {
         service.onTranscriptSaved(INTERVIEW_ID);
         dueForSweep();
 
         service.sweep();
 
-        // 텍스트로만 답한 면접도 채점 대상이다. 영상은 있으면 싣는 재료일 뿐이다.
+        // 텍스트로만 답한 면접도 채점 대상이다. 음성과 영상은 있으면 싣는 재료일 뿐이다.
         verify(feedbackService).requestFeedbackForFinishedInterview(INTERVIEW_ID);
     }
 
@@ -414,9 +474,11 @@ class FeedbackDispatchServiceTest {
                 new ResourceAccessException("I/O error on POST request", ioCause instanceof IOException io ? io : new IOException(ioCause)));
     }
 
+    /** 답변 음성도 면접 화면 영상도 다 올라온 상태. */
     private void recordAll() {
         recordings.add(recording(301L, 1L));
         recordings.add(recording(302L, -5L));
+        hasInterviewVideo = true;
     }
 
     private void dueForSweep() {
@@ -456,8 +518,9 @@ class FeedbackDispatchServiceTest {
 
     private static InterviewRecordingEntity recording(Long id, Long chatQuestionId) {
         return InterviewRecordingEntity.builder()
-                .recordingId(id).interviewId(INTERVIEW_ID).userId(7L).chatQuestionId(chatQuestionId)
-                .s3Key("interview-recordings/42/" + id + ".mp4").fileSize(1024L).createdAt(LocalDateTime.now())
+                .recordingId(id).interviewId(INTERVIEW_ID).userId(7L)
+                .kind(RecordingKind.ANSWER).chatQuestionId(chatQuestionId).contentType("audio/mpeg")
+                .s3Key("interview-recordings/42/" + id + ".mp3").fileSize(1024L).createdAt(LocalDateTime.now())
                 .build();
     }
 }

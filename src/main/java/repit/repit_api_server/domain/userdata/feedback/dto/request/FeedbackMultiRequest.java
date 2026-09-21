@@ -28,8 +28,10 @@ public class FeedbackMultiRequest {
     // 진행 순서대로. ORIGINAL + FOLLOW를 모두 담는다.
     private List<Question> questions;
     private List<Answer> answers;
-    // 음성으로 답한 질문의 답변 영상. 텍스트로 답한 질문은 없고, 영상이 하나도 없으면 빈 목록이다.
+    // 음성으로 답한 질문의 답변 음성. 텍스트로 답한 질문은 없고, 하나도 없으면 빈 목록이다.
     private List<FeedbackRecording> recordings;
+    // 면접 화면 전체를 담은 영상. 올라오지 않았으면 비어 있다.
+    private FeedbackInterviewVideo interviewVideo;
     private String callbackUrl;
 
     /** role(직책)이 채점 관점을, style(성향)이 짚을 대상을, tone(어조)이 피드백 어조를 정한다. */

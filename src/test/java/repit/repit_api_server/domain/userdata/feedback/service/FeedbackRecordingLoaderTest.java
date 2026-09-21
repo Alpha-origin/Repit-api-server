@@ -8,10 +8,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
+import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackInterviewVideo;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackRecording;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordingEntity;
+import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 import repit.repit_api_server.domain.userdata.recording.repository.InterviewRecordingRepository;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -22,14 +24,15 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 /**
- * 채점 요청에 실을 답변 영상과 질문·답변의 매핑.
+ * 채점 요청에 실을 면접 파일 — 질문마다의 답변 음성과, 면접 화면 전체를 담은 영상 하나.
  *
- * <p>분석 서버가 영상과 질문을 같은 요청 안에서 이어 읽을 수 있어야 한다. 웹이 붙여 보낸 채팅 서버
+ * <p>분석 서버가 음성과 질문을 같은 요청 안에서 이어 읽을 수 있어야 한다. 웹이 붙여 보낸 채팅 서버
  * 번호를 그대로 실으면 질문 목록의 어느 것과도 맞지 않는다.
  */
 @ExtendWith(MockitoExtension.class)
@@ -62,7 +65,7 @@ class FeedbackRecordingLoaderTest {
 
     @Test
     void 채팅_서버_질문_번호로_질문과_답변에_잇고_서명_주소를_싣는다() {
-        when(recordingRepository.findAllByInterviewIdOrderByRecordingIdAsc(INTERVIEW_ID)).thenReturn(List.of(
+        when(recordingRepository.findAllByInterviewIdAndKindOrderByRecordingIdAsc(INTERVIEW_ID, RecordingKind.ANSWER)).thenReturn(List.of(
                 recording(301L, 1L), recording(302L, -5L)));
 
         List<FeedbackRecording> loaded = loader.load(INTERVIEW_ID,
@@ -73,19 +76,19 @@ class FeedbackRecordingLoaderTest {
         assertThat(loaded).extracting(FeedbackRecording::getAnswerId).containsExactly("201", "202");
 
         FeedbackRecording first = loaded.getFirst();
-        assertThat(first.getContentType()).isEqualTo("video/mp4");
+        assertThat(first.getContentType()).isEqualTo("audio/mpeg");
         assertThat(first.getFileSize()).isEqualTo(1024L);
         assertThat(first.getUploadedAt()).isEqualTo(OffsetDateTime.parse("2026-09-17T07:56:31Z"));
-        assertThat(first.getVideoUrl())
+        assertThat(first.getFileUrl())
                 .contains("repit-bucket")
-                .contains("interview-recordings/42/301.mp4")
+                .contains("interview-recordings/42/301.mp3")
                 .contains("X-Amz-Expires=21600");
     }
 
     /** 같은 질문을 다시 녹화했으면 나중 것이 그 답변이다. 둘 다 실으면 분석 서버는 어느 쪽을 볼지 모른다. */
     @Test
     void 같은_질문에_여러_번_올라오면_가장_나중_영상_하나만_싣는다() {
-        when(recordingRepository.findAllByInterviewIdOrderByRecordingIdAsc(INTERVIEW_ID)).thenReturn(List.of(
+        when(recordingRepository.findAllByInterviewIdAndKindOrderByRecordingIdAsc(INTERVIEW_ID, RecordingKind.ANSWER)).thenReturn(List.of(
                 recording(301L, 1L), recording(305L, 1L)));
 
         List<FeedbackRecording> loaded = loader.load(INTERVIEW_ID, List.of(question(101L, 1L)), List.of(answer(201L, 101L)));
@@ -96,7 +99,7 @@ class FeedbackRecordingLoaderTest {
     @Test
     void 질문_진행_순서대로_싣는다() {
         // 꼬리질문 영상이 먼저 올라와도 요청의 questions 순서를 따른다.
-        when(recordingRepository.findAllByInterviewIdOrderByRecordingIdAsc(INTERVIEW_ID)).thenReturn(List.of(
+        when(recordingRepository.findAllByInterviewIdAndKindOrderByRecordingIdAsc(INTERVIEW_ID, RecordingKind.ANSWER)).thenReturn(List.of(
                 recording(301L, -5L), recording(302L, 1L)));
 
         List<FeedbackRecording> loaded = loader.load(INTERVIEW_ID,
@@ -107,7 +110,7 @@ class FeedbackRecordingLoaderTest {
 
     @Test
     void 질문에_이을_수_없는_영상은_싣지_않는다() {
-        when(recordingRepository.findAllByInterviewIdOrderByRecordingIdAsc(INTERVIEW_ID)).thenReturn(List.of(
+        when(recordingRepository.findAllByInterviewIdAndKindOrderByRecordingIdAsc(INTERVIEW_ID, RecordingKind.ANSWER)).thenReturn(List.of(
                 recording(301L, null), recording(302L, 99L), recording(303L, 1L)));
 
         List<FeedbackRecording> loaded = loader.load(INTERVIEW_ID, List.of(question(101L, 1L)), List.of());
@@ -117,7 +120,7 @@ class FeedbackRecordingLoaderTest {
 
     @Test
     void 답변이_저장되지_않은_질문의_영상은_답변_id를_비운다() {
-        when(recordingRepository.findAllByInterviewIdOrderByRecordingIdAsc(INTERVIEW_ID)).thenReturn(List.of(recording(301L, 1L)));
+        when(recordingRepository.findAllByInterviewIdAndKindOrderByRecordingIdAsc(INTERVIEW_ID, RecordingKind.ANSWER)).thenReturn(List.of(recording(301L, 1L)));
 
         List<FeedbackRecording> loaded = loader.load(INTERVIEW_ID, List.of(question(101L, 1L)), List.of());
 
@@ -127,9 +130,35 @@ class FeedbackRecordingLoaderTest {
 
     @Test
     void 영상이_없으면_빈_목록이다() {
-        when(recordingRepository.findAllByInterviewIdOrderByRecordingIdAsc(INTERVIEW_ID)).thenReturn(List.of());
+        when(recordingRepository.findAllByInterviewIdAndKindOrderByRecordingIdAsc(INTERVIEW_ID, RecordingKind.ANSWER)).thenReturn(List.of());
 
         assertThat(loader.load(INTERVIEW_ID, List.of(question(101L, 1L)), List.of())).isEmpty();
+    }
+
+    /** 면접 화면 영상은 답변마다 있는 것이 아니라 면접에 하나뿐이라 요청에 따로 실린다. */
+    @Test
+    void 면접_화면_영상은_따로_싣는다() {
+        when(recordingRepository.findFirstByInterviewIdAndKindOrderByRecordingIdDesc(
+                INTERVIEW_ID, RecordingKind.FULL_INTERVIEW)).thenReturn(Optional.of(fullInterview(401L)));
+
+        FeedbackInterviewVideo video = loader.loadInterviewVideo(INTERVIEW_ID);
+
+        assertThat(video.getRecordingId()).isEqualTo("401");
+        assertThat(video.getContentType()).isEqualTo("video/mp4");
+        assertThat(video.getFileSize()).isEqualTo(52_428_800L);
+        assertThat(video.getUploadedAt()).isEqualTo(OffsetDateTime.parse("2026-09-17T08:10:02Z"));
+        assertThat(video.getVideoUrl())
+                .contains("interview-recordings/42/401.mp4")
+                .contains("X-Amz-Expires=21600");
+    }
+
+    /** 텍스트로만 진행했거나 영상 업로드가 제때 끝나지 않은 면접이다. 그래도 채점은 한다. */
+    @Test
+    void 면접_화면_영상이_없으면_비운다() {
+        when(recordingRepository.findFirstByInterviewIdAndKindOrderByRecordingIdDesc(
+                INTERVIEW_ID, RecordingKind.FULL_INTERVIEW)).thenReturn(Optional.empty());
+
+        assertThat(loader.loadInterviewVideo(INTERVIEW_ID)).isNull();
     }
 
     private static QuestionEntity question(Long id, Long chatId) {
@@ -145,9 +174,19 @@ class FeedbackRecordingLoaderTest {
 
     private static InterviewRecordingEntity recording(Long id, Long chatQuestionId) {
         return InterviewRecordingEntity.builder()
-                .recordingId(id).interviewId(INTERVIEW_ID).userId(7L).chatQuestionId(chatQuestionId)
-                .s3Key("interview-recordings/42/" + id + ".mp4").fileSize(1024L)
+                .recordingId(id).interviewId(INTERVIEW_ID).userId(7L)
+                .kind(RecordingKind.ANSWER).chatQuestionId(chatQuestionId).contentType("audio/mpeg")
+                .s3Key("interview-recordings/42/" + id + ".mp3").fileSize(1024L)
                 .createdAt(LocalDateTime.parse("2026-09-17T07:56:31"))
+                .build();
+    }
+
+    private static InterviewRecordingEntity fullInterview(Long id) {
+        return InterviewRecordingEntity.builder()
+                .recordingId(id).interviewId(INTERVIEW_ID).userId(7L)
+                .kind(RecordingKind.FULL_INTERVIEW).contentType("video/mp4")
+                .s3Key("interview-recordings/42/" + id + ".mp4").fileSize(52_428_800L)
+                .createdAt(LocalDateTime.parse("2026-09-17T08:10:02"))
                 .build();
     }
 }

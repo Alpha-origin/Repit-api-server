@@ -1,14 +1,18 @@
 package repit.repit_api_server.domain.userdata.recording.dto.response;
 
 import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordingEntity;
+import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 
 import java.time.LocalDateTime;
 
-// S3 주소는 내려주지 않는다. 얼굴과 목소리가 담긴 영상이라 주소가 새면 그대로 열린다.
+// S3 주소는 내려주지 않는다. 얼굴과 목소리가 담긴 파일이라 주소가 새면 그대로 열린다.
 public record InterviewRecordingResponse(
         Long recordingId,
         Long interviewId,
+        RecordingKind kind,
+        // 면접 화면 전체 녹화에는 없다.
         Long questionId,
+        String contentType,
         Long fileSize,
         LocalDateTime createdAt
 ) {
@@ -16,7 +20,9 @@ public record InterviewRecordingResponse(
         return new InterviewRecordingResponse(
                 recording.getRecordingId(),
                 recording.getInterviewId(),
+                recording.getKind(),
                 recording.getChatQuestionId(),
+                recording.getContentType(),
                 recording.getFileSize(),
                 recording.getCreatedAt()
         );
