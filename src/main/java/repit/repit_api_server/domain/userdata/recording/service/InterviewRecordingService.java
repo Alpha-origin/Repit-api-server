@@ -24,6 +24,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -46,23 +47,35 @@ public class InterviewRecordingService {
     /**
      * 웹이 올린 면접 파일 하나를 S3에 두고 기록을 남긴다.
      *
-     * <p>질문 번호가 붙어 오면 그 질문의 답변 파일이고, 붙지 않으면 면접 화면 전체를 담은 영상이다.
-     * 웹은 답할 때마다 앞엣것을, 면접을 멈출 때 뒤엣것을 올린다.
+     * <p>웹은 답할 때마다 그 답변의 파일을, 면접을 멈출 때 면접 화면 전체를 담은 영상을 올린다.
+     * 어느 쪽인지는 요청이 {@code kind}로 밝힌다. 밝히지 않으면 답변 파일로 본다.
+     *
+     * <p>종류를 "질문 번호가 붙었는지"로 짐작하지 않는다. 그러면 웹이 질문 번호를 빠뜨린 답변 파일이
+     * 조용히 면접 전체 영상이 되어, 답변 한 토막이 그 면접의 화면으로 채점에 실린다.
      *
      * <p>형식은 확장자나 Content-Type이 아니라 파일 앞 바이트로 판단한다. 둘 다 보내는 쪽이 붙이는
      * 값이라, 믿고 받으면 열리지도 않는 파일이 그대로 분석으로 넘어간다.
      */
-    public InterviewRecordingResponse upload(Long userId, Long interviewId, Long questionId, MultipartFile file) {
+    public InterviewRecordingResponse upload(Long userId, Long interviewId, String rawKind, Long questionId,
+                                             MultipartFile file) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
         if (!userId.equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접에만 녹화 파일을 올릴 수 있습니다.");
         }
+
+        RecordingKind kind = parseKind(rawKind);
+        if (kind == RecordingKind.ANSWER && questionId == null) {
+            throw new BusinessException("답변 파일에는 녹화한 질문 번호(questionId)가 필요합니다.", HttpStatus.BAD_REQUEST);
+        }
+        if (kind == RecordingKind.FULL_INTERVIEW && questionId != null) {
+            throw new BusinessException("면접 화면 전체 녹화는 질문 하나에 매이지 않습니다. questionId를 빼고 보내주세요.",
+                    HttpStatus.BAD_REQUEST);
+        }
         if (file == null || file.isEmpty()) {
             throw new BusinessException("녹화 파일이 비어 있습니다.", HttpStatus.BAD_REQUEST);
         }
 
-        RecordingKind kind = questionId == null ? RecordingKind.FULL_INTERVIEW : RecordingKind.ANSWER;
         RecordingFormat format = detectFormat(file);
         String contentType = contentTypeOf(kind, format, file.getContentType());
 
@@ -93,6 +106,18 @@ public class InterviewRecordingService {
             log.error("녹화 파일을 받은 뒤 채점 준비를 처리하지 못했습니다. interviewId={}", interviewId, e);
         }
         return InterviewRecordingResponse.from(recording);
+    }
+
+    /** 밝히지 않으면 답변 파일이다. 웹이 훨씬 자주 올리는 쪽이고, 잘못 짚어도 질문 번호가 함께 검사된다. */
+    private static RecordingKind parseKind(String rawKind) {
+        if (rawKind == null || rawKind.isBlank()) {
+            return RecordingKind.ANSWER;
+        }
+        try {
+            return RecordingKind.valueOf(rawKind.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("파일 종류(kind)는 ANSWER 또는 FULL_INTERVIEW여야 합니다.", HttpStatus.BAD_REQUEST);
+        }
     }
 
     private RecordingFormat detectFormat(MultipartFile file) {
