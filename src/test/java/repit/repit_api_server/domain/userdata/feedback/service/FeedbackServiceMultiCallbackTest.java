@@ -33,6 +33,9 @@ import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -389,8 +392,13 @@ class FeedbackServiceMultiCallbackTest {
         order.verify(feedbackItemRepository).saveAll(any());
     }
 
-    private ScoreBreakdownResponse breakdown(Integer consistencyScore, AxisScoreResponse... axes) {
-        return new ScoreBreakdownResponse("axis-v1", List.of(axes), consistencyScore);
+    /** 콜백은 산출 근거를 모양을 가리지 않고 받는다. 분석 서버가 보낼 JSON 그대로 만든다. */
+    private JsonNode breakdown(Integer consistencyScore, AxisScoreResponse... axes) {
+        return json(new ScoreBreakdownResponse("axis-v1", List.of(axes), consistencyScore));
+    }
+
+    private JsonNode json(Object value) {
+        return JsonMapper.shared().valueToTree(value);
     }
 
     /** 화면이 "축 점수 × 가중치 = 최종"을 그릴 수 있게 산출 근거가 종합·면접관·문항에 모두 남는다. */
@@ -412,7 +420,7 @@ class FeedbackServiceMultiCallbackTest {
         axisScores.put("INTENT", 88);
         axisScores.put("ACCURACY", null);
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item("2", 11L, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평", axisScores);
+                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores));
 
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech), List.of(item)), null));
@@ -467,7 +475,7 @@ class FeedbackServiceMultiCallbackTest {
         Map<String, Integer> axisScores = new LinkedHashMap<>();
         axisScores.put("DEPTH", -5);
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item("2", 11L, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평", axisScores);
+                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores));
 
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(persona(11L, 78)), List.of(item)), null));

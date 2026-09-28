@@ -30,6 +30,9 @@ import repit.repit_api_server.domain.userdata.question.repository.QuestionReposi
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
 import repit.repit_api_server.global.client.AiServerClient;
 
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -196,11 +199,11 @@ class FeedbackCallbackPersistenceTest {
     void 점수_산출_근거가_저장된다() {
         FeedbackEntity accepted = givenAccepted();
 
-        ScoreBreakdownResponse breakdown = new ScoreBreakdownResponse("axis-v1", List.of(
+        JsonNode breakdown = JsonMapper.shared().valueToTree(new ScoreBreakdownResponse("axis-v1", List.of(
                 new AxisScoreResponse("INTENT", 88, 35),
                 new AxisScoreResponse("DEPTH", 38, 25),
                 new AxisScoreResponse("SPECIFICITY", 63, 25),
-                new AxisScoreResponse("ACCURACY", null, null)), 75);
+                new AxisScoreResponse("ACCURACY", null, null)), 75));
         Map<String, Integer> axisScores = new LinkedHashMap<>();
         axisScores.put("INTENT", 88);
         axisScores.put("ACCURACY", null);
@@ -212,7 +215,8 @@ class FeedbackCallbackPersistenceTest {
         FeedbackCallbackRequest.Persona hr = new FeedbackCallbackRequest.Persona(
                 12L, "HR", null, "담당 답변 없음", List.of(), List.of(), 0, 0, null);
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item(
-                "901", 11L, "질문", "의도", "답변", "모범답변", List.of(), List.of(), "총평", axisScores);
+                "901", 11L, "질문", "의도", "답변", "모범답변", List.of(), List.of(), "총평",
+                JsonMapper.shared().valueToTree(axisScores));
 
         feedbackService.handleCallback(new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech, hr), List.of(item)), null));
@@ -238,6 +242,26 @@ class FeedbackCallbackPersistenceTest {
         assertThat(savedItem.getAxisScores())
                 .containsEntry("INTENT", 88)
                 .containsEntry("ACCURACY", null);
+    }
+
+    /** 컬럼보다 긴 버전을 그대로 넣으면 플러시에서 터지고, 트랜잭션이 롤백돼 채점 결과가 폐기된다. */
+    @Test
+    void 긴_방식_버전이_와도_결과가_저장된다() {
+        FeedbackEntity accepted = givenAccepted();
+        String longVersion = "axis-v1+prompt-2026-09-28-hotfix-1+".repeat(3);
+
+        FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
+                70, 70, 70, "요약", List.of(), List.of(), List.of(), 1, 1,
+                JsonMapper.shared().valueToTree(new ScoreBreakdownResponse(longVersion, List.of(), null)));
+        feedbackService.handleCallback(new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
+                new FeedbackCallbackRequest.Result(overall, null, List.of()), null));
+        flushAndClear();
+
+        FeedbackEntity saved = feedbackRepository.findById(accepted.getFeedbackId()).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(FeedbackStatus.SUCCEEDED);
+        assertThat(saved.getScoringVersion()).hasSize(64);
+        // 원래 값은 산출 근거에 그대로 남는다.
+        assertThat(saved.getScoreBreakdown().getScoringVersion()).isEqualTo(longVersion);
     }
 
     @Test

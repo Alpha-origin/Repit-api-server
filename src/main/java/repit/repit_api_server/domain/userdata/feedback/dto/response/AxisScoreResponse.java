@@ -19,6 +19,6 @@ public class AxisScoreResponse {
     // INTENT / DEPTH / SPECIFICITY / ACCURACY. 표시 이름은 클라이언트가 정한다.
     private String axis;
     private Integer score;
-    // 실제 적용된 가중치(%).
+    // 실제 적용된 가중치(%). 비율(0.35)로 와도 %로 바꿔 둔다.
     private Integer weight;
 }

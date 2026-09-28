@@ -4,8 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import repit.repit_api_server.domain.userdata.feedback.dto.response.AxisScoreResponse;
-import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -142,6 +141,28 @@ class FeedbackCallbackRequestDeserializationTest {
             }
             """;
 
+    // 계약과 다른 모양. 축 점수가 리스트로, 점수가 등급 문자열로, 가중치가 비율로, 축 목록이 객체로 온다.
+    private static final String ODD_BREAKDOWN_CALLBACK = """
+            {
+              "jobId": "job-5",
+              "sessionId": "sess-5",
+              "status": "succeeded",
+              "result": {
+                "overall": {
+                  "totalScore": 71,
+                  "scoreBreakdown": {
+                    "scoringVersion": "axis-v1",
+                    "axes": { "INTENT": { "score": "A", "weight": 0.35 } }
+                  }
+                },
+                "personas": [{ "personaId": 11, "role": "TECH", "score": 71, "scoreBreakdown": "axis-v1" }],
+                "feedbacks": [
+                  { "questionId": "1", "axisScores": [{ "axis": "INTENT", "score": 88 }] }
+                ]
+              }
+            }
+            """;
+
     @Test
     void 점수_산출_근거를_읽는다() {
         contextRunner.run(context -> {
@@ -150,22 +171,36 @@ class FeedbackCallbackRequestDeserializationTest {
             FeedbackCallbackRequest request =
                     objectMapper.readValue(BREAKDOWN_CALLBACK, FeedbackCallbackRequest.class);
 
-            ScoreBreakdownResponse overall = request.getResult().getOverall().getScoreBreakdown();
-            assertThat(overall.getScoringVersion()).isEqualTo("axis-v1");
-            assertThat(overall.getConsistencyScore()).isEqualTo(75);
-            assertThat(overall.getAxes()).extracting(AxisScoreResponse::getAxis)
-                    .containsExactly("INTENT", "DEPTH", "SPECIFICITY", "ACCURACY");
-            assertThat(overall.getAxes().getLast().getWeight()).isEqualTo(15);
+            JsonNode overall = request.getResult().getOverall().getScoreBreakdown();
+            assertThat(overall.get("scoringVersion").stringValue()).isEqualTo("axis-v1");
+            assertThat(overall.get("axes")).hasSize(4);
 
             FeedbackCallbackRequest.Persona tech = request.getResult().getPersonas().getFirst();
-            assertThat(tech.getScoreBreakdown().getAxes()).hasSize(1);
-            assertThat(tech.getScoreBreakdown().getConsistencyScore()).isNull();
+            assertThat(tech.getScoreBreakdown().get("axes")).hasSize(1);
             // 담당 답변이 없는 면접관은 0점이 아니라 비어 있다.
             assertThat(request.getResult().getPersonas().get(1).getScore()).isNull();
 
-            assertThat(request.getResult().getFeedbacks().getFirst().getAxisScores())
-                    .containsEntry("INTENT", 88)
-                    .containsEntry("ACCURACY", null);
+            assertThat(request.getResult().getFeedbacks().getFirst().getAxisScores().get("INTENT").intValue())
+                    .isEqualTo(88);
+        });
+    }
+
+    /**
+     * 산출 근거는 계약이 확정되지 않았다. 모양이 어긋났다고 본문 전체를 읽지 못하면 400이 나가고,
+     * 분석 서버는 재시도 뒤 채점 결과를 폐기한다. 모양이 어떻든 본문은 읽혀야 한다.
+     */
+    @Test
+    void 산출_근거의_모양이_달라도_본문은_읽힌다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+
+            FeedbackCallbackRequest request =
+                    objectMapper.readValue(ODD_BREAKDOWN_CALLBACK, FeedbackCallbackRequest.class);
+
+            assertThat(request.getResult().getOverall().getTotalScore()).isEqualTo(71);
+            assertThat(request.getResult().getOverall().getScoreBreakdown().get("axes").isObject()).isTrue();
+            assertThat(request.getResult().getPersonas().getFirst().getScoreBreakdown().isString()).isTrue();
+            assertThat(request.getResult().getFeedbacks().getFirst().getAxisScores().isArray()).isTrue();
         });
     }
 

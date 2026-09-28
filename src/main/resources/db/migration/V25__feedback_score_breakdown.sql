@@ -3,7 +3,8 @@
 -- 분석 서버는 이제 점수를 LLM에게 직접 매기게 하지 않고, 문항마다 축 등급만 받아 서버에서 계산한다.
 -- 그 과정을 사용자에게 "의도 충족 88점 × 35% ... 최종 71점"처럼 보여주려면 축별 점수와 가중치가 필요하다.
 -- 축은 방식이 바뀌면 늘거나 이름이 바뀔 수 있어 컬럼으로 풀지 않고 받은 모양 그대로 jsonb에 둔다.
-ALTER TABLE feedback ADD COLUMN scoring_version VARCHAR(32);
+-- 버전 문자열은 길이를 보장받지 못한다. 넘치면 서버가 64자로 잘라 넣고, 원래 값은 score_breakdown에 남는다.
+ALTER TABLE feedback ADD COLUMN scoring_version VARCHAR(64);
 ALTER TABLE feedback ADD COLUMN score_breakdown JSONB;
 ALTER TABLE feedback_persona ADD COLUMN score_breakdown JSONB;
 ALTER TABLE feedback_item ADD COLUMN axis_scores JSONB;
