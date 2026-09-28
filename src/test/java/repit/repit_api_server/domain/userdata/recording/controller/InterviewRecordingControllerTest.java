@@ -68,8 +68,8 @@ class InterviewRecordingControllerTest {
 
     @Test
     void 파일과_질문_번호를_받아_201로_답한다() throws Exception {
-        when(recordingService.upload(eq(USER_ID), eq(42L), isNull(), eq(3L), any()))
-                .thenReturn(new InterviewRecordingResponse(100L, 42L, RecordingKind.ANSWER, 3L, "audio/mpeg", 12L,
+        when(recordingService.upload(eq(USER_ID), eq(42L), isNull(), eq(3L), isNull(), any()))
+                .thenReturn(new InterviewRecordingResponse(100L, 42L, RecordingKind.ANSWER, 3L, null, "audio/mpeg", 12L,
                         LocalDateTime.now()));
 
         mockMvc.perform(multipart("/api/interviews/42/recordings")
@@ -85,8 +85,8 @@ class InterviewRecordingControllerTest {
     /** 면접을 멈출 때 올라오는 화면 전체 영상. 종류를 요청이 직접 밝힌다. */
     @Test
     void kind를_붙여_보내면_그대로_넘긴다() throws Exception {
-        when(recordingService.upload(eq(USER_ID), eq(42L), eq("FULL_INTERVIEW"), isNull(), any()))
-                .thenReturn(new InterviewRecordingResponse(101L, 42L, RecordingKind.FULL_INTERVIEW, null, "video/mp4",
+        when(recordingService.upload(eq(USER_ID), eq(42L), eq("FULL_INTERVIEW"), isNull(), isNull(), any()))
+                .thenReturn(new InterviewRecordingResponse(101L, 42L, RecordingKind.FULL_INTERVIEW, null, null, "video/mp4",
                         12L, LocalDateTime.now()));
 
         mockMvc.perform(multipart("/api/interviews/42/recordings")
@@ -99,6 +99,20 @@ class InterviewRecordingControllerTest {
     }
 
     @Test
+    void 종료_이유를_붙여_보내면_그대로_넘긴다() throws Exception {
+        when(recordingService.upload(eq(USER_ID), eq(42L), isNull(), eq(3L), eq("timeout"), any()))
+                .thenReturn(new InterviewRecordingResponse(102L, 42L, RecordingKind.ANSWER, 3L, "timeout", "audio/mpeg",
+                        12L, LocalDateTime.now()));
+
+        mockMvc.perform(multipart("/api/interviews/42/recordings")
+                        .file(mp3())
+                        .param("questionId", "3")
+                        .param("endReason", "timeout"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.endReason").value("timeout"));
+    }
+
+    @Test
     void 파일_파트가_없으면_400() throws Exception {
         mockMvc.perform(multipart("/api/interviews/42/recordings").param("questionId", "3"))
                 .andExpect(status().isBadRequest());
@@ -106,7 +120,7 @@ class InterviewRecordingControllerTest {
 
     @Test
     void 서비스가_거절하면_그_상태와_메시지로_답한다() throws Exception {
-        when(recordingService.upload(eq(USER_ID), eq(42L), any(), any(), any()))
+        when(recordingService.upload(eq(USER_ID), eq(42L), any(), any(), any(), any()))
                 .thenThrow(new BusinessException("올릴 수 없는 파일 형식입니다.", HttpStatus.UNSUPPORTED_MEDIA_TYPE));
 
         mockMvc.perform(multipart("/api/interviews/42/recordings").file(mp4()).param("questionId", "3"))

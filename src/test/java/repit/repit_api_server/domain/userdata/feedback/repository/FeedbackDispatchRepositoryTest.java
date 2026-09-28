@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackDispatchEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchKind;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus;
 
 import java.time.LocalDateTime;
@@ -101,17 +102,38 @@ class FeedbackDispatchRepositoryTest {
         FeedbackDispatchEntity saved = repository.save(waiting(NOW));
         LocalDateTime later = NOW.plusMinutes(5);
 
-        assertThat(repository.touchIfWaiting(saved.getInterviewId(), later)).isEqualTo(1);
+        assertThat(repository.touchIfWaiting(saved.getInterviewId(), FeedbackDispatchKind.FEEDBACK, later)).isEqualTo(1);
         assertThat(repository.findById(saved.getDispatchId()).orElseThrow().getLastActivityAt()).isEqualTo(later);
 
         repository.claim(saved.getDispatchId(), NOW);
-        assertThat(repository.touchIfWaiting(saved.getInterviewId(), later.plusMinutes(1))).isZero();
+        assertThat(repository.touchIfWaiting(saved.getInterviewId(), FeedbackDispatchKind.FEEDBACK, later.plusMinutes(1))).isZero();
+    }
+
+    /** 한 면접에 채점과 음성 분석이 따로 한 행씩 있다. 한쪽을 건드려도 다른 쪽은 그대로다. */
+    @Test
+    void 같은_면접의_채점과_음성_분석은_따로_기다린다() {
+        FeedbackDispatchEntity feedback = repository.save(waiting(NOW));
+        FeedbackDispatchEntity audio = repository.save(waiting(feedback.getInterviewId(), FeedbackDispatchKind.AUDIO_ANALYSIS, NOW));
+        LocalDateTime later = NOW.plusMinutes(5);
+
+        assertThat(repository.touchIfWaiting(audio.getInterviewId(), FeedbackDispatchKind.AUDIO_ANALYSIS, later)).isEqualTo(1);
+
+        assertThat(repository.findById(audio.getDispatchId()).orElseThrow().getLastActivityAt()).isEqualTo(later);
+        assertThat(repository.findById(feedback.getDispatchId()).orElseThrow().getLastActivityAt()).isEqualTo(NOW);
+        assertThat(repository.findByInterviewIdAndKind(audio.getInterviewId(), FeedbackDispatchKind.AUDIO_ANALYSIS))
+                .get().extracting(FeedbackDispatchEntity::getDispatchId).isEqualTo(audio.getDispatchId());
     }
 
     private static FeedbackDispatchEntity waiting(LocalDateTime lastActivityAt) {
+        // 면접마다 종류별로 한 행이라 다른 테스트 데이터와 겹치지 않는 번호를 쓴다.
+        return waiting(ThreadLocalRandom.current().nextLong(1_000_000_000L, Long.MAX_VALUE),
+                FeedbackDispatchKind.FEEDBACK, lastActivityAt);
+    }
+
+    private static FeedbackDispatchEntity waiting(Long interviewId, FeedbackDispatchKind kind, LocalDateTime lastActivityAt) {
         return FeedbackDispatchEntity.builder()
-                // 면접마다 한 행이라 다른 테스트 데이터와 겹치지 않는 번호를 쓴다.
-                .interviewId(ThreadLocalRandom.current().nextLong(1_000_000_000L, Long.MAX_VALUE))
+                .interviewId(interviewId)
+                .kind(kind)
                 .status(FeedbackDispatchStatus.WAITING)
                 .lastActivityAt(lastActivityAt)
                 .build();

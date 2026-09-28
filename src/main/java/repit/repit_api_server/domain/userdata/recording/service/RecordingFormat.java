@@ -17,7 +17,10 @@ enum RecordingFormat {
     WEBM("webm", "video/webm", "audio/webm"),
     OGG("ogg", "video/ogg", "audio/ogg"),
     MP3("mp3", null, "audio/mpeg"),
-    WAV("wav", null, "audio/wav");
+    WAV("wav", null, "audio/wav"),
+    FLAC("flac", null, "audio/flac"),
+    // 컨테이너 없이 프레임만 잇는 AAC. 사파리의 MediaRecorder가 이 형식으로 녹음한다.
+    AAC("aac", null, "audio/aac");
 
     private final String extension;
     private final String videoContentType;
@@ -61,12 +64,16 @@ enum RecordingFormat {
                 && header[2] == (byte) 0xDF && header[3] == (byte) 0xA3) {
             return WEBM;
         }
+        if (startsWith(header, 0, "fLaC")) {
+            return FLAC;
+        }
         if (startsWith(header, 0, "ID3")) {
             return MP3;
         }
-        // ID3 태그 없이 프레임부터 시작하는 MP3. 11비트가 모두 1인 싱크 워드로 시작한다.
+        // 컨테이너 없이 프레임부터 시작하는 MP3와 AAC(ADTS). 둘 다 11비트가 모두 1인 싱크 워드로 시작해서
+        // 그것만으로는 갈리지 않는다. 이어지는 2비트가 계층이고, MPEG에 계층 0은 없어 그 값이면 AAC다.
         if (header.length >= 2 && header[0] == (byte) 0xFF && (header[1] & 0xE0) == 0xE0) {
-            return MP3;
+            return (header[1] & 0x06) == 0 ? AAC : MP3;
         }
         return null;
     }

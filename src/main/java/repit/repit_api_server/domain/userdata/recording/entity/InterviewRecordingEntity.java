@@ -7,6 +7,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingEndReason;
 import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 
 import java.time.LocalDateTime;
@@ -37,6 +38,11 @@ public class InterviewRecordingEntity {
     // 지웠다가 새로 만들어져 PK가 바뀐다. 이 번호는 한 면접 안에서 변하지 않아 질문과 잇는 기준이 된다.
     // 답변 파일에는 반드시 있고, 면접 전체 영상에는 없다.
     private Long chatQuestionId;
+
+    // 답변 녹음을 끝낸 이유. 웹이 보내지 않으면 비어 있고, 면접 전체 영상에는 없다.
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private RecordingEndReason endReason;
 
     // 파일 앞 바이트로 확인한 실제 형식. 보내는 쪽이 붙인 값이 아니다.
     @Column(nullable = false, length = 100)

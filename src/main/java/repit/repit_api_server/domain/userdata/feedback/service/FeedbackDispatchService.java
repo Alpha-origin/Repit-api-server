@@ -8,8 +8,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import repit.repit_api_server.domain.userdata.analysis.service.AudioAnalysisService;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackDispatchEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchKind;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackDispatchRepository;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
@@ -34,19 +36,18 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 면접이 끝난 뒤 피드백 요청을 면접 파일이 모일 때까지 미루고, 실패하면 다시 시도한다.
- *
- * <p>질문·답변은 채팅 서버가 면접을 마칠 때, 답변 음성은 웹이 답변을 마칠 때마다, 면접 화면 전체를
- * 담은 영상은 웹이 면접을 멈출 때 따로 들어온다. 어느 쪽이 먼저 올지 정해져 있지 않아서 모든
- * 입구에서 "다 모였는지"를 본다.
+ * 면접이 끝난 뒤 분석 서버에 맡길 일을 요청하고, 실패하면 다시 시도한다. 일은 두 가지다.
  *
  * <ul>
- *   <li>다 모였다 = 기록이 저장됐고, 답한 질문마다 음성이 있고, 면접 화면 영상이 있다. 그러면 곧바로 요청한다.</li>
- *   <li>텍스트로 답한 질문은 음성이 영영 오지 않는다. 그래서 마지막으로 무언가 들어온 뒤
- *       유예 시간이 지나면 주기 스윕이 있는 파일만으로 요청한다. 파일이 없어도 채점은 한다.</li>
- *   <li>면접 화면 영상은 면접 전체 길이라 업로드가 오래 걸린다. 음성이 한 번이라도 올라온 면접은
- *       그 영상이 뒤따르므로 더 긴 유예를 준다.</li>
+ *   <li>채점({@link FeedbackDispatchKind#FEEDBACK}) — 질문·답변만 있으면 된다. 채팅 서버가 면접 기록을 넘기는
+ *       순간 요청한다.</li>
+ *   <li>음성 분석({@link FeedbackDispatchKind#AUDIO_ANALYSIS}) — 답변 음성이 모여야 한다. 음성은 웹이 답변을
+ *       마칠 때마다 따로 올리고, 기록과 어느 쪽이 먼저 올지 정해져 있지 않아 두 입구 모두에서 "다 모였는지"를 본다.
+ *       답한 질문마다 음성이 있으면 곧바로 요청하고, 텍스트로 답한 질문처럼 음성이 영영 오지 않으면 마지막으로
+ *       무언가 들어온 뒤 유예 시간이 지나 주기 스윕이 있는 음성만으로 요청한다.</li>
  * </ul>
+ *
+ * <p>두 일은 면접마다 대기 행을 하나씩 따로 가진다. 한쪽이 실패해도 다른 쪽은 영향을 받지 않는다.
  *
  * <p>요청 결과에 따라 닫는 방식이 다르다.
  * <ul>
@@ -59,7 +60,7 @@ import java.util.stream.Collectors;
  * </ul>
  * 재시도하는 실패는 시도 한도를 넘으면 FAILED로 닫는다.
  * 실패를 요청한 쪽으로 올리지는 않는다. 기록 저장 응답이 실패면 채팅 서버의 완료 처리가 끊기고,
- * 업로드 응답이 실패면 웹이 같은 영상을 또 올린다.
+ * 업로드 응답이 실패면 웹이 같은 파일을 또 올린다.
  */
 @Service
 @RequiredArgsConstructor
@@ -75,15 +76,11 @@ public class FeedbackDispatchService {
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
     private final FeedbackService feedbackService;
+    private final AudioAnalysisService audioAnalysisService;
 
-    // 기록이 저장된 뒤 영상이 덜 모였을 때, 마지막으로 무언가 들어오고 이만큼 조용하면 있는 영상만 싣고 요청한다.
+    // 기록이 저장된 뒤 음성이 덜 모였을 때, 마지막으로 무언가 들어오고 이만큼 조용하면 있는 음성만으로 요청한다.
     @Value("${app.feedback.dispatch.upload-grace:2m}")
     private Duration uploadGrace;
-
-    // 면접 화면 영상이 아직 없을 때 더 기다리는 시간. 면접 전체를 담은 파일이라 업로드가 몇 분 걸릴 수 있고,
-    // 올라오는 동안에는 활동 시각을 새로 찍을 일이 없어 짧은 유예로는 영상을 두고 먼저 보내게 된다.
-    @Value("${app.feedback.dispatch.full-video-grace:10m}")
-    private Duration fullVideoGrace;
 
     // 차지한 뒤 이만큼 끝나지 않으면 요청하던 프로세스가 사라진 것으로 본다. 한 번의 요청이 걸리는
     // 가장 긴 시간(분석 서버 읽기 제한 60초)보다 넉넉히 길어야 멀쩡히 요청 중인 건을 가로채지 않는다.
@@ -105,26 +102,47 @@ public class FeedbackDispatchService {
     @Value("${app.feedback.pending-timeout:5m}")
     private Duration unconfirmedRetryDelay;
 
-    /** 채팅 서버가 넘긴 질문·답변이 저장된 뒤 부른다. 같은 면접의 기록이 여러 번 와도 한 번만 요청한다. */
+    /**
+     * 채팅 서버가 넘긴 질문·답변이 저장된 뒤 부른다. 채점과 음성 분석을 함께 준비한다.
+     * 같은 면접의 기록이 여러 번 와도 종류마다 한 번만 요청한다.
+     *
+     * <p>한쪽 준비가 넘어져도 다른 쪽은 준비한다. 채점이 막혔다고 음성 분석까지 기다리게 할 이유는 없다.
+     */
     public void onTranscriptSaved(Long interviewId) {
-        FeedbackDispatchEntity dispatch = dispatchRepository.findByInterviewId(interviewId).orElse(null);
-        if (dispatch == null) {
-            dispatch = createWaiting(interviewId);
-        } else {
-            dispatchRepository.touchIfWaiting(interviewId, now());
+        RuntimeException first = null;
+        for (FeedbackDispatchKind kind : FeedbackDispatchKind.values()) {
+            try {
+                FeedbackDispatchEntity dispatch = dispatchRepository.findByInterviewIdAndKind(interviewId, kind)
+                        .orElse(null);
+                if (dispatch == null) {
+                    dispatch = createWaiting(interviewId, kind);
+                } else {
+                    dispatchRepository.touchIfWaiting(interviewId, kind, now());
+                }
+                dispatchIfComplete(dispatch);
+            } catch (RuntimeException e) {
+                if (first == null) {
+                    first = e;
+                } else {
+                    first.addSuppressed(e);
+                }
+            }
         }
-        dispatchIfComplete(dispatch);
+        if (first != null) {
+            throw first;
+        }
     }
 
-    /** 웹이 면접 파일을 하나 올린 뒤 부른다. 기록이 아직 오지 않았으면 기록이 올 때 함께 본다. */
+    /** 웹이 답변 음성을 하나 올린 뒤 부른다. 기록이 아직 오지 않았으면 기록이 올 때 함께 본다. */
     public void onRecordingUploaded(Long interviewId) {
-        FeedbackDispatchEntity dispatch = dispatchRepository.findByInterviewId(interviewId).orElse(null);
+        FeedbackDispatchKind kind = FeedbackDispatchKind.AUDIO_ANALYSIS;
+        FeedbackDispatchEntity dispatch = dispatchRepository.findByInterviewIdAndKind(interviewId, kind).orElse(null);
         if (dispatch == null) {
             return;
         }
-        if (dispatchRepository.touchIfWaiting(interviewId, now()) == 0) {
-            // 이미 채점을 요청했거나 요청하는 중에 도착한 영상이다. 이번 채점에는 들어가지 않는다.
-            log.warn("피드백을 이미 요청한 면접에 파일이 늦게 올라왔습니다. interviewId={}, status={}",
+        if (dispatchRepository.touchIfWaiting(interviewId, kind, now()) == 0) {
+            // 이미 음성 분석을 요청했거나 요청하는 중에 도착한 파일이다. 이번 분석에는 들어가지 않는다.
+            log.warn("음성 분석을 이미 요청한 면접에 파일이 늦게 올라왔습니다. interviewId={}, status={}",
                     interviewId, dispatch.getStatus());
             return;
         }
@@ -132,7 +150,7 @@ public class FeedbackDispatchService {
     }
 
     /**
-     * 끊긴 요청을 되살리고, 영상이 덜 모인 채 조용해졌거나 다시 시도할 때가 된 면접을 요청한다.
+     * 끊긴 요청을 되살리고, 음성이 덜 모인 채 조용해졌거나 다시 시도할 때가 된 건을 요청한다.
      *
      * <p>한 건이 넘어져도 나머지는 계속 보낸다. 실패한 건 하나 때문에 스윕이 멈추면 그 뒤 면접이 모두 매달린다.
      */
@@ -146,63 +164,42 @@ public class FeedbackDispatchService {
         }
 
         for (FeedbackDispatchEntity dispatch : dispatchRepository.findDue(now.minus(uploadGrace), now)) {
-            if (stillWaitingForInterviewVideo(dispatch, now)) {
-                continue;
-            }
             try {
                 dispatch(dispatch.getDispatchId());
             } catch (RuntimeException e) {
-                log.error("미뤄둔 피드백을 요청하지 못했습니다. dispatchId={}, interviewId={}",
-                        dispatch.getDispatchId(), dispatch.getInterviewId(), e);
+                log.error("미뤄둔 요청을 보내지 못했습니다. dispatchId={}, interviewId={}, kind={}",
+                        dispatch.getDispatchId(), dispatch.getInterviewId(), dispatch.getKind(), e);
             }
         }
     }
 
-    private FeedbackDispatchEntity createWaiting(Long interviewId) {
+    private FeedbackDispatchEntity createWaiting(Long interviewId, FeedbackDispatchKind kind) {
         try {
             return dispatchRepository.save(FeedbackDispatchEntity.builder()
                     .interviewId(interviewId)
+                    .kind(kind)
                     .status(FeedbackDispatchStatus.WAITING)
                     .lastActivityAt(now())
                     .build());
         } catch (DataIntegrityViolationException e) {
             // 같은 면접의 기록이 동시에 두 번 들어와 다른 쪽이 먼저 만들었다.
-            return dispatchRepository.findByInterviewId(interviewId).orElseThrow(() -> e);
-        }
-    }
-
-    private void dispatchIfComplete(FeedbackDispatchEntity dispatch) {
-        if (dispatch.getStatus() != FeedbackDispatchStatus.WAITING) {
-            return;
-        }
-        Long interviewId = dispatch.getInterviewId();
-        if (recordingRepository.existsByInterviewIdAndKind(interviewId, RecordingKind.FULL_INTERVIEW)
-                && hasRecordingForEveryAnswer(interviewId)) {
-            dispatch(dispatch.getDispatchId());
+            return dispatchRepository.findByInterviewIdAndKind(interviewId, kind).orElseThrow(() -> e);
         }
     }
 
     /**
-     * 면접 화면 영상이 아직 오지 않아 더 기다릴 건인지.
+     * 요청할 재료가 다 모였으면 곧바로 요청한다.
      *
-     * <p>영상은 면접을 멈출 때 한 번에 올라오고 면접 전체 길이라 업로드가 몇 분 걸린다. 그동안에는
-     * 아무것도 들어오지 않아 짧은 유예만으로는 영상을 두고 먼저 보내게 된다.
-     *
-     * <p>답변 음성이 하나도 없는 면접은 음성으로 답한 적이 없다는 뜻이라 영상도 오지 않는다. 그런 면접까지
-     * 붙잡아 두면 텍스트 면접의 피드백만 늦어진다. 이미 한 번이라도 보낸 건은 재시도라 유예와 상관없다.
+     * <p>채점은 기록만 있으면 되므로 늘 모인 것이다. 음성 분석은 답한 질문마다 음성이 있어야 한다.
      */
-    private boolean stillWaitingForInterviewVideo(FeedbackDispatchEntity dispatch, LocalDateTime now) {
-        if (dispatch.getAttemptCount() > 0) {
-            return false;
+    private void dispatchIfComplete(FeedbackDispatchEntity dispatch) {
+        if (dispatch.getStatus() != FeedbackDispatchStatus.WAITING) {
+            return;
         }
-        Long interviewId = dispatch.getInterviewId();
-        if (recordingRepository.existsByInterviewIdAndKind(interviewId, RecordingKind.FULL_INTERVIEW)) {
-            return false;
+        if (dispatch.getKind() == FeedbackDispatchKind.FEEDBACK
+                || hasRecordingForEveryAnswer(dispatch.getInterviewId())) {
+            dispatch(dispatch.getDispatchId());
         }
-        if (!recordingRepository.existsByInterviewIdAndKind(interviewId, RecordingKind.ANSWER)) {
-            return false;
-        }
-        return dispatch.getLastActivityAt().isAfter(now.minus(fullVideoGrace));
     }
 
     /**
@@ -249,11 +246,21 @@ public class FeedbackDispatchService {
         }
 
         try {
-            // 이미 채점이 접수돼 있으면 FeedbackService가 건너뛴다. 그것도 요청이 끝난 것이다.
-            feedbackService.requestFeedbackForFinishedInterview(interviewId);
+            request(dispatch.getKind(), interviewId);
             close(dispatchRepository.markDone(dispatchId, claimedAt), interviewId);
         } catch (RuntimeException e) {
             handleFailure(dispatchId, claimedAt, interviewId, attempt, e);
+        }
+    }
+
+    /**
+     * 종류에 맞는 요청을 보낸다. 이미 접수된 일이면 각 서비스가 건너뛴다 — 채점은 살아 있는 피드백이 있으면,
+     * 음성 분석은 이미 맡긴 녹음을 빼고 보낸다. 그것도 요청이 끝난 것이다.
+     */
+    private void request(FeedbackDispatchKind kind, Long interviewId) {
+        switch (kind) {
+            case FEEDBACK -> feedbackService.requestFeedbackForFinishedInterview(interviewId);
+            case AUDIO_ANALYSIS -> audioAnalysisService.requestForFinishedInterview(interviewId);
         }
     }
 

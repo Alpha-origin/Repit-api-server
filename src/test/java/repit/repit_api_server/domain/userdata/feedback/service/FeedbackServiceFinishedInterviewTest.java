@@ -77,8 +77,6 @@ class FeedbackServiceFinishedInterviewTest {
     private AnswerRepository answerRepository;
     @Mock
     private AiServerClient aiServerClient;
-    @Mock
-    private FeedbackRecordingLoader recordingLoader;
 
     private FeedbackService service;
 
@@ -86,7 +84,7 @@ class FeedbackServiceFinishedInterviewTest {
     void setUp() {
         service = new FeedbackService(feedbackRepository, feedbackItemRepository, feedbackPersonaRepository,
                 interviewRepository, interviewPersonaRepository, personaRepository, questionRepository,
-                answerRepository, aiServerClient, recordingLoader);
+                answerRepository, aiServerClient);
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
         ReflectionTestUtils.setField(service, "pendingTimeout", Duration.ofMinutes(5));
 

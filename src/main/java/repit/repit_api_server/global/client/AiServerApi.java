@@ -1,10 +1,14 @@
 package repit.repit_api_server.global.client;
 
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.PostExchange;
 import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
+import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
@@ -39,6 +43,14 @@ public interface AiServerApi {
     // N:1 채점. 면접관별 평가가 함께 돌아온다는 점만 다르고 접수·콜백 방식은 같다.
     @PostExchange("/feedback/multi")
     FeedbackAcceptedResponse requestMultiFeedback(@RequestBody FeedbackMultiRequest request);
+
+    // 답변 음성 분석. 채점과 따로 돈다. 202로 접수만 되고 결과는 callbackUrl로 POST된다.
+    @PostExchange("/analysis/audio")
+    AudioAnalysisAcceptedResponse requestAudioAnalysis(@RequestBody AudioAnalysisRequest request);
+
+    // 맡긴 음성 분석의 진행과 결과. 콜백을 끝내 받지 못했을 때 결과를 여기서 가져온다.
+    @GetExchange("/analysis/audio/jobs/{jobId}")
+    AudioAnalysisJobResponse getAudioAnalysisJob(@PathVariable String jobId);
 
     // 면접 시작 직전 원질문 재작성. 마찬가지로 202 접수 후 결과는 콜백으로 온다.
     @PostExchange("/questions/tailor")

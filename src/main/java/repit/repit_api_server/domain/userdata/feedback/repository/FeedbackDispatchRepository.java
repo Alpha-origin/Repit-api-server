@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackDispatchEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchKind;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -19,9 +20,9 @@ import java.util.Optional;
  */
 public interface FeedbackDispatchRepository extends JpaRepository<FeedbackDispatchEntity, Long> {
 
-    Optional<FeedbackDispatchEntity> findByInterviewId(Long interviewId);
+    Optional<FeedbackDispatchEntity> findByInterviewIdAndKind(Long interviewId, FeedbackDispatchKind kind);
 
-    /** 영상이 덜 모인 채 조용해졌고, 다시 시도할 때가 된 건. */
+    /** 파일이 덜 모인 채 조용해졌거나 실패 뒤 다시 시도할 때가 된 건. */
     @Query("select d from FeedbackDispatchEntity d where d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING "
             + "and d.lastActivityAt < :quietBefore "
             + "and (d.nextAttemptAt is null or d.nextAttemptAt <= :now)")
@@ -31,8 +32,9 @@ public interface FeedbackDispatchRepository extends JpaRepository<FeedbackDispat
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update FeedbackDispatchEntity d set d.lastActivityAt = :now "
-            + "where d.interviewId = :interviewId and d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING")
-    int touchIfWaiting(Long interviewId, LocalDateTime now);
+            + "where d.interviewId = :interviewId and d.kind = :kind "
+            + "and d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING")
+    int touchIfWaiting(Long interviewId, FeedbackDispatchKind kind, LocalDateTime now);
 
     /**
      * WAITING -> SENDING. 바뀐 행이 있을 때만 차지한 것이다.

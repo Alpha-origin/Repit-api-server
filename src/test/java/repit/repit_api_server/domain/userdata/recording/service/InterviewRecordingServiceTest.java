@@ -10,6 +10,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.feedback.service.FeedbackDispatchService;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
@@ -17,6 +18,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.recording.dto.response.InterviewRecordingResponse;
 import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordingEntity;
+import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingEndReason;
 import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 import repit.repit_api_server.domain.userdata.recording.repository.InterviewRecordingRepository;
 import repit.repit_api_server.global.exception.BusinessException;
@@ -86,7 +88,7 @@ class InterviewRecordingServiceTest {
 
     @Test
     void 질문_번호가_붙은_음성은_그_질문의_답변_파일로_기록한다() {
-        InterviewRecordingResponse response = service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, mp3File());
+        InterviewRecordingResponse response = service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, mp3File());
 
         ArgumentCaptor<PutObjectRequest> put = ArgumentCaptor.forClass(PutObjectRequest.class);
         verify(s3Client).putObject(put.capture(), any(RequestBody.class));
@@ -111,7 +113,7 @@ class InterviewRecordingServiceTest {
     /** 면접을 멈출 때 올라오는 화면 녹화다. 어느 한 질문의 것이 아니라 질문 번호가 붙지 않는다. */
     @Test
     void kind가_FULL_INTERVIEW면_면접_전체_녹화로_기록한다() {
-        InterviewRecordingResponse response = service.upload(USER_ID, INTERVIEW_ID, "FULL_INTERVIEW", null, mp4File());
+        InterviewRecordingResponse response = service.upload(USER_ID, INTERVIEW_ID, "FULL_INTERVIEW", null, null, mp4File());
 
         ArgumentCaptor<PutObjectRequest> put = ArgumentCaptor.forClass(PutObjectRequest.class);
         verify(s3Client).putObject(put.capture(), any(RequestBody.class));
@@ -134,28 +136,64 @@ class InterviewRecordingServiceTest {
      */
     @Test
     void 답변_파일에_질문_번호가_없으면_400이고_S3에_닿지_않는다() {
-        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, null, mp3File()), HttpStatus.BAD_REQUEST);
-        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "ANSWER", null, mp3File()), HttpStatus.BAD_REQUEST);
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, null, null, mp3File()), HttpStatus.BAD_REQUEST);
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "ANSWER", null, null, mp3File()), HttpStatus.BAD_REQUEST);
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
     /** 면접 전체 영상에 질문 번호가 붙으면 웹이 둘 중 하나를 잘못 보낸 것이다. 짐작해서 저장하지 않는다. */
     @Test
     void 면접_전체_녹화에_질문_번호가_붙으면_400() {
-        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "FULL_INTERVIEW", QUESTION_ID, mp4File()),
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "FULL_INTERVIEW", QUESTION_ID, null, mp4File()),
+                HttpStatus.BAD_REQUEST);
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    /** 음성 분석이 시간 제한으로 잘린 답변을 가려 보려면 종료 이유가 답변 파일에 붙어 있어야 한다. */
+    @Test
+    void 답변_녹음의_종료_이유를_함께_기록하고_소문자로_돌려준다() {
+        InterviewRecordingResponse response =
+                service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, " Timeout ", mp3File());
+
+        ArgumentCaptor<InterviewRecordingEntity> saved = ArgumentCaptor.forClass(InterviewRecordingEntity.class);
+        verify(recordingRepository).save(saved.capture());
+        assertThat(saved.getValue().getEndReason()).isEqualTo(RecordingEndReason.TIMEOUT);
+        assertThat(response.endReason()).isEqualTo("timeout");
+    }
+
+    @Test
+    void 종료_이유를_빼면_비워_둔다() {
+        service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, mp3File());
+
+        ArgumentCaptor<InterviewRecordingEntity> saved = ArgumentCaptor.forClass(InterviewRecordingEntity.class);
+        verify(recordingRepository).save(saved.capture());
+        assertThat(saved.getValue().getEndReason()).isNull();
+    }
+
+    @Test
+    void 모르는_종료_이유면_400이고_S3에_닿지_않는다() {
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, "cancelled", mp3File()),
+                HttpStatus.BAD_REQUEST);
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    /** 면접 전체 영상은 답변 하나를 끝낸 것이 아니다. 종료 이유가 붙으면 웹이 둘 중 하나를 잘못 보낸 것이다. */
+    @Test
+    void 면접_전체_녹화에_종료_이유가_붙으면_400() {
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "FULL_INTERVIEW", null, "user", mp4File()),
                 HttpStatus.BAD_REQUEST);
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
     @Test
     void 모르는_kind면_400() {
-        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "WHOLE", null, mp4File()), HttpStatus.BAD_REQUEST);
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "WHOLE", null, null, mp4File()), HttpStatus.BAD_REQUEST);
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
     @Test
     void kind는_대소문자를_가리지_않는다() {
-        service.upload(USER_ID, INTERVIEW_ID, " full_interview ", null, mp4File());
+        service.upload(USER_ID, INTERVIEW_ID, " full_interview ", null, null, mp4File());
 
         ArgumentCaptor<InterviewRecordingEntity> saved = ArgumentCaptor.forClass(InterviewRecordingEntity.class);
         verify(recordingRepository).save(saved.capture());
@@ -168,7 +206,7 @@ class InterviewRecordingServiceTest {
         MockMultipartFile webm = new MockMultipartFile("file", "answer.webm", "audio/webm",
                 new byte[]{0x1A, 0x45, (byte) 0xDF, (byte) 0xA3, 0, 0, 0, 0, 0, 0, 0, 0});
 
-        service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, webm);
+        service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, webm);
 
         ArgumentCaptor<PutObjectRequest> put = ArgumentCaptor.forClass(PutObjectRequest.class);
         verify(s3Client).putObject(put.capture(), any(RequestBody.class));
@@ -179,7 +217,7 @@ class InterviewRecordingServiceTest {
     /** 면접 화면 녹화 자리에 소리만 담는 형식이 오면 화면은 어디에도 없다. */
     @Test
     void 면접_전체_녹화_자리에_소리만_담는_형식이_오면_415() {
-        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "FULL_INTERVIEW", null, mp3File()),
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "FULL_INTERVIEW", null, null, mp3File()),
                 HttpStatus.UNSUPPORTED_MEDIA_TYPE);
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
@@ -188,7 +226,7 @@ class InterviewRecordingServiceTest {
     void 없는_면접이면_404() {
         when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.empty());
 
-        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, mp3File()), HttpStatus.NOT_FOUND);
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, mp3File()), HttpStatus.NOT_FOUND);
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
@@ -196,7 +234,7 @@ class InterviewRecordingServiceTest {
     void 남의_면접이면_403이고_S3에_닿지_않는다() {
         when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(interview(OTHER_USER_ID)));
 
-        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, mp3File()), HttpStatus.FORBIDDEN);
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, mp3File()), HttpStatus.FORBIDDEN);
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
@@ -204,7 +242,7 @@ class InterviewRecordingServiceTest {
     void 빈_파일이면_400() {
         MockMultipartFile empty = new MockMultipartFile("file", "a.mp3", "audio/mpeg", new byte[0]);
 
-        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, empty), HttpStatus.BAD_REQUEST);
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, empty), HttpStatus.BAD_REQUEST);
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
@@ -214,7 +252,7 @@ class InterviewRecordingServiceTest {
         MockMultipartFile text = new MockMultipartFile("file", "a.mp4", "video/mp4",
                 "not a media file".getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
-        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, text), HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, text), HttpStatus.UNSUPPORTED_MEDIA_TYPE);
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
@@ -223,15 +261,31 @@ class InterviewRecordingServiceTest {
      * 답변 파일 자리에 MP4가 와도 웹이 video라고 했으면 그대로 남긴다.
      */
     @Test
-    void 답변_파일이_영상이라고_밝히면_영상으로_기록한다() {
+    void 답변_파일은_영상이라고_밝혀도_음성으로_기록한다() {
         MockMultipartFile video = new MockMultipartFile("file", "answer.mp4", "video/mp4", MP4_BYTES);
 
-        service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, video);
+        service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, video);
 
         ArgumentCaptor<InterviewRecordingEntity> saved = ArgumentCaptor.forClass(InterviewRecordingEntity.class);
         verify(recordingRepository).save(saved.capture());
         assertThat(saved.getValue().getKind()).isEqualTo(RecordingKind.ANSWER);
-        assertThat(saved.getValue().getContentType()).isEqualTo("video/mp4");
+        // 음성 분석은 video/ MIME을 받지 않는다. 그대로 저장하면 그 한 건 때문에 요청 전체가 거절된다.
+        assertThat(saved.getValue().getContentType()).isEqualTo("audio/mp4");
+    }
+
+    /** 분석 서버가 받는 상한이다. 받아 두면 그 답변은 영영 분석되지 않으니 업로드에서 돌려보낸다. */
+    @Test
+    void 답변_음성이_100MB를_넘으면_413이고_S3에_닿지_않는다() {
+        MultipartFile tooLarge = new MockMultipartFile("file", "answer.mp3", "audio/mpeg", MP3_BYTES) {
+            @Override
+            public long getSize() {
+                return 100_000_001L;
+            }
+        };
+
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, tooLarge),
+                HttpStatus.CONTENT_TOO_LARGE);
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
     @Test
@@ -239,7 +293,7 @@ class InterviewRecordingServiceTest {
         when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
                 .thenThrow(SdkClientException.create("down"));
 
-        assertThatThrownBy(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, mp3File()))
+        assertThatThrownBy(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, mp3File()))
                 .isInstanceOf(ExternalApiException.class);
         verify(recordingRepository, never()).save(any());
     }
@@ -248,7 +302,7 @@ class InterviewRecordingServiceTest {
     void 기록이_실패하면_올린_파일을_지운다() {
         doThrow(new IllegalStateException("db down")).when(recordingRepository).save(any());
 
-        assertThatThrownBy(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, mp3File()))
+        assertThatThrownBy(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, mp3File()))
                 .isInstanceOf(IllegalStateException.class);
 
         ArgumentCaptor<PutObjectRequest> put = ArgumentCaptor.forClass(PutObjectRequest.class);
@@ -260,7 +314,7 @@ class InterviewRecordingServiceTest {
 
     @Test
     void 저장한_뒤에_채점_대기에_알린다() {
-        service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, mp3File());
+        service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, mp3File());
 
         verify(feedbackDispatchService).onRecordingUploaded(INTERVIEW_ID);
     }
@@ -269,7 +323,7 @@ class InterviewRecordingServiceTest {
     void 채점_대기_처리가_실패해도_업로드는_성공으로_답한다() {
         doThrow(new IllegalStateException("ai down")).when(feedbackDispatchService).onRecordingUploaded(INTERVIEW_ID);
 
-        InterviewRecordingResponse response = service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, mp3File());
+        InterviewRecordingResponse response = service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, mp3File());
 
         // 실패로 답하면 웹은 이미 저장된 파일을 다시 올린다.
         assertThat(response.recordingId()).isEqualTo(100L);
@@ -279,7 +333,7 @@ class InterviewRecordingServiceTest {
     void 기록이_실패하면_채점_대기에_알리지_않는다() {
         doThrow(new IllegalStateException("db down")).when(recordingRepository).save(any());
 
-        assertThatThrownBy(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, mp3File()))
+        assertThatThrownBy(() -> service.upload(USER_ID, INTERVIEW_ID, null, QUESTION_ID, null, mp3File()))
                 .isInstanceOf(IllegalStateException.class);
         verify(feedbackDispatchService, never()).onRecordingUploaded(any());
     }

@@ -23,10 +23,6 @@ public class FeedbackSoloRequest {
     private String callbackUrl;
     private List<Question> questions;
     private List<Answer> answers;
-    // 음성으로 답한 질문의 답변 음성. 텍스트로 답한 질문은 없고, 하나도 없으면 빈 목록이다.
-    private List<FeedbackRecording> recordings;
-    // 면접 화면 전체를 담은 영상. 올라오지 않았으면 비어 있다.
-    private FeedbackInterviewVideo interviewVideo;
 
     @Getter
     @Builder
