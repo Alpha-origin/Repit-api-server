@@ -27,6 +27,9 @@ public class InterviewRecordingController {
      * <p>questionId는 그때 답하던 채팅 서버 질문 번호이고 답변 파일에 필수다. 채점에서 이 번호로
      * 질문·답변에 이어 붙는데, 우리 질문 행은 면접이 끝나야 생기므로 업로드 시점에 가진 유일한
      * 연결 고리다. 빠지면 어느 답변의 것인지 영영 알 수 없어 400으로 돌려보낸다.
+     *
+     * <p>endReason은 답변 녹음을 끝낸 이유다 — user, timeout, interrupted, unknown. 답변 파일에만 붙고
+     * 생략할 수 있다. 음성 분석이 시간 제한으로 잘린 답변을 가려 보는 데 쓴다.
      */
     @PostMapping(value = "/{interviewId}/recordings", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
@@ -35,7 +38,9 @@ public class InterviewRecordingController {
             @PathVariable Long interviewId,
             @RequestParam(required = false) String kind,
             @RequestParam(required = false) Long questionId,
+            @RequestParam(required = false) String endReason,
             @RequestPart("file") MultipartFile file) {
-        return ApiResponse.created(recordingService.upload(authUser.id(), interviewId, kind, questionId, file));
+        return ApiResponse.created(
+                recordingService.upload(authUser.id(), interviewId, kind, questionId, endReason, file));
     }
 }

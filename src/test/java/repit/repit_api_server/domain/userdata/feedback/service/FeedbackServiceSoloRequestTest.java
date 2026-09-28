@@ -12,8 +12,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
-import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackInterviewVideo;
-import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackRecording;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRepository;
@@ -81,8 +79,6 @@ class FeedbackServiceSoloRequestTest {
     private AnswerRepository answerRepository;
     @Mock
     private AiServerClient aiServerClient;
-    @Mock
-    private FeedbackRecordingLoader recordingLoader;
 
     /** 인증을 마친 요청의 주인. 확인은 시큐리티 필터가 끝냈고, 서비스는 id만 받는다. */
     private static final Long USER_ID = 7L;
@@ -93,7 +89,7 @@ class FeedbackServiceSoloRequestTest {
     void setUp() {
         service = new FeedbackService(feedbackRepository, feedbackItemRepository, feedbackPersonaRepository,
                 interviewRepository, interviewPersonaRepository, personaRepository, questionRepository,
-                answerRepository, aiServerClient, recordingLoader);
+                answerRepository, aiServerClient);
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
 
         UserResponse user = mock(UserResponse.class);
@@ -263,64 +259,6 @@ class FeedbackServiceSoloRequestTest {
 
         // 어조는 성향과 독립된 축이다. 성향만 보내면 분석 서버가 세기를 성향에서 유추하게 된다.
         assertThat(captureRequest().getPersonaTone()).isEqualTo("PRESSURING");
-    }
-
-    /** 음성은 피드백 재료다. 따로 분석을 맡기지 않고 채점 요청에 함께 실어야 결과가 한 번에 돌아온다. */
-    @Test
-    void 답변_음성을_채점_요청에_함께_싣는다() {
-        List<FeedbackRecording> recordings = List.of(FeedbackRecording.builder()
-                .recordingId("301").questionId("901").fileUrl("https://signed").contentType("audio/mpeg").build());
-        when(recordingLoader.load(eq(3L), anyList(), anyList())).thenReturn(recordings);
-
-        service.requestFeedback(USER_ID, 3L);
-
-        assertThat(captureRequest().getRecordings()).isSameAs(recordings);
-    }
-
-    @Test
-    void 음성이_없으면_빈_목록으로_보낸다() {
-        service.requestFeedback(USER_ID, 3L);
-
-        assertThat(captureRequest().getRecordings()).isEmpty();
-    }
-
-    /** 면접 화면 영상은 질문 하나에 매이지 않아 답변 음성과 다른 자리에 실린다. */
-    @Test
-    void 면접_화면_영상을_채점_요청에_함께_싣는다() {
-        FeedbackInterviewVideo video = FeedbackInterviewVideo.builder()
-                .recordingId("401").videoUrl("https://signed-video").contentType("video/mp4").build();
-        when(recordingLoader.loadInterviewVideo(3L)).thenReturn(video);
-
-        service.requestFeedback(USER_ID, 3L);
-
-        assertThat(captureRequest().getInterviewVideo()).isSameAs(video);
-    }
-
-    @Test
-    void 면접_화면_영상이_없으면_비운_채_보낸다() {
-        service.requestFeedback(USER_ID, 3L);
-
-        assertThat(captureRequest().getInterviewVideo()).isNull();
-    }
-
-    @Test
-    void N대1_채점에도_면접_파일을_싣는다() {
-        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.COMPLETED, null)));
-        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(5L).personaOrder(0).build(),
-                InterviewPersonaEntity.builder().interviewId(3L).personaId(6L).personaOrder(1).build()));
-        when(personaRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(persona(Type.REALISTIC), hrPersona()));
-        List<FeedbackRecording> recordings = List.of(FeedbackRecording.builder().recordingId("301").build());
-        when(recordingLoader.load(eq(3L), anyList(), anyList())).thenReturn(recordings);
-        FeedbackInterviewVideo video = FeedbackInterviewVideo.builder().recordingId("401").build();
-        when(recordingLoader.loadInterviewVideo(3L)).thenReturn(video);
-
-        service.requestFeedback(USER_ID, 3L);
-
-        ArgumentCaptor<FeedbackMultiRequest> sent = ArgumentCaptor.forClass(FeedbackMultiRequest.class);
-        verify(aiServerClient).requestMultiFeedback(sent.capture());
-        assertThat(sent.getValue().getRecordings()).isSameAs(recordings);
-        assertThat(sent.getValue().getInterviewVideo()).isSameAs(video);
     }
 
     @Test

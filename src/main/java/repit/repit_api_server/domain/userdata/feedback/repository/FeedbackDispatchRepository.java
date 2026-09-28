@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackDispatchEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchKind;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -19,9 +20,9 @@ import java.util.Optional;
  */
 public interface FeedbackDispatchRepository extends JpaRepository<FeedbackDispatchEntity, Long> {
 
-    Optional<FeedbackDispatchEntity> findByInterviewId(Long interviewId);
+    Optional<FeedbackDispatchEntity> findByInterviewIdAndKind(Long interviewId, FeedbackDispatchKind kind);
 
-    /** 영상이 덜 모인 채 조용해졌고, 다시 시도할 때가 된 건. */
+    /** 파일이 덜 모인 채 조용해졌거나 실패 뒤 다시 시도할 때가 된 건. */
     @Query("select d from FeedbackDispatchEntity d where d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING "
             + "and d.lastActivityAt < :quietBefore "
             + "and (d.nextAttemptAt is null or d.nextAttemptAt <= :now)")
@@ -31,8 +32,9 @@ public interface FeedbackDispatchRepository extends JpaRepository<FeedbackDispat
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update FeedbackDispatchEntity d set d.lastActivityAt = :now "
-            + "where d.interviewId = :interviewId and d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING")
-    int touchIfWaiting(Long interviewId, LocalDateTime now);
+            + "where d.interviewId = :interviewId and d.kind = :kind "
+            + "and d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING")
+    int touchIfWaiting(Long interviewId, FeedbackDispatchKind kind, LocalDateTime now);
 
     /**
      * WAITING -> SENDING. 바뀐 행이 있을 때만 차지한 것이다.
@@ -47,6 +49,26 @@ public interface FeedbackDispatchRepository extends JpaRepository<FeedbackDispat
             + "where d.dispatchId = :dispatchId and d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING "
             + "and (d.nextAttemptAt is null or d.nextAttemptAt <= :now)")
     int claim(Long dispatchId, LocalDateTime now);
+
+    /**
+     * 끝난(DONE) 건을 다시 기다리는 자리로 돌려놓는다.
+     *
+     * <p>접수까지 성공하면 이 행은 DONE으로 닫힌다. 그런데 음성 분석은 접수가 끝이 아니라 결과 콜백이
+     * 와야 끝이고, 그 콜백이 유실되면 다시 확인해 줄 사람이 없다. 그때 이 갱신으로 되돌려, 스윕이 요청
+     * 경로를 한 번 더 태우게 한다(그 안에서 작업을 조회하거나 같은 요청 id로 다시 보낸다).
+     *
+     * <p>시도 횟수는 그대로 둔다. 되돌릴 때마다 초기화하면 결과가 영영 오지 않는 면접을 끝없이 다시
+     * 보내게 된다. 유지하면 기존 시도 한도가 그대로 상한이 되어, 넘는 순간 FAILED로 닫힌다.
+     *
+     * <p>FAILED는 되돌리지 않는다. 사람이 볼 실패로 이미 닫힌 건이다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update FeedbackDispatchEntity d set d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING, "
+            + "d.claimedAt = null, d.nextAttemptAt = null, d.lastActivityAt = :lastActivityAt, d.lastError = :reason "
+            + "where d.interviewId = :interviewId and d.kind = :kind "
+            + "and d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.DONE")
+    int reopen(Long interviewId, FeedbackDispatchKind kind, LocalDateTime lastActivityAt, String reason);
 
     /**
      * 차지한 채 오래 끝나지 않은 건을 WAITING으로 되돌린다.

@@ -8,11 +8,12 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchKind;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus;
 
 import java.time.LocalDateTime;
 
-/** 면접이 끝난 뒤 피드백 요청을 답변 영상이 모일 때까지 미뤄두는 자리. 면접당 한 행이다. */
+/** 면접이 끝난 뒤 분석 서버에 맡길 일을 미뤄두고 다시 시도하는 자리. 면접마다 종류별로 한 행이다. */
 @Entity
 @Table(name = "feedback_dispatch")
 @Getter
@@ -25,8 +26,12 @@ public class FeedbackDispatchEntity {
     @Column(name = "dispatch_id")
     private Long dispatchId;
 
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false)
     private Long interviewId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 32)
+    private FeedbackDispatchKind kind;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)

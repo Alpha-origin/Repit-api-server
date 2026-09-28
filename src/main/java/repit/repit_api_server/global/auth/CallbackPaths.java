@@ -17,6 +17,7 @@ public final class CallbackPaths {
             "/api/questions/tailor/callback",
             "/api/questions/tailor/multi/callback",
             "/api/feedbacks/callback",
+            "/api/analyses/audio/callback",
             // 채팅 서버가 면접 기록을 넘기는 자리. 질문·답변을 지우고 다시 넣은 뒤
             // 채점까지 이어지므로 인증 없이 열어두면 남의 면접을 통째로 갈아치울 수 있다.
             "/api/interviews/result"

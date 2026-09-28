@@ -4,6 +4,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
+import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
@@ -62,6 +65,18 @@ public class AiServerClient {
     public FeedbackAcceptedResponse requestMultiFeedback(FeedbackMultiRequest request) {
         return executor.execute(SERVER_NAME,
                 () -> aiServerApi.requestMultiFeedback(request),
+                this::resolveMessage, false);
+    }
+
+    public AudioAnalysisAcceptedResponse requestAudioAnalysis(AudioAnalysisRequest request) {
+        return executor.execute(SERVER_NAME,
+                () -> aiServerApi.requestAudioAnalysis(request),
+                this::resolveMessage, false);
+    }
+
+    public AudioAnalysisJobResponse getAudioAnalysisJob(String jobId) {
+        return executor.execute(SERVER_NAME,
+                () -> aiServerApi.getAudioAnalysisJob(jobId),
                 this::resolveMessage, false);
     }
 

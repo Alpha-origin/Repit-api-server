@@ -29,6 +29,19 @@ class RecordingFormatTest {
         assertThat(RecordingFormat.detect(bytes(0xFF, 0xFB, 0x90, 0x00))).isEqualTo(RecordingFormat.MP3);
     }
 
+    /** 사파리는 컨테이너 없는 AAC로 녹음한다. ADTS도 MP3와 같은 싱크 워드로 시작해 계층 비트로 가른다. */
+    @Test
+    void 컨테이너_없는_AAC를_MP3와_가른다() {
+        assertThat(RecordingFormat.detect(bytes(0xFF, 0xF1, 0x50, 0x80))).isEqualTo(RecordingFormat.AAC);
+        assertThat(RecordingFormat.detect(bytes(0xFF, 0xF9, 0x50, 0x80))).isEqualTo(RecordingFormat.AAC);
+        assertThat(RecordingFormat.detect(bytes(0xFF, 0xFB, 0x90, 0x00))).isEqualTo(RecordingFormat.MP3);
+    }
+
+    @Test
+    void FLAC도_알아본다() {
+        assertThat(RecordingFormat.detect(ascii("fLaC____"))).isEqualTo(RecordingFormat.FLAC);
+    }
+
     @Test
     void 아는_형식이_아니면_비운다() {
         assertThat(RecordingFormat.detect(ascii("not a media file"))).isNull();

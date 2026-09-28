@@ -12,6 +12,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.recording.dto.response.InterviewRecordingResponse;
 import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordingEntity;
+import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingEndReason;
 import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 import repit.repit_api_server.domain.userdata.recording.repository.InterviewRecordingRepository;
 import repit.repit_api_server.global.exception.BusinessException;
@@ -35,6 +36,8 @@ public class InterviewRecordingService {
 
     private static final String KEY_PREFIX = "interview-recordings/";
     private static final int HEADER_BYTES = 12;
+    // 분석 서버가 받는 녹음 크기의 상한. 넘는 파일이 하나라도 실리면 음성 분석 요청 전체가 거절된다.
+    private static final long MAX_ANSWER_BYTES = 100_000_000L;
 
     private final InterviewRepository interviewRepository;
     private final InterviewRecordingRepository recordingRepository;
@@ -57,7 +60,7 @@ public class InterviewRecordingService {
      * 값이라, 믿고 받으면 열리지도 않는 파일이 그대로 분석으로 넘어간다.
      */
     public InterviewRecordingResponse upload(Long userId, Long interviewId, String rawKind, Long questionId,
-                                             MultipartFile file) {
+                                             String rawEndReason, MultipartFile file) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
         if (!userId.equals(interview.getUserId())) {
@@ -72,12 +75,23 @@ public class InterviewRecordingService {
             throw new BusinessException("면접 화면 전체 녹화는 질문 하나에 매이지 않습니다. questionId를 빼고 보내주세요.",
                     HttpStatus.BAD_REQUEST);
         }
+        RecordingEndReason endReason = parseEndReason(rawEndReason);
+        if (kind == RecordingKind.FULL_INTERVIEW && endReason != null) {
+            throw new BusinessException("면접 화면 전체 녹화에는 종료 이유(endReason)를 붙이지 않습니다.",
+                    HttpStatus.BAD_REQUEST);
+        }
         if (file == null || file.isEmpty()) {
             throw new BusinessException("녹화 파일이 비어 있습니다.", HttpStatus.BAD_REQUEST);
         }
 
+        if (kind == RecordingKind.ANSWER && file.getSize() > MAX_ANSWER_BYTES) {
+            // 음성 분석은 100,000,000바이트까지만 받는다. 받아 두면 그 답변은 영영 분석되지 않으므로
+            // 여기서 돌려보내 웹이 다시 녹음하게 한다.
+            throw new BusinessException("답변 음성은 100MB까지 올릴 수 있습니다.", HttpStatus.CONTENT_TOO_LARGE);
+        }
+
         RecordingFormat format = detectFormat(file);
-        String contentType = contentTypeOf(kind, format, file.getContentType());
+        String contentType = contentTypeOf(kind, format);
 
         String key = KEY_PREFIX + interviewId + "/" + UUID.randomUUID() + "." + format.extension();
         putObject(key, contentType, file);
@@ -89,6 +103,7 @@ public class InterviewRecordingService {
                     .userId(userId)
                     .kind(kind)
                     .chatQuestionId(questionId)
+                    .endReason(endReason)
                     .contentType(contentType)
                     .s3Key(key)
                     .fileSize(file.getSize())
@@ -99,11 +114,11 @@ public class InterviewRecordingService {
             throw e;
         }
 
-        // 파일은 이미 저장됐다. 채점 준비가 넘어져도 업로드는 성공으로 답한다 — 실패로 답하면 웹이 같은 파일을 또 올린다.
+        // 파일은 이미 저장됐다. 음성 분석 준비가 넘어져도 업로드는 성공으로 답한다 — 실패로 답하면 웹이 같은 파일을 또 올린다.
         try {
             feedbackDispatchService.onRecordingUploaded(interviewId);
         } catch (RuntimeException e) {
-            log.error("녹화 파일을 받은 뒤 채점 준비를 처리하지 못했습니다. interviewId={}", interviewId, e);
+            log.error("녹화 파일을 받은 뒤 음성 분석 준비를 처리하지 못했습니다. interviewId={}", interviewId, e);
         }
         return InterviewRecordingResponse.from(recording);
     }
@@ -120,6 +135,19 @@ public class InterviewRecordingService {
         }
     }
 
+    /** 생략하면 비워 둔다. 분석 서버에는 unknown으로 넘어간다. */
+    private static RecordingEndReason parseEndReason(String rawEndReason) {
+        if (rawEndReason == null || rawEndReason.isBlank()) {
+            return null;
+        }
+        try {
+            return RecordingEndReason.valueOf(rawEndReason.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("종료 이유(endReason)는 user, timeout, interrupted, unknown 중 하나여야 합니다.",
+                    HttpStatus.BAD_REQUEST);
+        }
+    }
+
     private RecordingFormat detectFormat(MultipartFile file) {
         byte[] header;
         try (InputStream in = file.getInputStream()) {
@@ -129,7 +157,7 @@ public class InterviewRecordingService {
         }
         RecordingFormat format = RecordingFormat.detect(header);
         if (format == null) {
-            throw new BusinessException("올릴 수 없는 파일 형식입니다. MP4, WebM, Ogg, MP3, WAV만 받습니다.",
+            throw new BusinessException("올릴 수 없는 파일 형식입니다. MP4, WebM, Ogg, MP3, WAV, FLAC, AAC만 받습니다.",
                     HttpStatus.UNSUPPORTED_MEDIA_TYPE);
         }
         return format;
@@ -138,19 +166,20 @@ public class InterviewRecordingService {
     /**
      * 저장해 둘 형식 이름.
      *
-     * <p>컨테이너는 앞 바이트로 정해지지만 그 안에 그림이 있는지까지는 열어봐야 안다. 그래서 MP4나 WebM처럼
-     * 둘 다 담을 수 있는 형식은 요청에 붙은 Content-Type의 앞머리만 참고한다. 틀려도 컨테이너는 맞으므로
-     * 분석 서버가 파일을 열면 바로 잡힌다.
+     * <p>답변 파일은 소리만 분석하므로 언제나 {@code audio/}로 둔다. 요청이 {@code video/}를 붙여 보내도
+     * 그대로 저장하지 않는다 — 음성 분석은 {@code video/} MIME을 받지 않아, 그 한 건 때문에 요청 전체가
+     * 거절된다. 그림이 함께 담긴 컨테이너여도 컨테이너 이름은 맞으므로 분석 서버가 파일을 열면 바로 잡힌다.
+     *
+     * <p>면접 화면 녹화는 그림이 있어야 한다. 소리만 담는 형식으로는 받을 수 없다.
      */
-    private String contentTypeOf(RecordingKind kind, RecordingFormat format, String declaredContentType) {
+    private String contentTypeOf(RecordingKind kind, RecordingFormat format) {
         if (kind == RecordingKind.FULL_INTERVIEW) {
             if (!format.canHoldVideo()) {
                 throw new BusinessException("면접 화면 녹화는 영상 파일이어야 합니다.", HttpStatus.UNSUPPORTED_MEDIA_TYPE);
             }
             return format.videoContentType();
         }
-        boolean declaredVideo = declaredContentType != null && declaredContentType.startsWith("video/");
-        return declaredVideo && format.canHoldVideo() ? format.videoContentType() : format.audioContentType();
+        return format.audioContentType();
     }
 
     private void putObject(String key, String contentType, MultipartFile file) {

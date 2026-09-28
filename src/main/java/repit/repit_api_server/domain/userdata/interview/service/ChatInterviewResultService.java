@@ -32,7 +32,7 @@ public class ChatInterviewResultService {
      * 보내므로, 저장이 끝나기 전에 부르면 채점할 것이 없다.
      *
      * <p>저장 실패는 그대로 올려 보낸다. 채팅 서버가 실패를 알아야 기록을 잃은 것을 알 수 있다.
-     * 반대로 채점 준비 실패는 여기서 삼킨다 — 면접 기록은 이미 저장됐고, 이 응답이 실패로 가면
+     * 반대로 채점·음성 분석 준비 실패는 여기서 삼킨다 — 면접 기록은 이미 저장됐고, 이 응답이 실패로 가면
      * 채팅 서버의 면접 완료 처리까지 끊긴다. 채점은 웹에서 다시 요청할 수 있다.
      */
     public void handleResult(SaveInterviewRequest request) {
@@ -41,7 +41,7 @@ public class ChatInterviewResultService {
         try {
             feedbackDispatchService.onTranscriptSaved(request.getInterviewId());
         } catch (RuntimeException e) {
-            log.error("면접 기록을 받은 뒤 채점을 준비하지 못했습니다. interviewId={}",
+            log.error("면접 기록을 받은 뒤 채점·음성 분석을 준비하지 못했습니다. interviewId={}",
                     request.getInterviewId(), e);
         }
     }
