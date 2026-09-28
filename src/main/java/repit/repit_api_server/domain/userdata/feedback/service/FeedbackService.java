@@ -12,6 +12,7 @@ import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMulti
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackPersonaEntity;
@@ -583,6 +584,10 @@ public class FeedbackService {
             feedback.setTotalScore(score(overall.getTotalScore(), "종합 점수", interviewId));
             feedback.setIntentAlignmentScore(score(overall.getIntentAlignmentScore(), "의도 부합 점수", interviewId));
             feedback.setReliabilityScore(score(overall.getReliabilityScore(), "신뢰도 점수", interviewId));
+            ScoreBreakdownResponse breakdown = ScoreBreakdownReader.read(overall.getScoreBreakdown(),
+                    feedback.getTotalScore(), "종합", interviewId);
+            feedback.setScoreBreakdown(breakdown);
+            feedback.setScoringVersion(ScoreBreakdownReader.columnVersion(breakdown, interviewId));
             feedback.setSummary(overall.getSummary());
             feedback.setStrengths(overall.getStrengths());
             feedback.setImprovements(overall.getImprovements());
@@ -668,6 +673,8 @@ public class FeedbackService {
                     .strengths(item.getStrengths())
                     .improvements(item.getImprovements())
                     .comment(item.getComment())
+                    .axisScores(ScoreBreakdownReader.readAxisScores(item.getAxisScores(),
+                            "문항 " + questionId, feedback.getInterviewId()))
                     .build());
         }
         return entities;
@@ -757,13 +764,16 @@ public class FeedbackService {
                         feedback.getFeedbackId(), persona.getPersonaId(), members);
             }
 
+            Integer personaScore = score(persona.getScore(),
+                    "면접관 " + persona.getPersonaId() + " 점수", feedback.getInterviewId());
             entities.add(FeedbackPersonaEntity.builder()
                     .feedbackId(feedback.getFeedbackId())
                     .personaId(persona.getPersonaId())
                     .personaRole(persona.getPersonaRole())
                     .sortOrder(entities.size())
-                    .score(score(persona.getScore(),
-                            "면접관 " + persona.getPersonaId() + " 점수", feedback.getInterviewId()))
+                    .score(personaScore)
+                    .scoreBreakdown(ScoreBreakdownReader.read(persona.getScoreBreakdown(), personaScore,
+                            "면접관 " + persona.getPersonaId(), feedback.getInterviewId()))
                     .comment(persona.getComment())
                     .strengths(persona.getStrengths())
                     .improvements(persona.getImprovements())

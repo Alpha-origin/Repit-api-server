@@ -10,6 +10,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallbackRequest;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.AxisScoreResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackPersonaEntity;
@@ -31,7 +33,12 @@ import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -91,20 +98,20 @@ class FeedbackServiceMultiCallbackTest {
         FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
                 72, 80, 61, "면접관이 바뀐 뒤 설명이 달라졌습니다.",
                 List.of("캐시 도입 배경을 수치와 함께 설명함"),
-                List.of("설명이 엇갈림"), List.of(), 6, 7);
+                List.of("설명이 엇갈림"), List.of(), 6, 7, null);
 
         FeedbackCallbackRequest.Persona tech = new FeedbackCallbackRequest.Persona(
                 11L, "TECH", 78, "대안 검토가 얕습니다.",
-                List.of("측정값을 근거로 제시함"), List.of("탈락 이유가 없음"), 3, 3);
+                List.of("측정값을 근거로 제시함"), List.of("탈락 이유가 없음"), 3, 3, null);
         FeedbackCallbackRequest.Persona hr = new FeedbackCallbackRequest.Persona(
-                12L, "HR", 70, "동기가 추상적입니다.", List.of(), List.of(), 2, 2);
+                12L, "HR", 70, "동기가 추상적입니다.", List.of(), List.of(), 2, 2, null);
         FeedbackCallbackRequest.Persona ceo = new FeedbackCallbackRequest.Persona(
-                13L, "CEO", 64, "우선순위 근거가 약합니다.", List.of(), List.of(), 2, 2);
+                13L, "CEO", 64, "우선순위 근거가 약합니다.", List.of(), List.of(), 2, 2, null);
 
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item(
                 "2", 11L, "Redis를 캐시로 두신 이유는?", "기술 선택의 근거",
                 "조회가 쓰기보다 많아서요.", "지연을 수치로 제시한다.",
-                List.of("p99 지연을 근거로 든 점"), List.of("무효화 전략 미언급"), "부작용까지는 못 짚었습니다.");
+                List.of("p99 지연을 근거로 든 점"), List.of("무효화 전략 미언급"), "부작용까지는 못 짚었습니다.", null);
 
         return new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech, hr, ceo), List.of(item)), null);
@@ -246,7 +253,7 @@ class FeedbackServiceMultiCallbackTest {
         FeedbackCallbackRequest request = callback();
         FeedbackCallbackRequest.Item stray = new FeedbackCallbackRequest.Item(
                 "903", 99L, "팀에서 갈등이 있었다면?", "협업 태도",
-                null, "사실과 대응을 나눠 말한다.", List.of(), List.of(), "답하지 않았습니다.");
+                null, "사실과 대응을 나눠 말한다.", List.of(), List.of(), "답하지 않았습니다.", null);
         FeedbackCallbackRequest withStray = new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(request.getResult().getOverall(),
                         request.getResult().getPersonas(), List.of(stray)),
@@ -284,19 +291,19 @@ class FeedbackServiceMultiCallbackTest {
     private FeedbackCallbackRequest callbackWith(List<FeedbackCallbackRequest.Persona> personas,
                                                  List<FeedbackCallbackRequest.Item> items) {
         FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
-                72, 80, 61, "요약", List.of(), List.of(), List.of(), 1, 1);
+                72, 80, 61, "요약", List.of(), List.of(), List.of(), 1, 1, null);
         return new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, personas, items), null);
     }
 
     private FeedbackCallbackRequest.Item item(String questionId, Long personaId) {
         return new FeedbackCallbackRequest.Item(questionId, personaId, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평");
+                "답변", "모범답변", List.of(), List.of(), "총평", null);
     }
 
     private FeedbackCallbackRequest.Persona persona(Long personaId, Integer score) {
         return new FeedbackCallbackRequest.Persona(personaId, "TECH", score, "총평",
-                List.of(), List.of(), 1, 1);
+                List.of(), List.of(), 1, 1, null);
     }
 
     /**
@@ -354,7 +361,7 @@ class FeedbackServiceMultiCallbackTest {
         givenInterviewMembers();
 
         FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
-                150, -3, 61, "요약", List.of(), List.of(), List.of(), 1, 1);
+                150, -3, 61, "요약", List.of(), List.of(), List.of(), 1, 1, null);
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(persona(11L, 120)),
                         List.of(item("2", 11L))), null));
@@ -383,5 +390,115 @@ class FeedbackServiceMultiCallbackTest {
         order.verify(questionRepository).findAllByInterviewIdOrderByQuestionIdAsc(3L);
         order.verify(feedbackItemRepository).deleteAllByFeedbackId(5L);
         order.verify(feedbackItemRepository).saveAll(any());
+    }
+
+    /** 콜백은 산출 근거를 모양을 가리지 않고 받는다. 분석 서버가 보낼 JSON 그대로 만든다. */
+    private JsonNode breakdown(Integer consistencyScore, AxisScoreResponse... axes) {
+        return json(new ScoreBreakdownResponse("axis-v1", List.of(axes), consistencyScore));
+    }
+
+    private JsonNode json(Object value) {
+        return JsonMapper.shared().valueToTree(value);
+    }
+
+    /** 화면이 "축 점수 × 가중치 = 최종"을 그릴 수 있게 산출 근거가 종합·면접관·문항에 모두 남는다. */
+    @Test
+    void 점수_산출_근거를_함께_저장한다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenInterviewMembers();
+
+        FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
+                71, 88, 69, "요약", List.of(), List.of(), List.of(), 1, 1,
+                breakdown(75,
+                        new AxisScoreResponse("INTENT", 88, 35),
+                        new AxisScoreResponse("DEPTH", 38, 25),
+                        new AxisScoreResponse("SPECIFICITY", 63, 25),
+                        new AxisScoreResponse("ACCURACY", 100, 15)));
+        FeedbackCallbackRequest.Persona tech = new FeedbackCallbackRequest.Persona(11L, "TECH", 88, "총평",
+                List.of(), List.of(), 1, 1, breakdown(null, new AxisScoreResponse("INTENT", 88, 35)));
+        Map<String, Integer> axisScores = new LinkedHashMap<>();
+        axisScores.put("INTENT", 88);
+        axisScores.put("ACCURACY", null);
+        FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item("2", 11L, "질문", "의도",
+                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores));
+
+        service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
+                new FeedbackCallbackRequest.Result(overall, List.of(tech), List.of(item)), null));
+
+        ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
+        verify(feedbackRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+        assertThat(saved.getValue().getScoringVersion()).isEqualTo("axis-v1");
+        assertThat(saved.getValue().getScoreBreakdown().getConsistencyScore()).isEqualTo(75);
+        assertThat(saved.getValue().getScoreBreakdown().getAxes())
+                .extracting(AxisScoreResponse::getAxis, AxisScoreResponse::getScore, AxisScoreResponse::getWeight)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("INTENT", 88, 35),
+                        org.assertj.core.groups.Tuple.tuple("DEPTH", 38, 25),
+                        org.assertj.core.groups.Tuple.tuple("SPECIFICITY", 63, 25),
+                        org.assertj.core.groups.Tuple.tuple("ACCURACY", 100, 15));
+
+        verify(feedbackPersonaRepository).saveAll(savedPersonas.capture());
+        assertThat(savedPersonas.getValue().getFirst().getScoreBreakdown().getAxes()).hasSize(1);
+
+        verify(feedbackItemRepository).saveAll(savedItems.capture());
+        assertThat(savedItems.getValue().getFirst().getAxisScores())
+                .containsEntry("INTENT", 88)
+                .containsEntry("ACCURACY", null);
+    }
+
+    /** 산출 근거가 없는 콜백은 이전 방식의 점수다. 방식 버전을 비워 두어 섞이지 않게 한다. */
+    @Test
+    void 산출_근거가_없으면_방식_버전을_비워_둔다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenInterviewMembers();
+
+        service.handleCallback(callbackWith(List.of(persona(11L, 78)), List.of(item("2", 11L))));
+
+        ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
+        verify(feedbackRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+        assertThat(saved.getValue().getScoringVersion()).isNull();
+        assertThat(saved.getValue().getScoreBreakdown()).isNull();
+
+        verify(feedbackItemRepository).saveAll(savedItems.capture());
+        assertThat(savedItems.getValue().getFirst().getAxisScores()).isNull();
+    }
+
+    /** 축 점수도 눈금에 그려진다. 범위를 벗어나면 다른 점수처럼 경계로 당긴다. */
+    @Test
+    void 범위를_벗어난_축_점수는_경계값으로_맞춘다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenInterviewMembers();
+
+        FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
+                100, 100, 61, "요약", List.of(), List.of(), List.of(), 1, 1,
+                breakdown(130, new AxisScoreResponse("INTENT", 140, 100)));
+        Map<String, Integer> axisScores = new LinkedHashMap<>();
+        axisScores.put("DEPTH", -5);
+        FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item("2", 11L, "질문", "의도",
+                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores));
+
+        service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
+                new FeedbackCallbackRequest.Result(overall, List.of(persona(11L, 78)), List.of(item)), null));
+
+        ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
+        verify(feedbackRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+        assertThat(saved.getValue().getScoreBreakdown().getAxes().getFirst().getScore()).isEqualTo(100);
+        assertThat(saved.getValue().getScoreBreakdown().getConsistencyScore()).isEqualTo(100);
+
+        verify(feedbackItemRepository).saveAll(savedItems.capture());
+        assertThat(savedItems.getValue().getFirst().getAxisScores()).containsEntry("DEPTH", 0);
+    }
+
+    /** 담당 답변이 없는 면접관의 점수는 0이 아니라 비어 있다. 0으로 채우면 "0점"과 구분할 수 없다. */
+    @Test
+    void 비어_있는_면접관_점수는_0으로_채우지_않는다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenInterviewMembers();
+
+        service.handleCallback(callbackWith(List.of(persona(11L, 78), persona(12L, null)),
+                List.of(item("2", 11L))));
+
+        verify(feedbackPersonaRepository).saveAll(savedPersonas.capture());
+        assertThat(savedPersonas.getValue().get(1).getScore()).isNull();
     }
 }
