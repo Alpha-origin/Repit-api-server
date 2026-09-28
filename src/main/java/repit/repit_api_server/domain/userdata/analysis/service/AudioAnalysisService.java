@@ -84,9 +84,15 @@ public class AudioAnalysisService {
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
 
-    // 이 시간을 넘도록 콜백이 오지 않으면 작업을 직접 조회해 보고, 그래도 없으면 실패로 본다.
+    // 이 시간을 넘도록 콜백이 오지 않으면 작업을 직접 조회해 결과를 찾아본다.
     @Value("${app.audio-analysis.pending-timeout:10m}")
     private Duration pendingTimeout;
+
+    // 이 시간까지 결과를 찾지 못하면 그 요청을 닫는다. 닫으면 그 녹음이 새 요청 id로 다시 나가므로,
+    // 조회가 잠깐 실패한 것과 결과가 정말 없는 것을 가릴 만큼 넉넉해야 한다. 짧으면 살아 있는 작업을
+    // 버리고 같은 답변을 두 번 분석하게 된다.
+    @Value("${app.audio-analysis.give-up-after:1h}")
+    private Duration giveUpAfter;
 
     /**
      * 면접의 답변 음성을 음성 분석에 맡긴다.
@@ -168,9 +174,10 @@ public class AudioAnalysisService {
      *
      * <ul>
      *   <li>접수(jobId)를 확인하지 못한 요청 — 같은 요청 id로 다시 보낸다. 분석 서버가 이미 받았다면 기존 작업을
-     *       돌려주므로 두 번 분석되지 않는다. 그마저 시간을 넘겼으면 닫아서 새 요청 id로 다시 나가게 한다.</li>
-     *   <li>결과를 기다리다 시간을 넘긴 요청 — 작업을 직접 조회해 결과가 있으면 가져온다. 콜백 재전송이 모두
-     *       실패해도 결과는 분석 서버에 남아 있다. 없으면 닫는다.</li>
+     *       돌려주므로 두 번 분석되지 않는다.</li>
+     *   <li>결과를 기다리다 확인할 때가 된 요청 — 작업을 직접 조회해 결과가 있으면 가져온다. 콜백 재전송이 모두
+     *       실패해도 결과는 분석 서버에 남아 있다.</li>
+     *   <li>포기 시간까지 어느 쪽도 되지 않은 요청 — 닫아서 그 녹음이 새 요청 id로 다시 나가게 한다.</li>
      *   <li>닫힌(FAILED) 요청의 녹음은 아직 맡기지 않은 것으로 본다.</li>
      * </ul>
      */
@@ -193,7 +200,14 @@ public class AudioAnalysisService {
         return requested;
     }
 
-    /** 접수를 확인하지 못한 요청을 같은 요청 id로 다시 보낸다. 실을 녹음을 되짚지 못하면 닫는다. */
+    /**
+     * 접수를 확인하지 못한 요청을 같은 요청 id로 다시 보낸다.
+     *
+     * <p>포기 시간이 지나기 전에는 닫지 않는다. 202를 받지 못한 요청도 분석 서버는 받아 두었을 수 있어서,
+     * 일찍 닫고 새 요청 id로 보내면 같은 답변이 두 번 분석된다. 같은 요청 id로 다시 보내는 것은 안전하다.
+     *
+     * <p>실을 녹음을 되짚지 못하면 같은 내용을 만들 수 없어 그때는 닫는다.
+     */
     private void confirmAcceptance(InterviewEntity interview, AudioAnalysisEntity analysis,
                                    Map<Long, AnswerRecording> analyzable, String callbackUrl) {
         List<AnswerRecording> chunk = new ArrayList<>();
@@ -210,7 +224,7 @@ public class AudioAnalysisService {
             markFailed(analysis, NOT_ACKNOWLEDGED);
             return;
         }
-        if (timedOut(analysis)) {
+        if (givenUp(analysis)) {
             markFailed(analysis, NOT_ACKNOWLEDGED);
             return;
         }
@@ -222,15 +236,18 @@ public class AudioAnalysisService {
     /**
      * 콜백을 끝내 받지 못한 작업의 결과를 직접 가져온다.
      *
-     * <p>분석 서버는 콜백을 여섯 번까지 보내고 그래도 실패하면 포기하지만 결과는 남겨 둔다. 조회까지 실패하면
-     * 닫는다 — 그러면 그 녹음이 새 요청 id로 다시 나간다.
+     * <p>분석 서버는 콜백을 여섯 번까지 보내고 그래도 실패하면 포기하지만 결과는 남겨 둔다.
+     *
+     * <p>조회가 실패했거나 아직 결과가 없으면 기다리는 채로 둔다. 조회 실패는 분석 서버가 잠깐 답하지 못한
+     * 것일 수 있고, 그것을 "결과가 없다"로 보고 닫으면 살아 있는 작업을 버린 채 같은 답변을 다시 맡기게 된다.
+     * 포기 시간이 지나서야 닫는다 — 그러면 그 녹음이 새 요청 id로 다시 나간다.
      */
     private void recoverFromJob(AudioAnalysisEntity analysis) {
         AudioAnalysisJobResponse job = null;
         try {
             job = aiServerClient.getAudioAnalysisJob(analysis.getJobId());
         } catch (RuntimeException e) {
-            log.warn("콜백이 오지 않은 음성 분석 작업을 조회하지 못했습니다. analysisId={}, jobId={}",
+            log.warn("콜백이 오지 않은 음성 분석 작업을 조회하지 못해 다음에 다시 봅니다. analysisId={}, jobId={}",
                     analysis.getAnalysisId(), analysis.getJobId(), e);
         }
         if (job != null && job.getResult() != null) {
@@ -239,14 +256,29 @@ public class AudioAnalysisService {
             applyResult(analysis, job.getResult());
             return;
         }
-        log.warn("음성 분석 콜백이 {} 내에 도착하지 않아 실패 처리합니다. analysisId={}, jobId={}",
-                pendingTimeout, analysis.getAnalysisId(), analysis.getJobId());
+        if (!givenUp(analysis)) {
+            log.info("음성 분석 결과가 아직 없어 기다립니다. analysisId={}, jobId={}, 작업={}",
+                    analysis.getAnalysisId(), analysis.getJobId(), job == null ? "조회 실패" : job.getStatus());
+            return;
+        }
+        log.warn("음성 분석 결과를 {} 안에 받지 못해 실패 처리합니다. analysisId={}, jobId={}",
+                giveUpAfter, analysis.getAnalysisId(), analysis.getJobId());
         markFailed(analysis, TIMED_OUT);
     }
 
+    /** 콜백을 더 기다리지 말고 작업을 직접 확인해 볼 때가 됐는지. */
     private boolean timedOut(AudioAnalysisEntity analysis) {
+        return olderThan(analysis, pendingTimeout);
+    }
+
+    /** 결과를 찾지 못한 채 오래돼, 닫고 새 요청으로 다시 맡길 때가 됐는지. */
+    private boolean givenUp(AudioAnalysisEntity analysis) {
+        return olderThan(analysis, giveUpAfter);
+    }
+
+    private static boolean olderThan(AudioAnalysisEntity analysis, Duration limit) {
         return analysis.getCreatedAt() != null
-                && !analysis.getCreatedAt().plus(pendingTimeout).isAfter(LocalDateTime.now());
+                && !analysis.getCreatedAt().plus(limit).isAfter(LocalDateTime.now());
     }
 
     private void markFailed(AudioAnalysisEntity analysis, String reason) {

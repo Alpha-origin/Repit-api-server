@@ -94,6 +94,7 @@ class AudioAnalysisServiceTest {
                 questionRepository, answerRepository, recordingLoader, aiServerClient, JsonMapper.builder().build());
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
         ReflectionTestUtils.setField(service, "pendingTimeout", Duration.ofMinutes(10));
+        ReflectionTestUtils.setField(service, "giveUpAfter", Duration.ofHours(1));
 
         when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(InterviewEntity.builder()
                 .interviewId(INTERVIEW_ID).userId(7L).sessionId("b1c2d3").build()));
@@ -238,12 +239,48 @@ class AudioAnalysisServiceTest {
         verify(aiServerClient, never()).requestAudioAnalysis(any());
     }
 
-    /** 조회에도 결과가 없으면 그 요청은 끝난 것이 아니다. 닫아서 그 녹음이 새 요청 id로 다시 나가게 한다. */
+    /**
+     * 조회가 잠깐 실패한 것을 "결과가 없다"로 보면 안 된다. 그렇게 닫으면 살아 있는 작업을 버린 채 같은 답변을
+     * 다시 맡겨, 한 답변이 두 번 분석된다.
+     */
     @Test
-    void 조회에도_결과가_없으면_실패로_닫고_새_요청_id로_다시_보낸다() {
+    void 작업_조회가_실패하면_닫지_않고_기다린다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+        AudioAnalysisEntity waiting = analysis("audio-old", AudioAnalysisStatus.PENDING, List.of(301L),
+                LocalDateTime.now().minusMinutes(11));
+        analyses.add(waiting);
+        when(aiServerClient.getAudioAnalysisJob("job-audio-old"))
+                .thenThrow(new ExternalApiException("AI 응답 생성 중 오류가 발생했습니다.",
+                        HttpStatus.INTERNAL_SERVER_ERROR, null));
+
+        service.requestForFinishedInterview(INTERVIEW_ID);
+
+        assertThat(waiting.getStatus()).isEqualTo(AudioAnalysisStatus.PENDING);
+        verify(aiServerClient, never()).requestAudioAnalysis(any());
+    }
+
+    /** 아직 분석 중일 수 있다. 조회가 답했다는 것만으로 닫으면 마찬가지로 두 번 분석된다. */
+    @Test
+    void 결과가_아직_없으면_닫지_않고_기다린다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+        AudioAnalysisEntity waiting = analysis("audio-old", AudioAnalysisStatus.PENDING, List.of(301L),
+                LocalDateTime.now().minusMinutes(11));
+        analyses.add(waiting);
+        when(aiServerClient.getAudioAnalysisJob("job-audio-old"))
+                .thenReturn(new AudioAnalysisJobResponse("job-audio-old", "running", null));
+
+        service.requestForFinishedInterview(INTERVIEW_ID);
+
+        assertThat(waiting.getStatus()).isEqualTo(AudioAnalysisStatus.PENDING);
+        verify(aiServerClient, never()).requestAudioAnalysis(any());
+    }
+
+    /** 끝내 결과를 찾지 못하면 그 녹음이 영영 분석되지 않는다. 포기 시간이 지나면 닫아 다시 맡긴다. */
+    @Test
+    void 포기_시간까지_결과가_없으면_닫고_새_요청_id로_다시_보낸다() {
         answerRecordings(loaded(301L, 101L, 201L, null));
         AudioAnalysisEntity stale = analysis("audio-old", AudioAnalysisStatus.PENDING, List.of(301L),
-                LocalDateTime.now().minusMinutes(11));
+                LocalDateTime.now().minusMinutes(61));
         analyses.add(stale);
         when(aiServerClient.getAudioAnalysisJob("job-audio-old"))
                 .thenReturn(new AudioAnalysisJobResponse("job-audio-old", "running", null));
@@ -292,6 +329,40 @@ class AudioAnalysisServiceTest {
         assertThat(sent.get(1).getRequestId()).isEqualTo(sent.get(0).getRequestId());
         assertThat(analyses).hasSize(1);
         assertThat(analyses.getFirst().getJobId()).isEqualTo("job-1");
+    }
+
+    /**
+     * 202를 못 받은 요청도 분석 서버는 받아 두었을 수 있다. 일찍 닫고 새 요청 id로 보내면 두 번 분석되므로,
+     * 포기 시간까지는 같은 요청 id로 확인만 한다.
+     */
+    @Test
+    void 접수를_확인하지_못한_요청은_포기_시간_전에는_닫지_않는다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+        AudioAnalysisEntity unacknowledged = analysis("audio-old", null, AudioAnalysisStatus.PENDING, List.of(301L),
+                LocalDateTime.now().minusMinutes(30));
+        analyses.add(unacknowledged);
+
+        service.requestForFinishedInterview(INTERVIEW_ID);
+
+        assertThat(unacknowledged.getStatus()).isEqualTo(AudioAnalysisStatus.PENDING);
+        List<AudioAnalysisRequest> sent = sentRequests();
+        assertThat(sent).hasSize(1);
+        assertThat(sent.getFirst().getRequestId()).isEqualTo("audio-old");
+    }
+
+    @Test
+    void 접수를_확인하지_못한_채_포기_시간이_지나면_닫고_새_요청_id로_보낸다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+        AudioAnalysisEntity unacknowledged = analysis("audio-old", null, AudioAnalysisStatus.PENDING, List.of(301L),
+                LocalDateTime.now().minusMinutes(61));
+        analyses.add(unacknowledged);
+
+        service.requestForFinishedInterview(INTERVIEW_ID);
+
+        assertThat(unacknowledged.getStatus()).isEqualTo(AudioAnalysisStatus.FAILED);
+        List<AudioAnalysisRequest> sent = sentRequests();
+        assertThat(sent).hasSize(1);
+        assertThat(sent.getFirst().getRequestId()).isNotEqualTo("audio-old");
     }
 
     /** 분석 서버가 상태 코드로 답한 거절은 접수되지 않은 것이다. 닫지 않으면 그 녹음이 영영 분석되지 않는다. */

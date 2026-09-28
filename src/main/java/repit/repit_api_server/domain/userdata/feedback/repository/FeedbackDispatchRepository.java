@@ -51,6 +51,26 @@ public interface FeedbackDispatchRepository extends JpaRepository<FeedbackDispat
     int claim(Long dispatchId, LocalDateTime now);
 
     /**
+     * 끝난(DONE) 건을 다시 기다리는 자리로 돌려놓는다.
+     *
+     * <p>접수까지 성공하면 이 행은 DONE으로 닫힌다. 그런데 음성 분석은 접수가 끝이 아니라 결과 콜백이
+     * 와야 끝이고, 그 콜백이 유실되면 다시 확인해 줄 사람이 없다. 그때 이 갱신으로 되돌려, 스윕이 요청
+     * 경로를 한 번 더 태우게 한다(그 안에서 작업을 조회하거나 같은 요청 id로 다시 보낸다).
+     *
+     * <p>시도 횟수는 그대로 둔다. 되돌릴 때마다 초기화하면 결과가 영영 오지 않는 면접을 끝없이 다시
+     * 보내게 된다. 유지하면 기존 시도 한도가 그대로 상한이 되어, 넘는 순간 FAILED로 닫힌다.
+     *
+     * <p>FAILED는 되돌리지 않는다. 사람이 볼 실패로 이미 닫힌 건이다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update FeedbackDispatchEntity d set d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING, "
+            + "d.claimedAt = null, d.nextAttemptAt = null, d.lastActivityAt = :lastActivityAt, d.lastError = :reason "
+            + "where d.interviewId = :interviewId and d.kind = :kind "
+            + "and d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.DONE")
+    int reopen(Long interviewId, FeedbackDispatchKind kind, LocalDateTime lastActivityAt, String reason);
+
+    /**
      * 차지한 채 오래 끝나지 않은 건을 WAITING으로 되돌린다.
      *
      * <p>차지한 뒤 요청을 보내기 전에 재배포나 프로세스 종료가 일어나면 그 건은 SENDING에 남는다.

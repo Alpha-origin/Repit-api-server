@@ -109,6 +109,44 @@ class FeedbackDispatchRepositoryTest {
         assertThat(repository.touchIfWaiting(saved.getInterviewId(), FeedbackDispatchKind.FEEDBACK, later.plusMinutes(1))).isZero();
     }
 
+    /**
+     * 끝난 건만 다시 기다리는 자리로 돌아간다.
+     *
+     * <p>음성 분석은 접수가 아니라 결과 콜백이 끝이라, 콜백이 유실되면 닫힌 건을 되돌려 다시 확인해야 한다.
+     * 시도 횟수는 그대로 둬 한도가 계속 지켜진다. 사람이 볼 실패로 닫힌 FAILED는 되돌리지 않는다.
+     */
+    @Test
+    void 끝난_건만_되돌리고_시도_횟수는_유지한다() {
+        FeedbackDispatchEntity done = repository.save(waiting(NOW));
+        repository.claim(done.getDispatchId(), NOW);
+        repository.markDone(done.getDispatchId(), NOW);
+
+        assertThat(repository.reopen(done.getInterviewId(), FeedbackDispatchKind.FEEDBACK, NOW, "결과 없음"))
+                .isEqualTo(1);
+
+        FeedbackDispatchEntity reopened = repository.findById(done.getDispatchId()).orElseThrow();
+        assertThat(reopened.getStatus()).isEqualTo(FeedbackDispatchStatus.WAITING);
+        assertThat(reopened.getClaimedAt()).isNull();
+        assertThat(reopened.getNextAttemptAt()).isNull();
+        assertThat(reopened.getLastActivityAt()).isEqualTo(NOW);
+        assertThat(reopened.getAttemptCount()).isEqualTo(1);
+        assertThat(reopened.getLastError()).isEqualTo("결과 없음");
+
+        // 되돌린 건은 이미 기다리는 중이라 두 번 되돌지 않는다.
+        assertThat(repository.reopen(done.getInterviewId(), FeedbackDispatchKind.FEEDBACK, NOW, "결과 없음")).isZero();
+    }
+
+    @Test
+    void 사람이_볼_실패로_닫힌_건은_되돌리지_않는다() {
+        FeedbackDispatchEntity failed = repository.save(waiting(NOW));
+        repository.claim(failed.getDispatchId(), NOW);
+        repository.markFailed(failed.getDispatchId(), NOW, "시도 한도");
+
+        assertThat(repository.reopen(failed.getInterviewId(), FeedbackDispatchKind.FEEDBACK, NOW, "결과 없음")).isZero();
+        assertThat(repository.findById(failed.getDispatchId()).orElseThrow().getStatus())
+                .isEqualTo(FeedbackDispatchStatus.FAILED);
+    }
+
     /** 한 면접에 채점과 음성 분석이 따로 한 행씩 있다. 한쪽을 건드려도 다른 쪽은 그대로다. */
     @Test
     void 같은_면접의_채점과_음성_분석은_따로_기다린다() {
