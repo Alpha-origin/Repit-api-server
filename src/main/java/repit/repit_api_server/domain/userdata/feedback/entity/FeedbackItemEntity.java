@@ -6,6 +6,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.util.List;
+import java.util.Map;
 
 @Entity
 @Table(name = "feedback_item")
@@ -56,4 +57,9 @@ public class FeedbackItemEntity {
 
     @Column(columnDefinition = "TEXT")
     private String comment;
+
+    // 이 문항의 축별 점수(0..100). 해당 없는 축은 값이 비어 있다.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private Map<String, Integer> axisScores;
 }

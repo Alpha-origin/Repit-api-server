@@ -7,6 +7,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FrequentWordResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStatus;
 
 import java.time.LocalDateTime;
@@ -47,6 +48,16 @@ public class FeedbackEntity {
     private Integer intentAlignmentScore;
 
     private Integer reliabilityScore;
+
+    // 점수를 매긴 채점 방식(예: axis-v1). 방식이 바뀌면 점수 분포가 달라져, 버전이 다른 점수끼리는
+    // 같은 기준으로 비교하면 안 된다. 산출 근거가 오기 전의 결과는 비어 있다.
+    @Column(length = 32)
+    private String scoringVersion;
+
+    // 종합 점수의 산출 근거. 축별 점수·가중치와 일관성 점수.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private ScoreBreakdownResponse scoreBreakdown;
 
     @Column(columnDefinition = "TEXT")
     private String summary;

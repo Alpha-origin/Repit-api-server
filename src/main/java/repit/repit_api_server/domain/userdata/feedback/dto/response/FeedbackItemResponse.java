@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
 
 import java.util.List;
+import java.util.Map;
 
 @Getter
 @Builder
@@ -22,6 +23,8 @@ public class FeedbackItemResponse {
     private List<String> strengths;
     private List<String> improvements;
     private String comment;
+    // 이 문항의 축별 점수(0..100). 해당 없는 축은 값이 비어 있다.
+    private Map<String, Integer> axisScores;
 
     public static FeedbackItemResponse from(FeedbackItemEntity item) {
         return FeedbackItemResponse.builder()
@@ -34,6 +37,7 @@ public class FeedbackItemResponse {
                 .strengths(item.getStrengths())
                 .improvements(item.getImprovements())
                 .comment(item.getComment())
+                .axisScores(item.getAxisScores())
                 .build();
     }
 }

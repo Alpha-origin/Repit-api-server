@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
 
 import java.util.List;
 
@@ -38,7 +39,13 @@ public class FeedbackPersonaEntity {
     @Column(nullable = false)
     private Integer sortOrder;
 
+    // 담당 답변이 없으면 비어 있다. 0점과 구분된다.
     private Integer score;
+
+    // 이 면접관 점수의 산출 근거.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private ScoreBreakdownResponse scoreBreakdown;
 
     @Column(columnDefinition = "TEXT")
     private String comment;

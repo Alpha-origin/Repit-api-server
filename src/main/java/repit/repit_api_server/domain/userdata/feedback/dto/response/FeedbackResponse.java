@@ -45,6 +45,9 @@ public class FeedbackResponse {
     private Integer totalScore;
     private Integer intentAlignmentScore;
     private Integer reliabilityScore;
+    // 종합 점수의 산출 근거. 축별 점수·가중치로 "의도 충족 88점 × 35% ... 최종 71점"을 그린다.
+    // 채점 방식 버전(scoringVersion)도 여기 있다. 산출 근거가 오기 전의 결과는 비어 있다.
+    private ScoreBreakdownResponse scoreBreakdown;
     private String summary;
     private List<String> strengths;
     private List<String> improvements;
@@ -83,6 +86,7 @@ public class FeedbackResponse {
                 .totalScore(feedback.getTotalScore())
                 .intentAlignmentScore(feedback.getIntentAlignmentScore())
                 .reliabilityScore(feedback.getReliabilityScore())
+                .scoreBreakdown(feedback.getScoreBreakdown())
                 .summary(feedback.getSummary())
                 .strengths(feedback.getStrengths())
                 .improvements(feedback.getImprovements())

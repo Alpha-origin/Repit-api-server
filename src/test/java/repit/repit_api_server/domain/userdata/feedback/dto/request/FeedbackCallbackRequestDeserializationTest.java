@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.AxisScoreResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -96,6 +98,76 @@ class FeedbackCallbackRequestDeserializationTest {
               }
             }
             """;
+
+    // axis-v1 산출 근거가 실린 콜백. 해당 없는 축과 담당 답변이 없는 면접관은 null로 온다.
+    private static final String BREAKDOWN_CALLBACK = """
+            {
+              "jobId": "job-4",
+              "sessionId": "sess-4",
+              "status": "succeeded",
+              "result": {
+                "overall": {
+                  "totalScore": 71,
+                  "intentAlignmentScore": 88,
+                  "reliabilityScore": 69,
+                  "scoreBreakdown": {
+                    "scoringVersion": "axis-v1",
+                    "axes": [
+                      { "axis": "INTENT", "score": 88, "weight": 35 },
+                      { "axis": "DEPTH", "score": 38, "weight": 25 },
+                      { "axis": "SPECIFICITY", "score": 63, "weight": 25 },
+                      { "axis": "ACCURACY", "score": 100, "weight": 15 }
+                    ],
+                    "consistencyScore": 75
+                  }
+                },
+                "personas": [
+                  {
+                    "personaId": 11, "role": "TECH", "score": 71,
+                    "scoreBreakdown": {
+                      "scoringVersion": "axis-v1",
+                      "axes": [{ "axis": "INTENT", "score": 88, "weight": 35 }],
+                      "consistencyScore": null
+                    }
+                  },
+                  { "personaId": 12, "role": "HR", "score": null }
+                ],
+                "feedbacks": [
+                  {
+                    "questionId": "1", "personaId": 11,
+                    "axisScores": { "INTENT": 88, "DEPTH": 38, "SPECIFICITY": 63, "ACCURACY": null }
+                  }
+                ]
+              }
+            }
+            """;
+
+    @Test
+    void 점수_산출_근거를_읽는다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+
+            FeedbackCallbackRequest request =
+                    objectMapper.readValue(BREAKDOWN_CALLBACK, FeedbackCallbackRequest.class);
+
+            ScoreBreakdownResponse overall = request.getResult().getOverall().getScoreBreakdown();
+            assertThat(overall.getScoringVersion()).isEqualTo("axis-v1");
+            assertThat(overall.getConsistencyScore()).isEqualTo(75);
+            assertThat(overall.getAxes()).extracting(AxisScoreResponse::getAxis)
+                    .containsExactly("INTENT", "DEPTH", "SPECIFICITY", "ACCURACY");
+            assertThat(overall.getAxes().getLast().getWeight()).isEqualTo(15);
+
+            FeedbackCallbackRequest.Persona tech = request.getResult().getPersonas().getFirst();
+            assertThat(tech.getScoreBreakdown().getAxes()).hasSize(1);
+            assertThat(tech.getScoreBreakdown().getConsistencyScore()).isNull();
+            // 담당 답변이 없는 면접관은 0점이 아니라 비어 있다.
+            assertThat(request.getResult().getPersonas().get(1).getScore()).isNull();
+
+            assertThat(request.getResult().getFeedbacks().getFirst().getAxisScores())
+                    .containsEntry("INTENT", 88)
+                    .containsEntry("ACCURACY", null);
+        });
+    }
 
     @Test
     void 면접관별_종합과_문항의_면접관을_읽는다() {

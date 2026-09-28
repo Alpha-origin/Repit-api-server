@@ -11,7 +11,9 @@ import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallb
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.AxisScoreResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackPersonaEntity;
@@ -583,6 +585,10 @@ public class FeedbackService {
             feedback.setTotalScore(score(overall.getTotalScore(), "종합 점수", interviewId));
             feedback.setIntentAlignmentScore(score(overall.getIntentAlignmentScore(), "의도 부합 점수", interviewId));
             feedback.setReliabilityScore(score(overall.getReliabilityScore(), "신뢰도 점수", interviewId));
+            ScoreBreakdownResponse breakdown = verifiedBreakdown(overall.getScoreBreakdown(),
+                    feedback.getTotalScore(), "종합", interviewId);
+            feedback.setScoreBreakdown(breakdown);
+            feedback.setScoringVersion(breakdown == null ? null : breakdown.getScoringVersion());
             feedback.setSummary(overall.getSummary());
             feedback.setStrengths(overall.getStrengths());
             feedback.setImprovements(overall.getImprovements());
@@ -628,6 +634,62 @@ public class FeedbackService {
     }
 
     /**
+     * 점수의 산출 근거를 맞춰본다.
+     *
+     * <p>축 점수와 일관성 점수도 다른 점수처럼 0..100으로 당긴다. 축 점수와 가중치로 다시 계산한 값이
+     * 받은 점수와 어긋나면 화면의 "축 점수 × 가중치 = 최종" 계산이 틀려 보이지만, 어느 쪽이 맞는지는
+     * 여기서 알 수 없다. 받은 대로 두고 어긋난 사실만 남긴다.
+     */
+    private ScoreBreakdownResponse verifiedBreakdown(ScoreBreakdownResponse breakdown, Integer total,
+                                                     String label, Long interviewId) {
+        if (breakdown == null) {
+            return null;
+        }
+        List<AxisScoreResponse> axes = breakdown.getAxes() == null ? List.of() : breakdown.getAxes().stream()
+                .filter(Objects::nonNull)
+                .map(axis -> new AxisScoreResponse(axis.getAxis(),
+                        score(axis.getScore(), label + " " + axis.getAxis() + " 축 점수", interviewId),
+                        axis.getWeight()))
+                .toList();
+
+        Double weighted = weightedAverage(axes);
+        // 반올림 방식이 서버마다 달라도(.5에서 갈림) 같은 값으로 본다.
+        if (total != null && weighted != null && Math.abs(weighted - total) > 0.5) {
+            log.warn("{} 점수가 축 점수와 가중치로 계산한 값과 다릅니다. interviewId={}, 받은 점수={}, 계산값={}",
+                    label, interviewId, total, weighted);
+        }
+
+        return new ScoreBreakdownResponse(breakdown.getScoringVersion(), axes,
+                score(breakdown.getConsistencyScore(), label + " 일관성 점수", interviewId));
+    }
+
+    /** Σ score×weight / Σ weight. 해당 없는 축(점수나 가중치가 빈 축)은 뺀다. 셀 축이 없으면 null. */
+    private Double weightedAverage(List<AxisScoreResponse> axes) {
+        long weighted = 0;
+        long weightSum = 0;
+        for (AxisScoreResponse axis : axes) {
+            if (axis.getScore() == null || axis.getWeight() == null) {
+                continue;
+            }
+            weighted += (long) axis.getScore() * axis.getWeight();
+            weightSum += axis.getWeight();
+        }
+        return weightSum <= 0 ? null : (double) weighted / weightSum;
+    }
+
+    /** 문항의 축별 점수. 값은 0..100으로 당기고, 해당 없는 축의 빈 값은 그대로 둔다. */
+    private Map<String, Integer> verifiedAxisScores(Map<String, Integer> axisScores, String questionId,
+                                                    Long interviewId) {
+        if (axisScores == null) {
+            return null;
+        }
+        Map<String, Integer> verified = new LinkedHashMap<>();
+        axisScores.forEach((axis, value) ->
+                verified.put(axis, score(value, "문항 " + questionId + " " + axis + " 축 점수", interviewId)));
+        return verified;
+    }
+
+    /**
      * 문항 목록을 우리 기록과 맞춰본다.
      *
      * <p>같은 문항이 두 번 오면 뒤엣것을 버린다. 남겨두면 결과 화면에 같은 질문이 두 번 나오고,
@@ -668,6 +730,7 @@ public class FeedbackService {
                     .strengths(item.getStrengths())
                     .improvements(item.getImprovements())
                     .comment(item.getComment())
+                    .axisScores(verifiedAxisScores(item.getAxisScores(), questionId, feedback.getInterviewId()))
                     .build());
         }
         return entities;
@@ -757,13 +820,16 @@ public class FeedbackService {
                         feedback.getFeedbackId(), persona.getPersonaId(), members);
             }
 
+            Integer personaScore = score(persona.getScore(),
+                    "면접관 " + persona.getPersonaId() + " 점수", feedback.getInterviewId());
             entities.add(FeedbackPersonaEntity.builder()
                     .feedbackId(feedback.getFeedbackId())
                     .personaId(persona.getPersonaId())
                     .personaRole(persona.getPersonaRole())
                     .sortOrder(entities.size())
-                    .score(score(persona.getScore(),
-                            "면접관 " + persona.getPersonaId() + " 점수", feedback.getInterviewId()))
+                    .score(personaScore)
+                    .scoreBreakdown(verifiedBreakdown(persona.getScoreBreakdown(), personaScore,
+                            "면접관 " + persona.getPersonaId(), feedback.getInterviewId()))
                     .comment(persona.getComment())
                     .strengths(persona.getStrengths())
                     .improvements(persona.getImprovements())
