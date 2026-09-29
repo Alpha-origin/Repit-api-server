@@ -70,6 +70,8 @@ public class QuestionTailorService {
     private static final String CALLBACK_PATH = "/api/questions/tailor/callback";
     private static final String MULTI_CALLBACK_PATH = "/api/questions/tailor/multi/callback";
     private static final String STATUS_SUCCEEDED = "succeeded";
+    // 인증 서버의 전공 값 앞에 붙는 접두사. 떼면 면접관 전공(Major)과 같은 형식이 된다.
+    private static final String AUTH_MAJOR_PREFIX = "MAJOR_";
 
     /**
      * 1:1 면접의 문항 수.
@@ -388,13 +390,26 @@ public class QuestionTailorService {
                 .build();
     }
 
-    /** 재작성 개인화 축. 사용자 전공이 먼저고, 없으면 기술 면접관의 전공을 쓴다. */
-    private String resolveJobRole(UserResponse user, PersonaEntity tech) {
-        String jobRole = blankToNull(user.getMajor());
-        if (jobRole != null) {
-            return jobRole;
+    /**
+     * 재작성 개인화 축. 면접 설정에서 고른 면접관의 전공이 먼저고, 없으면 사용자 전공을 쓴다.
+     *
+     * <p>사용자 전공은 회원가입 때 고정값으로 들어간 것이라 사용자가 고른 적이 없다. 이것을 먼저
+     * 보면 면접 설정에서 프론트엔드를 골라도 질문은 백엔드 기준으로 다시 쓰인다.
+     */
+    private String resolveJobRole(UserResponse user, PersonaEntity persona) {
+        if (persona != null && persona.getMajor() != null) {
+            return persona.getMajor().name();
         }
-        return tech.getMajor() == null ? null : tech.getMajor().name();
+        return normalizeMajor(user.getMajor());
+    }
+
+    /** 인증 서버는 MAJOR_BACKEND 형식으로 내려준다. 면접관 전공과 같은 BACKEND 형식으로 맞춘다. */
+    private String normalizeMajor(String major) {
+        String value = blankToNull(major);
+        if (value == null) {
+            return null;
+        }
+        return value.startsWith(AUTH_MAJOR_PREFIX) ? value.substring(AUTH_MAJOR_PREFIX.length()) : value;
     }
 
     private QuestionTailorRequest.Question toRequestQuestion(TailoredQuestionResponse question) {
@@ -474,10 +489,7 @@ public class QuestionTailorService {
     private QuestionTailorRequest.Profile resolveProfile(UserResponse user, Long personaId) {
         PersonaEntity persona = personaRepository.findById(personaId).orElse(null);
 
-        String jobRole = blankToNull(user.getMajor());
-        if (jobRole == null && persona != null && persona.getMajor() != null) {
-            jobRole = persona.getMajor().name();
-        }
+        String jobRole = resolveJobRole(user, persona);
         String personaType = persona == null ? null : enumName(persona.getType());
         String personaTone = persona == null ? null : enumName(persona.getTone());
 
