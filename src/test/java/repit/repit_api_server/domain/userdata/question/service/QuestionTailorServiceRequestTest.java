@@ -144,11 +144,15 @@ class QuestionTailorServiceRequestTest {
     }
 
     private PersonaEntity persona(long id, Role role) {
+        return persona(id, role, role == Role.TECH ? Major.BACKEND : null);
+    }
+
+    private PersonaEntity persona(long id, Role role, Major major) {
         return PersonaEntity.builder()
                 .personaId(id)
                 .personaName("면접관 " + id)
                 .role(role)
-                .major(role == Role.TECH ? Major.BACKEND : null)
+                .major(major)
                 .type(Type.REALISTIC)
                 .tone(InterviewTone.PRESSURING)
                 .level(Level.NORMAL)
@@ -215,6 +219,79 @@ class QuestionTailorServiceRequestTest {
         // 성향만 보내면 분석 서버가 질문의 세기를 성향에서 유추하게 된다. 두 축은 독립이다.
         assertThat(sent.getValue().getProfile().getPersonaType()).isEqualTo("REALISTIC");
         assertThat(sent.getValue().getProfile().getPersonaTone()).isEqualTo("PRESSURING");
+    }
+
+    /**
+     * 사용자 전공은 회원가입 때 고정값으로 들어간 것이라 사용자가 고른 적이 없다.
+     * 이것이 먼저면 면접 설정에서 프론트엔드를 골라도 질문은 백엔드 기준으로 다시 쓰인다.
+     */
+    @Test
+    void 일대일은_면접관_전공이_사용자_전공보다_먼저다() {
+        when(user.getMajor()).thenReturn("MAJOR_BACKEND");
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(11L, Role.TECH, Major.FRONTEND)));
+
+        service.requestTailor(interview(InterviewMode.SOLO), user);
+
+        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(sent.capture());
+        assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("FRONTEND");
+    }
+
+    /** 인증 서버는 MAJOR_ 접두사를 붙여 내려준다. 떼지 않으면 분석 서버가 모르는 직군이 넘어간다. */
+    @Test
+    void 일대일은_면접관_전공이_없으면_사용자_전공을_접두사_없이_쓴다() {
+        when(user.getMajor()).thenReturn("MAJOR_FRONTEND");
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(11L, Role.HR)));
+
+        service.requestTailor(interview(InterviewMode.SOLO), user);
+
+        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(sent.capture());
+        assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("FRONTEND");
+    }
+
+    /** 세 축이 모두 비면 분석 서버가 실패 콜백을 보낸다. 우선순위를 바꿔도 이 검사는 그대로다. */
+    @Test
+    void 일대일은_직군도_면접관도_없으면_422다() {
+        when(user.getMajor()).thenReturn(null);
+        when(personaRepository.findById(11L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.SOLO), user))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+
+        verify(aiServerClient, never()).tailorQuestions(any());
+    }
+
+    @Test
+    void N대1은_기술_면접관_전공이_사용자_전공보다_먼저다() {
+        when(user.getMajor()).thenReturn("MAJOR_BACKEND");
+        givenMembers(11L, 12L);
+        when(personaRepository.findAllById(List.of(11L, 12L)))
+                .thenReturn(List.of(persona(11L, Role.TECH, Major.FRONTEND), persona(12L, Role.HR)));
+
+        service.requestTailor(interview(InterviewMode.MULTI), user);
+
+        ArgumentCaptor<QuestionTailorMultiRequest> sent =
+                ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
+        verify(aiServerClient).tailorQuestionsMulti(sent.capture());
+        assertThat(sent.getValue().getJobRole()).isEqualTo("FRONTEND");
+    }
+
+    @Test
+    void N대1은_기술_면접관_전공이_없으면_사용자_전공을_접두사_없이_쓴다() {
+        when(user.getMajor()).thenReturn("MAJOR_FRONTEND");
+        givenMembers(11L, 12L);
+        when(personaRepository.findAllById(List.of(11L, 12L)))
+                .thenReturn(List.of(persona(11L, Role.TECH, null), persona(12L, Role.HR)));
+
+        service.requestTailor(interview(InterviewMode.MULTI), user);
+
+        ArgumentCaptor<QuestionTailorMultiRequest> sent =
+                ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
+        verify(aiServerClient).tailorQuestionsMulti(sent.capture());
+        assertThat(sent.getValue().getJobRole()).isEqualTo("FRONTEND");
     }
 
     /**
