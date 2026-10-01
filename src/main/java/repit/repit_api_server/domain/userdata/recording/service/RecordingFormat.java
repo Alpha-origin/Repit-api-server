@@ -15,7 +15,8 @@ enum RecordingFormat {
     MP4("mp4", "video/mp4", "audio/mp4"),
     // EBML 머리. WebM과 MKV가 같다.
     WEBM("webm", "video/webm", "audio/webm"),
-    OGG("ogg", "video/ogg", "audio/ogg"),
+    // 그림도 담을 수 있는 컨테이너지만 영상 분석이 받지 않아 면접 화면 녹화로는 받지 않는다.
+    OGG("ogg", null, "audio/ogg"),
     MP3("mp3", null, "audio/mpeg"),
     WAV("wav", null, "audio/wav"),
     FLAC("flac", null, "audio/flac"),
@@ -36,7 +37,7 @@ enum RecordingFormat {
         return extension;
     }
 
-    /** 그림이 담길 수 있는 컨테이너인지. 소리만 담는 형식으로 면접 화면 녹화를 받을 수는 없다. */
+    /** 면접 화면 녹화로 받는 컨테이너인지. 영상 분석이 받는 MP4와 WebM뿐이다. */
     boolean canHoldVideo() {
         return videoContentType != null;
     }

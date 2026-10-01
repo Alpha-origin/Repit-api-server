@@ -57,6 +57,8 @@ class RecordingFormatTest {
         assertThat(RecordingFormat.WEBM.canHoldVideo()).isTrue();
         assertThat(RecordingFormat.MP3.canHoldVideo()).isFalse();
         assertThat(RecordingFormat.WAV.canHoldVideo()).isFalse();
+        // 그림을 담을 수 있어도 영상 분석이 받지 않는다.
+        assertThat(RecordingFormat.OGG.canHoldVideo()).isFalse();
     }
 
     private static byte[] mp4() {
