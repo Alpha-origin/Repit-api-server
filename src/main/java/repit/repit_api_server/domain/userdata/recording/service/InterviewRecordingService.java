@@ -38,6 +38,8 @@ public class InterviewRecordingService {
     private static final int HEADER_BYTES = 12;
     // 분석 서버가 받는 녹음 크기의 상한. 넘는 파일이 하나라도 실리면 음성 분석 요청 전체가 거절된다.
     private static final long MAX_ANSWER_BYTES = 100_000_000L;
+    // 영상 분석이 받는 면접 화면 녹화 크기의 상한. multipart 상한(1024MB)보다 조금 작다.
+    private static final long MAX_FULL_INTERVIEW_BYTES = 1_000_000_000L;
 
     private final InterviewRepository interviewRepository;
     private final InterviewRecordingRepository recordingRepository;
@@ -88,6 +90,11 @@ public class InterviewRecordingService {
             // 음성 분석은 100,000,000바이트까지만 받는다. 받아 두면 그 답변은 영영 분석되지 않으므로
             // 여기서 돌려보내 웹이 다시 녹음하게 한다.
             throw new BusinessException("답변 음성은 100MB까지 올릴 수 있습니다.", HttpStatus.CONTENT_TOO_LARGE);
+        }
+        if (kind == RecordingKind.FULL_INTERVIEW && file.getSize() > MAX_FULL_INTERVIEW_BYTES) {
+            // 영상 분석은 1,000,000,000바이트까지만 받고, 넘는 영상을 잘라 분석하지 않는다.
+            throw new BusinessException("면접 화면 녹화는 1,000,000,000바이트까지 올릴 수 있습니다.",
+                    HttpStatus.CONTENT_TOO_LARGE);
         }
 
         RecordingFormat format = detectFormat(file);
@@ -170,12 +177,14 @@ public class InterviewRecordingService {
      * 그대로 저장하지 않는다 — 음성 분석은 {@code video/} MIME을 받지 않아, 그 한 건 때문에 요청 전체가
      * 거절된다. 그림이 함께 담긴 컨테이너여도 컨테이너 이름은 맞으므로 분석 서버가 파일을 열면 바로 잡힌다.
      *
-     * <p>면접 화면 녹화는 그림이 있어야 한다. 소리만 담는 형식으로는 받을 수 없다.
+     * <p>면접 화면 녹화는 영상 분석이 받는 컨테이너(MP4, WebM)여야 한다. 소리만 담는 형식은 물론, 그림을 담을 수
+     * 있어도 Ogg는 분석하지 못한다. 코덱·해상도·길이는 앞 바이트로 알 수 없어 분석 서버가 오류로 알린다.
      */
     private String contentTypeOf(RecordingKind kind, RecordingFormat format) {
         if (kind == RecordingKind.FULL_INTERVIEW) {
             if (!format.canHoldVideo()) {
-                throw new BusinessException("면접 화면 녹화는 영상 파일이어야 합니다.", HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+                throw new BusinessException("면접 화면 녹화는 MP4 또는 WebM 영상이어야 합니다.",
+                        HttpStatus.UNSUPPORTED_MEDIA_TYPE);
             }
             return format.videoContentType();
         }

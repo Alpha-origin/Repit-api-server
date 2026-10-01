@@ -6,7 +6,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.web.servlet.HandlerMapping;
 import repit.repit_api_server.global.exception.BusinessException;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -67,6 +70,25 @@ class InternalCallbackAuthInterceptorTest {
         InternalCallbackAuthInterceptor interceptor = new InternalCallbackAuthInterceptor("");
 
         assertThat(interceptor.preHandle(request(null), response(), new Object())).isTrue();
+    }
+
+    /**
+     * 영상 분석 콜백은 어긋난 본문까지 원문으로 남긴다. 값이 없다고 열어 두면 누구나 반복 호출로 DB에 임의의
+     * 본문을 쌓을 수 있다. 받지 못한 결과는 작업 조회로 되찾으므로 막아도 잃는 것이 없다.
+     */
+    @Test
+    void 값을_설정하지_않았어도_영상_분석_콜백은_막는다() {
+        InternalCallbackAuthInterceptor interceptor = new InternalCallbackAuthInterceptor("");
+        MockHttpServletRequest byUri = new MockHttpServletRequest("POST", "/api/analyses/video/callback");
+        // 핸들러를 고른 패턴이 기준이다. 요청 URI가 달라 보여도 같은 핸들러로 가면 막는다.
+        MockHttpServletRequest byPattern = new MockHttpServletRequest("POST", "/api/analyses/video/callback/");
+        byPattern.setAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE, "/api/analyses/video/callback");
+
+        for (MockHttpServletRequest request : List.of(byUri, byPattern)) {
+            assertThatThrownBy(() -> interceptor.preHandle(request, response(), new Object()))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED));
+        }
     }
 
     /** 배포 과정에서 앞뒤 공백이 섞여 들어오는 일이 있다. 그것 때문에 콜백이 통째로 막히면 안 된다. */

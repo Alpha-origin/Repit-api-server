@@ -222,6 +222,32 @@ class InterviewRecordingServiceTest {
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
+    /** 영상 분석이 Ogg를 받지 않는다. 받아 두면 그 면접의 화면은 영영 분석되지 않는다. */
+    @Test
+    void 면접_전체_녹화가_Ogg면_415() {
+        MockMultipartFile ogg = new MockMultipartFile("file", "screen.ogg", "video/ogg",
+                new byte[]{'O', 'g', 'g', 'S', 0, 0, 0, 0, 0, 0, 0, 0});
+
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "FULL_INTERVIEW", null, null, ogg),
+                HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    /** 영상 분석이 받는 상한이다. 넘는 영상을 잘라 분석하지 않으므로 업로드에서 돌려보낸다. */
+    @Test
+    void 면접_전체_녹화가_1000000000바이트를_넘으면_413이고_S3에_닿지_않는다() {
+        MultipartFile tooLarge = new MockMultipartFile("file", "screen.mp4", "video/mp4", MP4_BYTES) {
+            @Override
+            public long getSize() {
+                return 1_000_000_001L;
+            }
+        };
+
+        assertStatus(() -> service.upload(USER_ID, INTERVIEW_ID, "FULL_INTERVIEW", null, null, tooLarge),
+                HttpStatus.CONTENT_TOO_LARGE);
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
     @Test
     void 없는_면접이면_404() {
         when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.empty());

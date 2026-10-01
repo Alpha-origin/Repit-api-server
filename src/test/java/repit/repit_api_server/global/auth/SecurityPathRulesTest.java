@@ -11,6 +11,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import repit.repit_api_server.domain.userdata.analysis.controller.VideoAnalysisController;
+import repit.repit_api_server.domain.userdata.analysis.service.VideoAnalysisCallbackHandler;
+import repit.repit_api_server.domain.userdata.analysis.service.VideoAnalysisService;
 import repit.repit_api_server.domain.userdata.feedback.controller.FeedbackController;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
 import repit.repit_api_server.domain.userdata.feedback.service.FeedbackService;
@@ -36,7 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>기본은 막고 열 곳만 적는 규칙이라, 그 경계가 실제로 그렇게 도는지 한 번은 확인해야 한다.
  * 특히 콜백은 열려 있어야 하고 — 막히면 분석 결과가 폐기된다 — 나머지는 막혀 있어야 한다.
  */
-@WebMvcTest(controllers = FeedbackController.class)
+@WebMvcTest(controllers = {FeedbackController.class, VideoAnalysisController.class})
 @Import({SecurityConfig.class, RestAuthenticationEntryPoint.class, RestAccessDeniedHandler.class,
         InternalCallbackAuthInterceptor.class})
 // 요청 로깅 필터가 함께 올라온다. 그 설정값은 본 설정 클래스가 등록하므로 여기서 따로 켜준다.
@@ -52,6 +55,10 @@ class SecurityPathRulesTest {
     private AuthServerClient authServerClient;
     @MockitoBean
     private FeedbackService feedbackService;
+    @MockitoBean
+    private VideoAnalysisService videoAnalysisService;
+    @MockitoBean
+    private VideoAnalysisCallbackHandler videoAnalysisCallbackHandler;
 
     private UserResponse user(Long id) {
         UserResponse user = new UserResponse();
@@ -97,6 +104,20 @@ class SecurityPathRulesTest {
         verify(feedbackService).handleCallback(any());
         // 콜백 경로에서는 인증 서버에 묻지도 않는다.
         verifyNoInteractions(authServerClient);
+    }
+
+    /**
+     * 영상 분석 콜백은 어긋난 본문까지 원문으로 남긴다. 내부 인증값을 설정하지 않은 동안에도 열어 두면 누구나
+     * 반복 호출로 DB에 임의의 본문을 쌓을 수 있어, 이 경로만은 값이 없으면 받지 않는다. 본문을 읽기 전에 막힌다.
+     */
+    @Test
+    void 영상_분석_콜백은_내부_인증값이_설정되지_않았으면_받지_않는다() throws Exception {
+        mockMvc.perform(post("/api/analyses/video/callback")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("garbage"))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(videoAnalysisCallbackHandler);
     }
 
     /**

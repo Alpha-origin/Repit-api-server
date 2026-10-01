@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.HandlerMapping;
 import repit.repit_api_server.global.exception.BusinessException;
 
 import java.nio.charset.StandardCharsets;
@@ -22,6 +23,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>토큰이 설정되지 않았으면 통과시킨다. 부르는 쪽이 먼저 헤더를 실어 보내도록 배포한 뒤에
  * 이 서버에서 강제해야 하는데, 값이 없다고 곧바로 막으면 그 순서를 지킬 수 없다. 대신 지키지
  * 않고 있다는 사실은 뜨자마자 한 번 남긴다.
+ *
+ * <p>다만 {@link CallbackPaths#ALWAYS_AUTHENTICATED}는 값이 없으면 받지 않는다. 처음부터 헤더를 보내기로
+ * 하고 연 경로라 기다릴 순서가 없다.
  */
 @Component
 public class InternalCallbackAuthInterceptor implements HandlerInterceptor {
@@ -45,6 +49,11 @@ public class InternalCallbackAuthInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         if (token.isEmpty()) {
+            String path = matchedPath(request);
+            if (CallbackPaths.ALWAYS_AUTHENTICATED.contains(path)) {
+                log.warn("서버 간 인증값이 설정되지 않아 이 콜백은 받지 않습니다. path={}", path);
+                throw BusinessException.unauthorized("서버 간 인증이 필요한 요청입니다.");
+            }
             if (warned.compareAndSet(false, true)) {
                 log.warn("app.internal-auth.token이 비어 있어 서버 간 콜백을 인증 없이 받습니다. "
                         + "분석·채팅 서버가 {} 헤더를 보내기 시작하면 값을 설정해 강제하세요.", HEADER);
@@ -65,5 +74,14 @@ public class InternalCallbackAuthInterceptor implements HandlerInterceptor {
             throw BusinessException.forbidden("서버 간 인증에 실패했습니다.");
         }
         return true;
+    }
+
+    /**
+     * 요청이 실제로 매칭된 경로 패턴. 요청 URI 문자열을 그대로 견주면 같은 핸들러로 가는 변형 경로로 비켜 갈 수
+     * 있어, 핸들러를 고른 패턴을 기준으로 한다. 매칭 정보가 없을 때만 URI를 쓴다.
+     */
+    private static String matchedPath(HttpServletRequest request) {
+        Object pattern = request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+        return pattern != null ? pattern.toString() : request.getRequestURI();
     }
 }

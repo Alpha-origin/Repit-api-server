@@ -7,6 +7,8 @@ import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisAcceptedResponse;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisJobResponse;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
@@ -19,6 +21,7 @@ import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResp
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorAcceptedResponse;
 import repit.repit_api_server.global.common.ApiResponse;
 
+import java.util.Map;
 import java.util.function.Supplier;
 
 @Component
@@ -78,6 +81,18 @@ public class AiServerClient {
         return executor.execute(SERVER_NAME,
                 () -> aiServerApi.getAudioAnalysisJob(jobId),
                 this::resolveMessage, false);
+    }
+
+    public VideoAnalysisAcceptedResponse requestVideoAnalysis(Map<String, Object> request) {
+        return executor.execute(SERVER_NAME,
+                () -> aiServerApi.requestVideoAnalysis(request),
+                this::resolveMessage, false);
+    }
+
+    public VideoAnalysisJobResponse getVideoAnalysisJob(String jobId) {
+        return executor.execute(SERVER_NAME,
+                () -> aiServerApi.getVideoAnalysisJob(jobId),
+                this::resolveMessage, true);
     }
 
     public QuestionTailorAcceptedResponse tailorQuestions(QuestionTailorRequest request) {
