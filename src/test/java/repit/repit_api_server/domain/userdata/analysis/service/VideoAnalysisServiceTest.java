@@ -89,6 +89,7 @@ class VideoAnalysisServiceTest {
         service = new VideoAnalysisService(analysisRepository, interviewRepository, recordingRepository,
                 callbackHandler, aiServerClient, presigner, JsonMapper.builder().build());
         ReflectionTestUtils.setField(service, "enabled", true);
+        ReflectionTestUtils.setField(service, "internalAuthToken", "secret");
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
         ReflectionTestUtils.setField(service, "bucketName", "repit-bucket");
 
@@ -430,6 +431,22 @@ class VideoAnalysisServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
         assertThatThrownBy(() -> service.retry(USER_ID + 1, INTERVIEW_ID))
                 .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+    }
+
+    /** 켰는데 인증값이 없으면 콜백이 모두 튕긴다. 겉으로는 정상처럼 보이므로 배포 시점에 드러낸다. */
+    @Test
+    void 켰는데_서버_간_인증값이_없으면_뜨지_않는다() {
+        ReflectionTestUtils.setField(service, "internalAuthToken", " ");
+
+        assertThatThrownBy(service::requireCallbackAuth).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("INTERNAL_AUTH_TOKEN");
+
+        ReflectionTestUtils.setField(service, "enabled", false);
+        service.requireCallbackAuth();
+
+        ReflectionTestUtils.setField(service, "enabled", true);
+        ReflectionTestUtils.setField(service, "internalAuthToken", "secret");
+        service.requireCallbackAuth();
     }
 
     @Test

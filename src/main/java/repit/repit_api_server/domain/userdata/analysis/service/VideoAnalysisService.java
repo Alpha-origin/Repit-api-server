@@ -1,5 +1,6 @@
 package repit.repit_api_server.domain.userdata.analysis.service;
 
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -110,11 +111,30 @@ public class VideoAnalysisService {
     @Value("${app.video-analysis.enabled:false}")
     private boolean enabled;
 
+    // 영상 콜백을 지키는 서버 간 인증값. 켜려면 반드시 있어야 한다.
+    @Value("${app.internal-auth.token:}")
+    private String internalAuthToken;
+
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
 
     @Value("${spring.cloud.aws.s3.bucket}")
     private String bucketName;
+
+    /**
+     * 켰는데 서버 간 인증값이 없으면 뜨지 않는다.
+     *
+     * <p>영상 콜백은 어긋난 본문까지 원문으로 남기므로 인증 없이는 받지 않는다(CallbackPaths.ALWAYS_AUTHENTICATED).
+     * 그 상태로 요청을 보내면 콜백은 모두 401로 튕기고 결과는 조회로만 늦게 들어오는데, 겉으로는 정상처럼 보인다.
+     * 잘못된 설정을 배포 시점에 드러낸다 — 블루/그린 배포라 새 서버가 뜨지 않으면 이전 서버가 그대로 남는다.
+     */
+    @PostConstruct
+    void requireCallbackAuth() {
+        if (enabled && (internalAuthToken == null || internalAuthToken.isBlank())) {
+            throw new IllegalStateException("영상 분석(VIDEO_ANALYSIS_ENABLED)을 켜려면 INTERNAL_AUTH_TOKEN이 필요합니다. "
+                    + "없으면 영상 분석 콜백을 받지 않습니다.");
+        }
+    }
 
     /**
      * 새로 올라온 최종 영상을 요청 자리에 올리고, 보낼 때가 된 요청을 보내거나 조회하고, 자동 재분석할 실패를 잇는다.
