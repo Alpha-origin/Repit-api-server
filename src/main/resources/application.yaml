@@ -86,6 +86,7 @@ app:
   internal-auth:
     # 분석·채팅 서버가 콜백에 X-Internal-Token 헤더로 실어 보내는 값.
     # 비어 있으면 콜백을 인증 없이 받는다. 부르는 쪽이 헤더를 보내도록 배포한 뒤에 채워 강제한다.
+    # 영상 분석 콜백은 예외다 -- 비어 있으면 401로 받지 않는다(CallbackPaths.ALWAYS_AUTHENTICATED).
     token: ${INTERNAL_AUTH_TOKEN:}
   callback-base-url: ${CALLBACK_BASE_URL:https://wildcat-startle-rope.ngrok-free.dev}
   feedback:
@@ -120,6 +121,7 @@ app:
   video-analysis:
     # 분석 서버가 Chrome·Safari 샘플로 검증을 마치고 영상 분석을 열면 켠다. 꺼져 있으면 면접 화면 녹화를 받아
     # 두기만 하고 보내지 않는다. 켜는 순간 그동안 쌓인 최종 영상(업로드 89일 이내)도 스윕마다 20건씩 나간다.
+    # INTERNAL_AUTH_TOKEN이 비어 있으면 영상 콜백을 받지 않는다. 그때는 접수 10분 뒤부터 작업 조회로만 결과를 가져온다.
     enabled: ${VIDEO_ANALYSIS_ENABLED:false}
     # 업로드를 마친 영상을 요청 자리에 올리고, 보내고, 작업을 조회하고, 자동 재분석을 잇는 간격.
     # 재전송·조회·재분석 한도는 분석 서버와 맞춘 계약이라 코드(VideoAnalysisService)에 둔다.
