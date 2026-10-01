@@ -30,6 +30,17 @@ class LogPayloadsTest {
                 .contains(LogPayloads.MASKED);
     }
 
+    /** 분석 서버에 넘기는 서명 주소는 유효 시간 동안 누구나 그 녹화를 내려받게 한다. */
+    @Test
+    void 서명된_파일_주소는_가린다() {
+        byte[] body = "{\"video\":{\"videoId\":\"301\",\"fileUrl\":\"https://b.s3/x?X-Amz-Signature=abc\"}}"
+                .getBytes(StandardCharsets.UTF_8);
+
+        String summary = LogPayloads.summarize(body, "application/json", StandardCharsets.UTF_8, 500);
+
+        assertThat(summary).contains("301").doesNotContain("X-Amz-Signature").contains(LogPayloads.MASKED);
+    }
+
     @Test
     void 폼_본문의_민감한_값도_가린다() {
         byte[] body = "userId=7&password=secret1&next=/home".getBytes(StandardCharsets.UTF_8);

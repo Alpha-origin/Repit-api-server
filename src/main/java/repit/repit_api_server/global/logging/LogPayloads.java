@@ -14,8 +14,10 @@ final class LogPayloads {
     static final String MASKED = "***";
 
     // 값 자체가 노출되면 안 되는 필드. JSON 본문과 폼 본문 양쪽에서 같은 이름을 쓴다.
+    // file_url은 분석 서버에 넘기는 서명된 S3 주소다. 유효 시간 동안은 누구나 그 녹화를 내려받을 수 있다.
     private static final String SENSITIVE_NAMES =
-            "password|passwd|token|access_?token|refresh_?token|authorization|secret|access_?key|secret_?key|credential";
+            "password|passwd|token|access_?token|refresh_?token|authorization|secret|access_?key|secret_?key|credential"
+                    + "|file_?url";
 
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
             "(\"(?:" + SENSITIVE_NAMES + ")\"\\s*:\\s*)\"[^\"]*\"", Pattern.CASE_INSENSITIVE);
