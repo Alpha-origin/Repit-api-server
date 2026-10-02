@@ -1,6 +1,8 @@
 package repit.repit_api_server.domain.metadata.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -10,7 +12,9 @@ import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.domain.metadata.dto.response.ProfileStatusResponse;
 import repit.repit_api_server.domain.metadata.dto.response.ResultResponse;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
@@ -18,6 +22,8 @@ import repit.repit_api_server.domain.metadata.sse.SseEmitterRepository;
 import repit.repit_api_server.domain.metadata.sse.SseEmitters;
 import repit.repit_api_server.domain.metadata.sse.SseNotifier;
 import repit.repit_api_server.domain.metadata.sse.SseSubscription;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleCallbackRequest;
+import repit.repit_api_server.domain.userdata.question.service.QuestionPoolService;
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import repit.repit_api_server.global.auth.AuthUser;
@@ -31,6 +37,8 @@ import java.io.IOException;
 @RequestMapping("/api/v1/ai")
 public class AiMetaDataController {
 
+    private static final Logger log = LoggerFactory.getLogger(AiMetaDataController.class);
+
     // 분석부터 면접 준비까지를 한 구독으로 덮는다. 분석만 덮던 때보다 재작성 단계만큼 길어졌다.
     private static final long SSE_TIMEOUT = 15 * 60 * 1000L; // 15분
     // 끊겼을 때 클라이언트가 다시 붙기까지의 간격. 정해주지 않으면 브라우저 기본값에 맡기게 된다.
@@ -41,6 +49,7 @@ public class AiMetaDataController {
     private final SseEmitterRepository sseEmitterRepository;
     private final SseNotifier sseNotifier;
     private final QuestionTailorService questionTailorService;
+    private final QuestionPoolService questionPoolService;
 
     private final AiServerClient aiServerClient;
     private final AnalysisLaunchService analysisLaunchService;
@@ -114,8 +123,13 @@ public class AiMetaDataController {
         sseNotifier.sendAnalysisResult(jobId, finished.getStatus(), finished);
 
         QuestionTailorService.PreparationEvent prepared = questionTailorService.findPreparationEvent(jobId);
-        if (prepared != null) {
+        if (prepared == null) {
+            return;
+        }
+        if (prepared.last()) {
             sseNotifier.sendFinal(jobId, prepared.eventName(), prepared.payload());
+        } else {
+            sseNotifier.send(jobId, prepared.eventName(), prepared.payload());
         }
     }
 
@@ -139,7 +153,7 @@ public class AiMetaDataController {
             @AuthenticationPrincipal AuthUser authUser
     ) {
         MetaDataResponse forRequest = metaService.getMetaData(authUser.token());
-        return ResponseEntity.ok(analysisLaunchService.launch(authUser.id(), forRequest));
+        return ResponseEntity.ok(analysisLaunchService.launch(authUser.id(), authUser.user().getMajor(), forRequest));
     }
 
     @PostMapping("/generate-mock")
@@ -174,6 +188,57 @@ public class AiMetaDataController {
         sseNotifier.sendAnalysisResult(saved.getJobId(), saved.getStatus(), saved);
 
         return ApiResponse.success(saved);
+    }
+
+    /**
+     * 분석 서버가 종합 데이터(/profile) 결과를 보내오는 콜백. 옛 /generate 콜백과 경로를 나눠 결과가 섞이지 않게 한다.
+     *
+     * <p>성공이면 이전 자료로 만든 질문 사이클을 버리고 새 사이클 1을 두 모드 모두 요청한 뒤에 알린다.
+     * 알림을 받은 웹이 곧바로 면접을 시작해도 기다릴 사이클이 이미 있다.
+     *
+     * <p>실패면 이전 사이클을 건드리지 않는다. 새 자료로 분석하지 못했을 뿐 이전 질문은 여전히 쓸 수 있다.
+     */
+    @PostMapping("/profile/callback")
+    public ApiResponse<CallbackSuccessResponse> profileCallback(
+            @RequestBody CallbackSuccessRequest request
+    ) {
+        CallbackSuccessResponse saved = aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE);
+        if (saved == null) {
+            return ApiResponse.success(null);
+        }
+
+        if ("succeeded".equalsIgnoreCase(saved.getStatus())) {
+            try {
+                questionPoolService.startCycles(saved.getJobId());
+            } catch (RuntimeException e) {
+                // 결과는 이미 저장했다. 사이클은 면접을 시작할 때 다시 요청되니 완료 알림까지 막지 않는다.
+                log.error("종합 데이터로 질문 사이클을 시작하지 못했습니다. jobId={}", saved.getJobId(), e);
+            }
+        }
+        sseNotifier.sendAnalysisResult(saved.getJobId(), saved.getStatus(), saved);
+
+        return ApiResponse.success(saved);
+    }
+
+    /**
+     * 분석 서버가 질문 사이클을 만들고 보내는 콜백. 그 사이클을 기다리던 면접 준비를 이어간다.
+     *
+     * <p>cycleId는 요청할 때 콜백 주소에 실어 보낸 값이다. 접수 응답보다 콜백이 먼저 오면 작업 id로는
+     * 사이클을 찾지 못한다.
+     */
+    @PostMapping("/question-cycle/callback")
+    public ResponseEntity<Void> questionCycleCallback(
+            @RequestParam(required = false) Long cycleId,
+            @RequestBody QuestionCycleCallbackRequest request
+    ) {
+        questionTailorService.handleCycleCallback(request, cycleId);
+        return ResponseEntity.ok().build();
+    }
+
+    // 가장 최근에 요청한 종합 데이터 분석의 상태. 마이페이지 상태 카드와 면접 설정의 시작 차단이 본다.
+    @GetMapping("/profile/latest")
+    public ApiResponse<ProfileStatusResponse> getLatestProfile(@AuthenticationPrincipal AuthUser authUser) {
+        return ApiResponse.success(aiMetaDataService.getLatestProfile(authUser.id()));
     }
 
     // 분석 결과 조회. 면접 질문은 재작성이 끝나는 시점에 채팅 서버로 직접 넘어간다.

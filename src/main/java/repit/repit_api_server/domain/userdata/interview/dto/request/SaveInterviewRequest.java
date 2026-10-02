@@ -60,7 +60,9 @@ public class SaveInterviewRequest {
         // 이 질문이 무엇을 묻는 갈래인지. 꼬리질문은 채팅 서버가 만든 의도가 실려 온다.
         private String category;
         private String question;
-        // 채점 기준. 면접을 열 때 우리가 넘긴 값이 손대지 않은 채 돌아온다.
+        // 채점 기준. 면접을 열 때 우리가 넘긴 값이 돌아오고, 꼬리질문은 채팅 서버가 정한 의도가 온다.
+        private String intention;
+        // 모범답안. 면접을 열 때 우리가 넘긴 값이 손대지 않은 채 돌아온다.
         private String expectedAnswer;
         private List<String> basedOn;
     }

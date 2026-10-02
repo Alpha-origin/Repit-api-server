@@ -7,6 +7,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 
@@ -42,7 +43,7 @@ class AiMetaDataServiceRegisterJobTest {
         when(analysisDataRepository.clearPreviousRun("job-1", AnalysisStatus.PENDING, requestedAt))
                 .thenReturn(1);
 
-        service.registerJob("job-1", 7L, requestedAt);
+        service.registerJob("job-1", 7L, requestedAt, AnalysisResultType.PROFILE);
 
         // 이미 있던 행을 걷어냈으므로 새로 만들지 않는다. 만들면 받아둔 소유자와 생성 시각을 잃는다.
         verify(analysisDataRepository, never()).save(any());
@@ -57,7 +58,7 @@ class AiMetaDataServiceRegisterJobTest {
                 .thenReturn(0);
         when(analysisDataRepository.existsById("job-2")).thenReturn(true);
 
-        service.registerJob("job-2", 7L, requestedAt);
+        service.registerJob("job-2", 7L, requestedAt, AnalysisResultType.PROFILE);
 
         verify(analysisDataRepository, never()).save(any());
         verify(analysisDataRepository).updateUserId("job-2", 7L);
@@ -70,7 +71,7 @@ class AiMetaDataServiceRegisterJobTest {
                 .thenReturn(0);
         when(analysisDataRepository.existsById("job-3")).thenReturn(false);
 
-        service.registerJob("job-3", 7L, requestedAt);
+        service.registerJob("job-3", 7L, requestedAt, AnalysisResultType.PROFILE);
 
         ArgumentCaptor<AnalysisDataEntity> saved = ArgumentCaptor.forClass(AnalysisDataEntity.class);
         verify(analysisDataRepository).save(saved.capture());
@@ -78,6 +79,7 @@ class AiMetaDataServiceRegisterJobTest {
         assertThat(saved.getValue().getUserId()).isEqualTo(7L);
         assertThat(saved.getValue().getStatus()).isEqualTo(AnalysisStatus.PENDING);
         assertThat(saved.getValue().getResult()).isNull();
+        assertThat(saved.getValue().getResultType()).isEqualTo(AnalysisResultType.PROFILE);
         verify(analysisDataRepository, never()).updateUserId(eq("job-3"), any());
     }
 
@@ -88,7 +90,7 @@ class AiMetaDataServiceRegisterJobTest {
         when(analysisDataRepository.clearPreviousRun("job-4", AnalysisStatus.PENDING, requestedAt))
                 .thenReturn(1);
 
-        service.registerJob("job-4", null, requestedAt);
+        service.registerJob("job-4", null, requestedAt, AnalysisResultType.PROFILE);
 
         verify(analysisDataRepository).clearPreviousRun("job-4", AnalysisStatus.PENDING, requestedAt);
         // 소유자를 모르면 이미 기록된 소유자를 null로 덮지 않는다.

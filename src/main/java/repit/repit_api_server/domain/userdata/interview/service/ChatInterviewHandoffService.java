@@ -116,8 +116,8 @@ public class ChatInterviewHandoffService {
      * <p>채팅 서버는 질문마다 면접관을 달아 두고, 프론트는 그 값이 바뀌는 것으로 면접관 전환을
      * 감지한다. N:1은 질문에 붙어 온 면접관을 그대로 쓰고, 1:1은 면접관이 하나뿐이라 전부 같다.
      *
-     * <p>기대 답변과 근거도 함께 넘긴다. 채팅 서버는 이 둘을 손대지 않고 들고 있다가 면접
-     * 기록과 함께 돌려주고, 그것이 그대로 채점 기준이 된다. 여기서 비워 보내면 되찾을 길이 없다.
+     * <p>채점 기준(intention)과 기대 답변, 근거도 함께 넘긴다. 채팅 서버는 이것들을 손대지 않고 들고
+     * 있다가 면접 기록과 함께 돌려주고, 그것이 그대로 채점 기준이 된다. 여기서 비워 보내면 되찾을 길이 없다.
      *
      * <p>id와 본문, 면접관이 비면 채팅 서버가 질문을 다룰 수 없으므로 넘기기 전에 멈춘다.
      */
@@ -142,6 +142,7 @@ public class ChatInterviewHandoffService {
                             .id(question.getId().longValue())
                             .category(question.getCategory())
                             .question(question.getQuestion())
+                            .intention(question.getIntention())
                             .expectedAnswer(question.getExpectedAnswer())
                             .basedOn(question.getBasedOn())
                             .personaId(personaId)

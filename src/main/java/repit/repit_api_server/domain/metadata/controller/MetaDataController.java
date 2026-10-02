@@ -31,7 +31,7 @@ public class MetaDataController {
 
         // 올린 자료로 곧바로 분석을 시작한다. 접수까지 함께 해야 이 분석에 주인이 남고,
         // 주인이 없으면 나중에 면접을 열 때 이 결과를 찾지 못한다.
-        return ResponseEntity.ok(analysisLaunchService.launch(authUser.id(), metaData));
+        return ResponseEntity.ok(analysisLaunchService.launch(authUser.id(), authUser.user().getMajor(), metaData));
     }
 
 

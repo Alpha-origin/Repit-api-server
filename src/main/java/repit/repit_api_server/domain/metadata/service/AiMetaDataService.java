@@ -8,13 +8,16 @@ import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
 import repit.repit_api_server.domain.metadata.dto.response.BrowserSafeResult;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
+import repit.repit_api_server.domain.metadata.dto.response.ProfileStatusResponse;
 import repit.repit_api_server.domain.metadata.dto.response.ResultResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.global.exception.BusinessException;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -43,7 +46,7 @@ public class AiMetaDataService {
      * 도착한 콜백을 아직 비어 있는 result로 덮어쓰지 않는다.
      */
     @Transactional
-    public void registerJob(String jobId, Long userId, LocalDateTime requestedAt) {
+    public void registerJob(String jobId, Long userId, LocalDateTime requestedAt, AnalysisResultType resultType) {
         if (jobId == null) {
             return;
         }
@@ -56,6 +59,7 @@ public class AiMetaDataService {
             analysisDataRepository.save(AnalysisDataEntity.builder()
                     .jobId(jobId)
                     .userId(userId)
+                    .resultType(resultType)
                     .build());
             return;
         }
@@ -79,6 +83,15 @@ public class AiMetaDataService {
      */
     @Transactional
     public CallbackSuccessResponse saveResult(CallbackSuccessRequest request) {
+        return saveResult(request, AnalysisResultType.LEGACY_GENERATE);
+    }
+
+    /**
+     * 결과 종류를 콜백 경로로 정한다. 접수보다 콜백이 먼저 도착하면 행을 여기서 만들게 되는데,
+     * 그때 종류를 빠뜨리면 /profile 결과가 옛 결과로 남아 면접을 열 수 없다.
+     */
+    @Transactional
+    public CallbackSuccessResponse saveResult(CallbackSuccessRequest request, AnalysisResultType resultType) {
         String jobId = request.getJobId();
         if (jobId == null) {
             log.warn("jobId 없는 분석 콜백을 받았습니다. status={}", request.getStatus());
@@ -88,6 +101,7 @@ public class AiMetaDataService {
         // registerJob으로 이미 저장된 행이 있으면 userId를 유지한 채 결과만 채운다.
         AnalysisDataEntity data = analysisDataRepository.findById(jobId)
                 .orElseGet(() -> AnalysisDataEntity.builder().jobId(jobId).build());
+        data.setResultType(resultType);
 
         if (STATUS_SUCCEEDED.equalsIgnoreCase(request.getStatus()) && request.getResult() != null) {
             data.setStatus(AnalysisStatus.SUCCEEDED);
@@ -267,5 +281,38 @@ public class AiMetaDataService {
             return STATUS_FAILED;
         }
         return STATUS_PENDING;
+    }
+
+    /**
+     * 가장 최근에 요청한 종합 데이터 분석의 상태. 마이페이지 상태 카드와 면접 설정의 시작 차단이 본다.
+     *
+     * <p>성공했어도 결과가 비어 있으면 진행 중으로 본다. {@link #isFinished}와 같은 기준이다.
+     */
+    @Transactional(readOnly = true)
+    public ProfileStatusResponse getLatestProfile(Long userId) {
+        AnalysisDataEntity data = analysisDataRepository
+                .findTopByUserIdAndResultTypeOrderByCreatedAtDesc(userId, AnalysisResultType.PROFILE)
+                .orElse(null);
+        if (data == null) {
+            return ProfileStatusResponse.none();
+        }
+
+        String status = ProfileStatusResponse.PENDING;
+        if (data.getStatus() == AnalysisStatus.FAILED) {
+            status = ProfileStatusResponse.FAILED;
+        } else if (isFinished(data)) {
+            status = ProfileStatusResponse.COMPLETED;
+        }
+
+        return ProfileStatusResponse.builder()
+                .jobId(data.getJobId())
+                .status(status)
+                .errorStatusCode(data.getErrorStatusCode())
+                .errorMessage(data.getErrorMessage())
+                .completedAt(data.getCompletedAt())
+                .projectSummary(ProfileStatusResponse.COMPLETED.equals(status) && data.getResult() instanceof Map<?, ?> result
+                        ? result.get("projectSummary")
+                        : null)
+                .build();
     }
 }

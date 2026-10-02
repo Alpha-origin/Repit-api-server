@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
+import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
@@ -15,6 +16,7 @@ import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
@@ -47,15 +49,21 @@ public class AiServerClient {
         return response == null ? null : response.getData();
     }
 
-    public GenerateResponse generate(GenerateRequest request) {
-        return executor.execute(SERVER_NAME,
-                () -> aiServerApi.generate(request),
-                this::resolveMessage, false);
-    }
-
     public GenerateResponse generateMock(GenerateRequest request) {
         return executor.execute(SERVER_NAME,
                 () -> aiServerApi.generateMock(request),
+                this::resolveMessage, false);
+    }
+
+    public GenerateResponse requestProfile(ProfileRequest request) {
+        return executor.execute(SERVER_NAME,
+                () -> aiServerApi.requestProfile(request),
+                this::resolveMessage, false);
+    }
+
+    public GenerateResponse requestQuestionCycle(QuestionCycleRequest request) {
+        return executor.execute(SERVER_NAME,
+                () -> aiServerApi.requestQuestionCycle(request),
                 this::resolveMessage, false);
     }
 

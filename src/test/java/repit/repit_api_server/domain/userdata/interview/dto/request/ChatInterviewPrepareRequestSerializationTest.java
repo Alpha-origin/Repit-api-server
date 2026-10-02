@@ -60,7 +60,7 @@ class ChatInterviewPrepareRequestSerializationTest {
 
         JsonNode question = json.get("questions").get(0);
         assertThat(question.propertyNames()).containsExactlyInAnyOrder(
-                "id", "category", "question", "expectedAnswer", "basedOn", "personaId");
+                "id", "category", "question", "intention", "expectedAnswer", "basedOn", "personaId");
         assertThat(question.get("id").asLong()).isEqualTo(1L);
         assertThat(question.get("category").asString()).isEqualTo("tech_choice");
         assertThat(question.get("question").asString()).isEqualTo("왜 Redis 를 썼나요?");

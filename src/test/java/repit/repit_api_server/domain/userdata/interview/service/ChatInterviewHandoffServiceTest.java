@@ -140,6 +140,7 @@ class ChatInterviewHandoffServiceTest {
                 .id(id)
                 .category("tech_choice")
                 .question(content)
+                .intention("캐시로 Redis를 고른 이유를 설명할 수 있는지")
                 .expectedAnswer("선택 근거와 대안 비교")
                 .basedOn(List.of("order-api/src/cache.py"))
                 .build();
@@ -168,6 +169,8 @@ class ChatInterviewHandoffServiceTest {
         ChatInterviewPrepareRequest.Question question = sent.getQuestions().getFirst();
         assertThat(question.getId()).isEqualTo(1L);
         assertThat(question.getQuestion()).isEqualTo("다시 쓴 Redis 질문");
+        // 채점 기준. 채팅 서버가 면접 기록과 함께 그대로 돌려줘야 채점에 쓴다.
+        assertThat(question.getIntention()).isEqualTo("캐시로 Redis를 고른 이유를 설명할 수 있는지");
         // 질문마다 면접관이 붙는다. 1:1은 모든 질문이 같은 면접관이다.
         assertThat(question.getPersonaId()).isEqualTo(1L);
         assertThat(question.getCategory()).isEqualTo("tech_choice");

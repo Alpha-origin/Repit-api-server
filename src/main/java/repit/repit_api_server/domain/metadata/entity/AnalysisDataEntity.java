@@ -14,6 +14,7 @@ import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 
 import java.time.LocalDateTime;
@@ -38,6 +39,12 @@ public class AnalysisDataEntity {
     @Column(nullable = false)
     @Builder.Default
     private AnalysisStatus status = AnalysisStatus.PENDING;
+
+    // 옛 /generate 결과인지 /profile 결과인지. 면접 질문은 PROFILE에서만 나온다.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private AnalysisResultType resultType = AnalysisResultType.LEGACY_GENERATE;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")

@@ -30,9 +30,9 @@ public class QuestionTailorMultiRequest {
     private Persona techPersona;
     // 비개발 면접관 1~3명. 직책이 겹치면 안 된다.
     private List<Persona> otherPersonas;
-    // 기술 면접관이 쓸 원질문. /generate 산출물 중 이 서버가 고른 것이다.
+    // 기술 면접관이 쓸 원질문. 질문 풀에서 꺼낸 세트다.
     private List<Question> questions;
-    // 신규 질문 생성의 근거. /generate 산출물을 그대로 넘긴다.
+    // 신규 질문 생성의 근거. /profile 결과의 projectSummary를 넘긴다.
     private ProjectSummary projectSummary;
     private String callbackUrl;
 
@@ -49,7 +49,7 @@ public class QuestionTailorMultiRequest {
         private Integer questionCount;
     }
 
-    /** /generate 산출물(interview[]) 한 건. expectedAnswer가 채점 기준이 되므로 반드시 채운다. */
+    /** 질문 풀에서 꺼낸 원질문 한 건. 분석 서버가 넷(id·category·question·expectedAnswer) 중 하나라도 비면 거부한다. */
     @Getter
     @Builder
     @NoArgsConstructor
@@ -58,6 +58,8 @@ public class QuestionTailorMultiRequest {
         private Integer id;
         private String category;
         private String question;
+        // 채점 기준. 재작성한 질문도 이것을 확인할 수 있어야 한다.
+        private String intention;
         private String expectedAnswer;
         private List<String> basedOn;
     }

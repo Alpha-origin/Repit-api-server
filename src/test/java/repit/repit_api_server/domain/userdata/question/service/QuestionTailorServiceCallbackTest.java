@@ -10,7 +10,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
@@ -51,7 +50,7 @@ class QuestionTailorServiceCallbackTest {
     @Mock
     private PersonaRepository personaRepository;
     @Mock
-    private AnalysisDataRepository analysisDataRepository;
+    private QuestionPoolService questionPoolService;
     @Mock
     private AiServerClient aiServerClient;
     @Mock
@@ -69,7 +68,7 @@ class QuestionTailorServiceCallbackTest {
     void setUp() {
         service = new QuestionTailorService(questionTailorRepository, interviewRepository,
                 interviewPersonaRepository, personaRepository,
-                analysisDataRepository, aiServerClient, chatInterviewHandoffService, sseNotifier,
+                questionPoolService, aiServerClient, chatInterviewHandoffService, sseNotifier,
                 new ObjectMapper());
 
         // 넘길 권리를 차지한 상태를 기본으로 둔다. 차지하지 못하는 경우는 따로 검증한다.

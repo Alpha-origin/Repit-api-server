@@ -16,6 +16,8 @@ public final class CallbackPaths {
     public static final String[] ALL = {
             // 분석 서버 콜백
             "/api/v1/ai/callback",
+            "/api/v1/ai/profile/callback",
+            "/api/v1/ai/question-cycle/callback",
             "/api/questions/tailor/callback",
             "/api/questions/tailor/multi/callback",
             "/api/feedbacks/callback",

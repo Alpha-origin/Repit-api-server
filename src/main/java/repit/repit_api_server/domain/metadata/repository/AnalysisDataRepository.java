@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 
 import java.time.LocalDateTime;
@@ -44,8 +45,8 @@ public interface AnalysisDataRepository extends JpaRepository<AnalysisDataEntity
     Optional<AnalysisOwner> findOwner(@Param("jobId") String jobId);
 
     /** 분석이 끝난(result가 채워진) 가장 최근 작업. */
-    default Optional<AnalysisDataEntity> findLatestCompleted(Long userId) {
-        return findLatestCompleted(userId, PageRequest.of(0, 1)).stream().findFirst();
+    default Optional<AnalysisDataEntity> findLatestCompleted(Long userId, AnalysisResultType resultType) {
+        return findLatestCompleted(userId, resultType, PageRequest.of(0, 1)).stream().findFirst();
     }
 
     /**
@@ -62,10 +63,17 @@ public interface AnalysisDataRepository extends JpaRepository<AnalysisDataEntity
     @Query("""
             select a from AnalysisDataEntity a
              where a.userId = :userId
+               and a.resultType = :resultType
                and a.result is not null
              order by coalesce(a.completedAt, a.createdAt) desc
             """)
-    List<AnalysisDataEntity> findLatestCompleted(@Param("userId") Long userId, Pageable pageable);
+    List<AnalysisDataEntity> findLatestCompleted(@Param("userId") Long userId,
+                                                 @Param("resultType") AnalysisResultType resultType,
+                                                 Pageable pageable);
+
+    /** 가장 최근에 요청한 작업. 끝났든 진행 중이든 지금 상태를 보여줄 때 쓴다. */
+    Optional<AnalysisDataEntity> findTopByUserIdAndResultTypeOrderByCreatedAtDesc(Long userId,
+                                                                               AnalysisResultType resultType);
 
     // 소유자만 갱신한다. 엔티티를 통째로 저장하면 콜백이 먼저 채워둔 result를 덮어쓸 수 있다.
     @Modifying(clearAutomatically = true, flushAutomatically = true)

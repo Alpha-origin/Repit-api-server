@@ -9,8 +9,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
-import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
-import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
@@ -28,6 +26,7 @@ import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
+import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQuestionResponse;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionTailorRepository;
 import repit.repit_api_server.domain.metadata.sse.SseNotifier;
@@ -44,6 +43,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -69,7 +69,7 @@ class QuestionTailorServiceRequestTest {
     @Mock
     private PersonaRepository personaRepository;
     @Mock
-    private AnalysisDataRepository analysisDataRepository;
+    private QuestionPoolService questionPoolService;
     @Mock
     private AiServerClient aiServerClient;
     @Mock
@@ -85,7 +85,7 @@ class QuestionTailorServiceRequestTest {
     void setUp() {
         service = new QuestionTailorService(questionTailorRepository, interviewRepository,
                 interviewPersonaRepository, personaRepository,
-                analysisDataRepository, aiServerClient, chatInterviewHandoffService, sseNotifier,
+                questionPoolService, aiServerClient, chatInterviewHandoffService, sseNotifier,
                 new ObjectMapper());
 
         user = mock(UserResponse.class);
@@ -103,29 +103,30 @@ class QuestionTailorServiceRequestTest {
         givenAnalysisResult(projectSummary, originalQuestions());
     }
 
+    /** 질문 풀이 꺼내 주는 세트. 세트 크기는 모드마다 정해져 있다. */
     private void givenAnalysisResult(Object projectSummary, List<Map<String, Object>> interview) {
-        when(analysisDataRepository.findLatestCompleted(7L))
-                .thenReturn(Optional.of(AnalysisDataEntity.builder()
-                        .jobId("analysis-1")
-                        .userId(7L)
-                        .result(Map.of("project_summary", projectSummary, "interview", interview))
-                        .build()));
+        when(questionPoolService.takeSet(eq(7L), any(), eq(3L))).thenAnswer(call -> {
+            InterviewMode mode = call.getArgument(1);
+            List<TailoredQuestionResponse> set = interview.stream()
+                    .limit(QuestionPoolService.setSize(mode))
+                    .map(question -> TailoredQuestionResponse.builder()
+                            .id((Integer) question.get("id"))
+                            .category((String) question.get("category"))
+                            .question((String) question.get("question"))
+                            .intention((String) question.get("intention"))
+                            .expectedAnswer((String) question.get("expected_answer"))
+                            .basedOn((List<String>) question.get("based_on"))
+                            .build())
+                    .toList();
+            return new QuestionPoolService.DrawnSet("analysis-1", set, projectSummary, null);
+        });
     }
 
-    /** 분석 서버가 원질문을 넉넉히 만들어 보낸 경우. id는 1부터 이어진다. */
-    private List<Map<String, Object>> numberedQuestions(int count) {
-        List<Map<String, Object>> questions = new ArrayList<>();
-        for (int id = 1; id <= count; id++) {
-            questions.add(Map.of("id", id, "category", "tech_choice", "question", id + "번 질문",
-                    "expected_answer", id + "번 기대 답변", "based_on", List.of()));
-        }
-        return questions;
-    }
-
-    /** /generate 산출물. 와이어 포맷이 snake_case다. */
+    /** 질문 풀의 질문. 채점 기준(intention)이 함께 온다. */
     private List<Map<String, Object>> originalQuestions() {
         return List.of(
                 Map.of("id", 1, "category", "tech_choice", "question", "왜 Redis 를 썼나요?",
+                        "intention", "캐시로 Redis를 고른 이유를 설명할 수 있는지",
                         "expected_answer", "캐시 선택 근거", "based_on", List.of("order-api/CacheConfig.java")),
                 Map.of("id", 2, "category", "structure", "question", "모듈을 왜 나눴나요?",
                         "expected_answer", "경계 설정 기준", "based_on", List.of()),
@@ -294,117 +295,8 @@ class QuestionTailorServiceRequestTest {
         assertThat(sent.getValue().getJobRole()).isEqualTo("FRONTEND");
     }
 
-    /**
-     * 1:1 면접은 다섯 문항이다.
-     *
-     * <p>분석 서버가 원질문을 몇 개 만들지는 우리가 정하지 않는다. 그대로 흘려보내면 같은 1:1
-     * 면접인데 분석 결과에 따라 길이가 달라진다.
-     */
-    @Test
-    void 일대일은_원질문이_많아도_다섯_문항만_보낸다() {
-        givenAnalysisResult(projectSummary(), numberedQuestions(8));
-
-        service.requestTailor(interview(InterviewMode.SOLO), user);
-
-        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
-        verify(aiServerClient).tailorQuestions(sent.capture());
-        assertThat(sent.getValue().getQuestions()).extracting(QuestionTailorRequest.Question::getId)
-                .containsExactly(1, 2, 3, 4, 5);
-    }
-
-    /**
-     * 고른 다섯 개가 그대로 sourceQuestions로 남아야 한다.
-     * 재작성이 실패하면 이 값이 그대로 면접에 쓰이므로, 여기에 여덟 개가 남으면 폴백된 면접만 길어진다.
-     */
-    @Test
-    void 일대일은_고른_다섯_문항만_원질문으로_남긴다() {
-        givenAnalysisResult(projectSummary(), numberedQuestions(8));
-
-        QuestionTailorEntity saved = service.requestTailor(interview(InterviewMode.SOLO), user);
-
-        assertThat(saved.getSourceQuestions()).hasSize(5);
-    }
-
     /** 분석 결과가 다섯 개에 못 미치면 있는 만큼 간다. 없는 질문을 만들어낼 수는 없다. */
-    @Test
-    void 일대일은_원질문이_모자라면_있는_만큼_보낸다() {
-        service.requestTailor(interview(InterviewMode.SOLO), user);
-
-        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
-        verify(aiServerClient).tailorQuestions(sent.capture());
-        assertThat(sent.getValue().getQuestions()).hasSize(3);
-    }
-
-    /**
-     * 원질문이 많다고 면접을 막지 않는다.
-     *
-     * <p>분석 서버가 몇 개를 만들지는 우리가 정하지 않는데, 예전에는 열 개를 넘으면 422로 돌려보냈다.
-     * 어차피 앞에서 다섯 개만 쓰므로 막을 이유가 없다.
-     */
-    @Test
-    void 일대일은_원질문이_열_개를_넘어도_면접을_연다() {
-        givenAnalysisResult(projectSummary(), numberedQuestions(12));
-
-        service.requestTailor(interview(InterviewMode.SOLO), user);
-
-        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
-        verify(aiServerClient).tailorQuestions(sent.capture());
-        assertThat(sent.getValue().getQuestions()).extracting(QuestionTailorRequest.Question::getId)
-                .containsExactly(1, 2, 3, 4, 5);
-    }
-
-    @Test
-    void N대1도_원질문이_열_개를_넘어도_면접을_연다() {
-        givenMultiPersonas();
-        givenAnalysisResult(projectSummary(), numberedQuestions(12));
-
-        service.requestTailor(interview(InterviewMode.MULTI), user);
-
-        ArgumentCaptor<QuestionTailorMultiRequest> sent =
-                ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
-        verify(aiServerClient).tailorQuestionsMulti(sent.capture());
-        assertThat(sent.getValue().getQuestions()).extracting(QuestionTailorMultiRequest.Question::getId)
-                .containsExactly(1, 2);
-    }
-
-    /**
-     * 쓰지도 않을 뒤쪽 질문 때문에 면접이 막히면 안 된다.
-     *
-     * <p>id 중복은 분석 서버가 요청을 거부하는 사유라 막아야 하지만, 그것은 실제로 넘기는 질문에
-     * 겹침이 있을 때의 이야기다. 버릴 질문까지 훑으면 멀쩡한 면접이 막힌다.
-     */
-    @Test
-    void 버릴_질문의_id가_겹치는_것은_면접을_막지_않는다() {
-        List<Map<String, Object>> questions = new ArrayList<>(numberedQuestions(5));
-        // 여섯 번째부터 id가 겹친다. 다섯 개만 쓰므로 넘어가는 질문에는 겹침이 없다.
-        questions.add(Map.of("id", 1, "category", "tech_choice", "question", "겹치는 질문",
-                "expected_answer", "겹치는 기대 답변", "based_on", List.of()));
-        givenAnalysisResult(projectSummary(), questions);
-
-        service.requestTailor(interview(InterviewMode.SOLO), user);
-
-        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
-        verify(aiServerClient).tailorQuestions(sent.capture());
-        assertThat(sent.getValue().getQuestions()).extracting(QuestionTailorRequest.Question::getId)
-                .containsExactly(1, 2, 3, 4, 5);
-    }
-
     /** 넘길 질문 안에 겹침이 있으면 분석 서버가 요청을 거부한다. 그건 그대로 막는다. */
-    @Test
-    void 넘길_질문의_id가_겹치면_422다() {
-        List<Map<String, Object>> questions = new ArrayList<>(numberedQuestions(3));
-        questions.add(Map.of("id", 1, "category", "tech_choice", "question", "겹치는 질문",
-                "expected_answer", "겹치는 기대 답변", "based_on", List.of()));
-        givenAnalysisResult(projectSummary(), questions);
-
-        assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.SOLO), user))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getStatus())
-                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
-
-        verify(aiServerClient, never()).tailorQuestions(any());
-    }
-
     @Test
     void N대1은_요약을_읽지_못하면_422로_알린다() {
         givenMultiPersonas();
@@ -420,30 +312,6 @@ class QuestionTailorServiceRequestTest {
     }
 
     /**
-     * 저장된 result의 최상위 키가 camelCase로 와도 요약은 살아 있어야 한다.
-     *
-     * <p>이름이 어긋나면 값이 조용히 빈다. 그러면 분석 결과에는 요약이 멀쩡히 들어 있는데도
-     * N:1만 "요약이 없다"며 열리지 않고, 사용자는 분석을 다시 돌려도 같은 자리에서 막힌다.
-     */
-    @Test
-    void N대1은_요약이_camelCase_키로_저장돼_있어도_읽는다() {
-        givenMultiPersonas();
-        when(analysisDataRepository.findLatestCompleted(7L))
-                .thenReturn(Optional.of(AnalysisDataEntity.builder()
-                        .jobId("analysis-1")
-                        .userId(7L)
-                        .result(Map.of("projectSummary", projectSummary(), "interview", originalQuestions()))
-                        .build()));
-
-        service.requestTailor(interview(InterviewMode.MULTI), user);
-
-        ArgumentCaptor<QuestionTailorMultiRequest> sent =
-                ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
-        verify(aiServerClient).tailorQuestionsMulti(sent.capture());
-        assertThat(sent.getValue().getProjectSummary().getOverview()).isEqualTo("주문 처리를 맡는 백엔드");
-    }
-
-    /**
      * 요약이 비어 막힐 때, 안내는 이미 끝나 있는 분석을 가리켜야 한다.
      *
      * <p>같은 분석 결과에서 원질문은 이미 읽힌 뒤라 "분석을 먼저 진행하라"는 안내는 사실과 다르다.
@@ -452,12 +320,7 @@ class QuestionTailorServiceRequestTest {
     @Test
     void N대1은_요약이_없으면_분석이_끝나있음을_가리켜_알린다() {
         givenMultiPersonas();
-        when(analysisDataRepository.findLatestCompleted(7L))
-                .thenReturn(Optional.of(AnalysisDataEntity.builder()
-                        .jobId("analysis-1")
-                        .userId(7L)
-                        .result(Map.of("interview", originalQuestions()))
-                        .build()));
+        givenAnalysisResult(null);
 
         assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.MULTI), user))
                 .isInstanceOf(BusinessException.class)
@@ -585,14 +448,9 @@ class QuestionTailorServiceRequestTest {
     @Test
     void 기대_답변이_빈_원질문이면_보내지_않는다() {
         givenMultiPersonas();
-        when(analysisDataRepository.findLatestCompleted(7L))
-                .thenReturn(Optional.of(AnalysisDataEntity.builder()
-                        .jobId("analysis-1")
-                        .userId(7L)
-                        .result(Map.of("project_summary", projectSummary(), "interview", List.of(
-                                Map.of("id", 1, "category", "tech_choice", "question", "왜 Redis 를 썼나요?",
-                                        "expected_answer", "  ", "based_on", List.of()))))
-                        .build()));
+        givenAnalysisResult(projectSummary(), List.of(
+                Map.of("id", 1, "category", "tech_choice", "question", "왜 Redis 를 썼나요?",
+                        "expected_answer", "  ", "based_on", List.of())));
 
         assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.MULTI), user))
                 .isInstanceOf(BusinessException.class);

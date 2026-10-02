@@ -12,6 +12,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
@@ -19,6 +20,7 @@ import repit.repit_api_server.domain.metadata.sse.SseEmitterRepository;
 import repit.repit_api_server.domain.metadata.sse.SseNotifier;
 import repit.repit_api_server.domain.metadata.sse.SseSubscription;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewReadyResponse;
+import repit.repit_api_server.domain.userdata.question.service.QuestionPoolService;
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
 import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.client.AiServerClient;
@@ -53,6 +55,8 @@ class AiMetaDataControllerSseTest {
     @Mock
     private QuestionTailorService questionTailorService;
     @Mock
+    private QuestionPoolService questionPoolService;
+    @Mock
     private AiServerClient aiServerClient;
     @Mock
     private AnalysisLaunchService analysisLaunchService;
@@ -65,7 +69,7 @@ class AiMetaDataControllerSseTest {
         sseEmitterRepository = new SseEmitterRepository();
         controller = new AiMetaDataController(
                 metaService, aiMetaDataService, sseEmitterRepository,
-                new SseNotifier(sseEmitterRepository), questionTailorService,
+                new SseNotifier(sseEmitterRepository), questionTailorService, questionPoolService,
                 aiServerClient, analysisLaunchService);
     }
 
@@ -269,6 +273,41 @@ class AiMetaDataControllerSseTest {
 
         // 구독이 그대로 남아 있다는 건 아무것도 흘려보내지 않았다는 뜻이다.
         assertThat(sseEmitterRepository.get("job-11")).isSameAs(emitter);
+    }
+
+    /**
+     * 종합 데이터가 나오면 질문 사이클을 먼저 요청하고 알린다. 알림을 받은 웹이 곧바로 면접을 시작해도
+     * 기다릴 사이클이 이미 있다. 사이클 요청이 실패해도 완료는 알린다 — 사이클은 면접을 시작할 때 다시 요청된다.
+     */
+    @Test
+    void 종합_데이터가_나오면_사이클을_요청하고_구독은_이어둔다() {
+        when(aiMetaDataService.findFinished("job-10")).thenReturn(null);
+        SseEmitter emitter = controller.subscribe(AUTH_USER, "job-10");
+
+        CallbackSuccessRequest request = analysisCallback("job-10");
+        when(aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE)).thenReturn(saved("job-10", "succeeded"));
+        doThrow(new IllegalStateException("분석 서버 응답 없음"))
+                .when(questionPoolService).startCycles("job-10");
+
+        controller.profileCallback(request);
+
+        verify(questionPoolService).startCycles("job-10");
+        assertThat(sseEmitterRepository.get("job-10")).isSameAs(emitter);
+    }
+
+    /** 새 자료를 분석하지 못했을 뿐 이전 질문은 여전히 쓸 수 있다. 사이클을 건드리지 않는다. */
+    @Test
+    void 종합_데이터가_실패하면_사이클을_건드리지_않고_구독을_닫는다() {
+        when(aiMetaDataService.findFinished("job-11")).thenReturn(null);
+        controller.subscribe(AUTH_USER, "job-11");
+
+        CallbackSuccessRequest request = analysisCallback("job-11");
+        when(aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE)).thenReturn(saved("job-11", "failed"));
+
+        controller.profileCallback(request);
+
+        verify(questionPoolService, never()).startCycles(any());
+        assertThat(sseEmitterRepository.get("job-11")).isNull();
     }
 
     private CallbackSuccessRequest analysisCallback(String jobId) {

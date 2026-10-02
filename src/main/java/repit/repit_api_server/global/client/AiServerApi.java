@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.PostExchange;
 import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
+import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
@@ -17,6 +18,7 @@ import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
@@ -34,11 +36,16 @@ public interface AiServerApi {
     @GetExchange("/api/v1/ai/createQuestion")
     ApiResponse<QuestionResponse> createQuestion();
 
-    @PostExchange("/generate")
-    GenerateResponse generate(@RequestBody GenerateRequest request);
-
     @PostExchange("/generate-mock")
     GenerateResponse generateMock(@RequestBody GenerateRequest request);
+
+    // 자료를 한 번 분석해 종합 데이터를 만든다. 202 접수 후 결과는 callbackUrl로 온다.
+    @PostExchange("/profile")
+    GenerateResponse requestProfile(@RequestBody ProfileRequest request);
+
+    // 종합 데이터로 질문 한 사이클(세트 3개)을 만든다. 202 접수 후 결과는 callbackUrl로 온다.
+    @PostExchange("/questions/cycle")
+    GenerateResponse requestQuestionCycle(@RequestBody QuestionCycleRequest request);
 
     // 비동기 채점. 202로 접수만 되고 결과는 callbackUrl로 POST된다.
     @PostExchange("/feedback/solo")

@@ -8,7 +8,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.metadata.sse.SseNotifier;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewReadyResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
@@ -59,7 +58,7 @@ class QuestionTailorServiceReadyNotifyTest {
     @Mock
     private PersonaRepository personaRepository;
     @Mock
-    private AnalysisDataRepository analysisDataRepository;
+    private QuestionPoolService questionPoolService;
     @Mock
     private AiServerClient aiServerClient;
     @Mock
@@ -73,7 +72,7 @@ class QuestionTailorServiceReadyNotifyTest {
     void setUp() {
         service = new QuestionTailorService(questionTailorRepository, interviewRepository,
                 interviewPersonaRepository, personaRepository,
-                analysisDataRepository, aiServerClient, chatInterviewHandoffService, sseNotifier,
+                questionPoolService, aiServerClient, chatInterviewHandoffService, sseNotifier,
                 new ObjectMapper());
 
         when(questionTailorRepository.claimChatDelivery(anyLong())).thenReturn(1);
