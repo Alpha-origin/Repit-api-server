@@ -109,6 +109,21 @@ class AnalysisLaunchServiceTest {
         verify(aiServerClient, never()).requestProfile(any());
     }
 
+    /** 면접 시작이 겹쳤다. 앞 요청이 잠근 채 분석을 접수했으니 뒤 요청은 다시 요청하지 않고 그 분석을 기다린다. */
+    @Test
+    void 잠그고_다시_보니_다른_요청이_분석을_요청했으면_다시_요청하지_않는다() {
+        when(analysisDataRepository.existsByUserIdAndResultType(OWNER_ID, AnalysisResultType.PROFILE))
+                .thenReturn(false, true);
+
+        service.launchIfMissing(authUser());
+
+        InOrder order = inOrder(analysisDataRepository);
+        order.verify(analysisDataRepository).lockProfileLaunch(OWNER_ID);
+        order.verify(analysisDataRepository).existsByUserIdAndResultType(OWNER_ID, AnalysisResultType.PROFILE);
+        verify(metaService, never()).getMetaData(any());
+        verify(aiServerClient, never()).requestProfile(any());
+    }
+
     @Test
     void 저장된_자료가_모자라면_요청하지_않는다() {
         when(analysisDataRepository.existsByUserIdAndResultType(OWNER_ID, AnalysisResultType.PROFILE)).thenReturn(false);

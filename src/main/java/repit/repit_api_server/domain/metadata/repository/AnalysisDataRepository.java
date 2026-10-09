@@ -73,6 +73,15 @@ public interface AnalysisDataRepository extends JpaRepository<AnalysisDataEntity
     /** 이 종류의 분석을 한 번이라도 요청했는지. 예전 /generate 분석만 있는 사용자를 가려낸다. */
     boolean existsByUserIdAndResultType(Long userId, AnalysisResultType resultType);
 
+    /**
+     * 이 사용자를 트랜잭션이 끝날 때까지 잠근다. 종합 데이터를 처음 요청하는 일이 겹치지 않게 한다.
+     *
+     * <p>겹치면 같은 자료로 무거운 분석이 두 번 돈다. 잠글 행이 아직 없어 행 잠금 대신 권고 잠금을 쓰고,
+     * 서버가 여러 대여도 막히도록 DB에 건다.
+     */
+    @Query(value = "select 1 from (select pg_advisory_xact_lock(:userId)) locked", nativeQuery = true)
+    Integer lockProfileLaunch(@Param("userId") Long userId);
+
     /** 가장 최근에 요청한 작업. 끝났든 진행 중이든 지금 상태를 보여줄 때 쓴다. */
     Optional<AnalysisDataEntity> findTopByUserIdAndResultTypeOrderByCreatedAtDesc(Long userId,
                                                                                AnalysisResultType resultType);

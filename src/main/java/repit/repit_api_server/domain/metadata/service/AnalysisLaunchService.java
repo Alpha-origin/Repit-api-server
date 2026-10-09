@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
@@ -67,8 +68,17 @@ public class AnalysisLaunchService {
      * 사용자를 옮기는 길이다. 면접 준비는 이 분석과 질문 사이클을 기다렸다가 이어간다.
      *
      * <p>올린 자료가 모자라면 요청하지 않는다. 분석 서버가 접수부터 거부하고, 면접 준비가 분석부터 하라고 알린다.
+     *
+     * <p>면접 시작이 겹치면 둘 다 "요청한 적 없음"을 보고 분석을 두 번 요청한다. 사용자 단위로 잠그고 다시 확인해,
+     * 뒤에 온 요청은 앞 요청이 접수를 마칠 때까지 기다렸다가 그 분석을 기다린다.
      */
+    // ponytail: 잠근 채 인증·분석 서버를 부르므로 그동안 DB 커넥션을 붙잡는다. 사용자당 한 번뿐인 이전 경로라 감수한다.
+    @Transactional
     public void launchIfMissing(AuthUser authUser) {
+        if (analysisDataRepository.existsByUserIdAndResultType(authUser.id(), AnalysisResultType.PROFILE)) {
+            return;
+        }
+        analysisDataRepository.lockProfileLaunch(authUser.id());
         if (analysisDataRepository.existsByUserIdAndResultType(authUser.id(), AnalysisResultType.PROFILE)) {
             return;
         }
