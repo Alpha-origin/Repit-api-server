@@ -12,6 +12,7 @@ import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.domain.userdata.question.service.QuestionPoolService;
 import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.ExternalApiException;
@@ -44,6 +45,7 @@ public class AnalysisLaunchService {
     private final AiMetaDataService aiMetaDataService;
     private final MetaService metaService;
     private final AnalysisDataRepository analysisDataRepository;
+    private final QuestionPoolService questionPoolService;
 
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
@@ -64,22 +66,30 @@ public class AnalysisLaunchService {
     }
 
     /**
-     * 종합 데이터를 한 번도 요청하지 않은 사용자면 저장된 자료로 요청한다. 예전 /generate 분석만 있는
-     * 사용자를 옮기는 길이다. 면접 준비는 이 분석과 질문 사이클을 기다렸다가 이어간다.
+     * 쓸 수 있는 종합 데이터가 없는 사용자면 저장된 자료로 요청한다. 면접 준비는 이 분석과 질문 사이클을 기다렸다가
+     * 이어간다. 두 경우다.
+     * <ul>
+     *   <li>한 번도 요청한 적이 없다 — 예전 /generate 분석만 있는 사용자를 옮기는 길이다.</li>
+     *   <li>가장 나중에 요청한 것이 끝났는데, 분석 서버가 그것으로는 더 이상 질문 사이클을 만들 수 없다고 했다(422).
+     *       분석 서버가 종합 데이터 형태를 바꾸면 기존 사용자가 모두 여기로 온다.</li>
+     * </ul>
+     *
+     * <p>가장 나중에 요청한 것만 본다. 다시 요청한 분석이 진행 중이거나 실패했으면 또 요청하지 않는다 — 면접을
+     * 시작할 때마다 무거운 분석이 돈다. 실패했으면 면접 준비가 분석부터 하라고 알린다.
      *
      * <p>올린 자료가 모자라면 요청하지 않는다. 분석 서버가 접수부터 거부하고, 면접 준비가 분석부터 하라고 알린다.
      *
-     * <p>면접 시작이 겹치면 둘 다 "요청한 적 없음"을 보고 분석을 두 번 요청한다. 사용자 단위로 잠그고 다시 확인해,
+     * <p>면접 시작이 겹치면 둘 다 "요청해야 함"을 보고 분석을 두 번 요청한다. 사용자 단위로 잠그고 다시 확인해,
      * 뒤에 온 요청은 앞 요청이 접수를 마칠 때까지 기다렸다가 그 분석을 기다린다.
      */
-    // ponytail: 잠근 채 인증·분석 서버를 부르므로 그동안 DB 커넥션을 붙잡는다. 사용자당 한 번뿐인 이전 경로라 감수한다.
+    // ponytail: 잠근 채 인증·분석 서버를 부르므로 그동안 DB 커넥션을 붙잡는다. 사용자당 드물게 한 번 도는 길이라 감수한다.
     @Transactional
     public void launchIfMissing(AuthUser authUser) {
-        if (analysisDataRepository.existsByUserIdAndResultType(authUser.id(), AnalysisResultType.PROFILE)) {
+        if (!needsProfile(authUser.id())) {
             return;
         }
         analysisDataRepository.lockProfileLaunch(authUser.id());
-        if (analysisDataRepository.existsByUserIdAndResultType(authUser.id(), AnalysisResultType.PROFILE)) {
+        if (!needsProfile(authUser.id())) {
             return;
         }
         MetaDataResponse saved = metaService.getMetaData(authUser.token());
@@ -87,8 +97,14 @@ public class AnalysisLaunchService {
                 || saved.getGitUrls() == null || saved.getGitUrls().isEmpty()) {
             return;
         }
-        log.info("종합 데이터가 없는 사용자라 저장된 자료로 분석을 요청합니다. userId={}", authUser.id());
+        log.info("쓸 수 있는 종합 데이터가 없어 저장된 자료로 분석을 요청합니다. userId={}", authUser.id());
         launch(authUser.id(), authUser.user().getMajor(), saved);
+    }
+
+    private boolean needsProfile(Long userId) {
+        return analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(userId, AnalysisResultType.PROFILE)
+                .map(latest -> latest.getResult() != null && questionPoolService.needsReanalysis(latest.getJobId()))
+                .orElse(true);
     }
 
     // 옛 /generate-mock. 분석 서버가 /generate를 걷어낼 때 함께 지운다.

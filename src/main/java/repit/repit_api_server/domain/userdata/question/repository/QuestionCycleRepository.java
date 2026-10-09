@@ -12,6 +12,7 @@ import repit.repit_api_server.domain.userdata.question.entity.QuestionCycleEntit
 import repit.repit_api_server.domain.userdata.question.entity.enums.CycleStatus;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.Optional;
 
 public interface QuestionCycleRepository extends JpaRepository<QuestionCycleEntity, Long> {
@@ -33,6 +34,12 @@ public interface QuestionCycleRepository extends JpaRepository<QuestionCycleEnti
     Optional<QuestionCycleEntity> findTopByProfileJobIdAndModeOrderByCycleNoDesc(String profileJobId, InterviewMode mode);
 
     Optional<QuestionCycleEntity> findByProfileJobIdAndModeAndCycleNo(String profileJobId, InterviewMode mode, Integer cycleNo);
+
+    /** 이 종합 데이터의 사이클이 이 코드로 실패한 적이 있는지. */
+    boolean existsByProfileJobIdAndErrorStatusCode(String profileJobId, Integer errorStatusCode);
+
+    /** 이 종합 데이터의 사이클 중 이 상태인 것이 있는지. */
+    boolean existsByProfileJobIdAndStatusIn(String profileJobId, Collection<CycleStatus> statuses);
 
     /**
      * 자료가 바뀌었다. 이 시각보다 먼저 요청한 종합 데이터로 만든 사이클을 남은 세트와 대기본째 버린다.
@@ -92,6 +99,7 @@ public interface QuestionCycleRepository extends JpaRepository<QuestionCycleEnti
                    c.requestNo = c.requestNo + 1,
                    c.jobId = null,
                    c.errorMessage = null,
+                   c.errorStatusCode = null,
                    c.completedAt = null,
                    c.requestedAt = :now
              where c.cycleId = :cycleId

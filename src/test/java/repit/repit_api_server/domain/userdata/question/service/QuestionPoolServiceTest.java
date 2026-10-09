@@ -259,6 +259,58 @@ class QuestionPoolServiceTest {
         verify(poolQuestionRepository, never()).findAllByCycleIdAndUsedAtIsNullOrderBySetNoAscQuestionIdAsc(anyLong());
     }
 
+    /**
+     * 분석 서버가 이 종합 데이터로는 사이클을 만들 수 없다고 했다(422). 같은 종합 데이터로 다시 요청하면 늘 같은
+     * 422라, 면접을 시작할 때마다 반드시 실패하는 요청을 보내고 사용자는 소용없는 "잠시 후 다시 시도"를 받는다.
+     */
+    @Test
+    void 거부된_종합_데이터로는_사이클을_다시_요청하지_않고_분석부터_하라고_알린다() {
+        QuestionCycleEntity rejected = cycle(2L, 2, CycleStatus.FAILED);
+        rejected.setErrorStatusCode(422);
+        when(questionCycleRepository.findTopByProfileJobIdAndModeOrderByCycleNoDesc(PROFILE_JOB, InterviewMode.SOLO))
+                .thenReturn(Optional.of(rejected));
+        when(questionCycleRepository.findByProfileJobIdAndModeAndCycleNo(PROFILE_JOB, InterviewMode.SOLO, 2))
+                .thenReturn(Optional.of(rejected));
+        when(questionCycleRepository.existsByProfileJobIdAndErrorStatusCode(PROFILE_JOB, 422)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.takeSet(USER_ID, InterviewMode.SOLO, 3L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("포트폴리오 분석을 먼저 진행해주세요");
+        assertThat(rejected.getStatus()).isEqualTo(CycleStatus.FAILED);
+        verify(aiServerClient, never()).requestQuestionCycle(any());
+    }
+
+    /** 이미 받아 둔 질문은 멀쩡하다. 다시 분석하지 못한 사용자도 남은 세트로는 면접을 연다. */
+    @Test
+    void 거부된_종합_데이터라도_남은_세트는_꺼내고_다음_사이클은_요청하지_않는다() {
+        givenActive(cycle(1L, 1, CycleStatus.ACTIVE), unusedSets(1L, 2, 3));
+        when(questionCycleRepository.existsByProfileJobIdAndErrorStatusCode(PROFILE_JOB, 422)).thenReturn(true);
+
+        QuestionPoolService.DrawnSet drawn = service.takeSet(USER_ID, InterviewMode.SOLO, 3L);
+
+        assertThat(drawn.waiting()).isFalse();
+        verify(questionCycleRepository, never()).save(any());
+        verify(aiServerClient, never()).requestQuestionCycle(any());
+    }
+
+    /**
+     * 사이클을 받아 쓰던 종합 데이터가 거부되면 분석 서버가 형태를 바꾼 것이라 다시 만든다. 처음부터 거부된 것은
+     * 다시 분석해도 같다 — 그때 또 분석하면 면접을 시작할 때마다 무거운 분석이 돈다.
+     */
+    @Test
+    void 사이클을_받아_쓰던_종합_데이터가_거부됐을_때만_다시_분석한다() {
+        when(questionCycleRepository.existsByProfileJobIdAndErrorStatusCode(PROFILE_JOB, 422)).thenReturn(true);
+        when(questionCycleRepository.existsByProfileJobIdAndStatusIn(eq(PROFILE_JOB), any())).thenReturn(true);
+        assertThat(service.needsReanalysis(PROFILE_JOB)).isTrue();
+
+        when(questionCycleRepository.existsByProfileJobIdAndStatusIn(eq(PROFILE_JOB), any())).thenReturn(false);
+        assertThat(service.needsReanalysis(PROFILE_JOB)).isFalse();
+
+        when(questionCycleRepository.existsByProfileJobIdAndErrorStatusCode(PROFILE_JOB, 422)).thenReturn(false);
+        when(questionCycleRepository.existsByProfileJobIdAndStatusIn(eq(PROFILE_JOB), any())).thenReturn(true);
+        assertThat(service.needsReanalysis(PROFILE_JOB)).isFalse();
+    }
+
     @Test
     void 종합_데이터가_없으면_분석을_먼저_하라고_알린다() {
         when(analysisDataRepository.findLatestCompleted(USER_ID, AnalysisResultType.PROFILE)).thenReturn(Optional.empty());
@@ -355,6 +407,34 @@ class QuestionPoolServiceTest {
         assertThat(outcome.succeeded()).isFalse();
         assertThat(generating.getStatus()).isEqualTo(CycleStatus.FAILED);
         verify(poolQuestionRepository, never()).saveAll(any());
+    }
+
+    private QuestionCycleCallbackRequest failed(int statusCode) {
+        return QuestionCycleCallbackRequest.builder()
+                .jobId("cycle-job")
+                .status("failed")
+                .error(QuestionCycleCallbackRequest.Error.builder()
+                        .statusCode(statusCode).message("지원하지 않는 종합 데이터 버전입니다(schemaVersion=1).").build())
+                .build();
+    }
+
+    /** 422와 500을 가르려면 실패 코드가 행에 남아야 한다. 500은 다시 요청하면 풀릴 수 있다. */
+    @Test
+    void 실패_코드를_남기고_422면_거부로_알린다() {
+        QuestionCycleEntity generating = cycle(5L, 3, CycleStatus.GENERATING);
+        when(questionCycleRepository.lockById(5L)).thenReturn(Optional.of(generating));
+
+        QuestionPoolService.CycleOutcome outcome = service.applyCycleResult(failed(422), 5L, 1);
+
+        assertThat(outcome.succeeded()).isFalse();
+        assertThat(outcome.rejected()).isTrue();
+        assertThat(generating.getStatus()).isEqualTo(CycleStatus.FAILED);
+        assertThat(generating.getErrorStatusCode()).isEqualTo(422);
+
+        QuestionCycleEntity other = cycle(6L, 3, CycleStatus.GENERATING);
+        when(questionCycleRepository.lockById(6L)).thenReturn(Optional.of(other));
+        assertThat(service.applyCycleResult(failed(500), 6L, 1).rejected()).isFalse();
+        assertThat(other.getErrorStatusCode()).isEqualTo(500);
     }
 
     @Test

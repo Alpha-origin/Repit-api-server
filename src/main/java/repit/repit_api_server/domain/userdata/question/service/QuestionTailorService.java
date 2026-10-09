@@ -576,6 +576,10 @@ public class QuestionTailorService {
      * <p>실패했는데 기다리는 준비가 있으면 한 번 더 요청한다. 그마저 실패하면 기다리던 준비를 실패로 알린다.
      * 기다리는 준비가 없으면 실패로만 남긴다 — 다음 면접을 시작할 때 다시 요청한다.
      *
+     * <p>종합 데이터가 거부됐으면(422) 다시 요청하지 않는다. 같은 종합 데이터로는 늘 같은 422다. 종합 데이터를
+     * 다시 만들어야 하는데, 저장된 자료는 사용자 토큰으로만 읽을 수 있어 여기서는 못 한다. 기다리던 준비를 닫고,
+     * 다시 시도하면 면접 준비가 종합 데이터를 다시 요청하고 그 분석을 기다린다.
+     *
      * <p>준비 한 건이 걸려 넘어져도 나머지는 이어간다. 여기서 예외가 나면 분석 서버가 콜백을 다시 보내도
      * 사이클은 이미 반영돼 아무도 이어주지 않는다.
      */
@@ -589,15 +593,18 @@ public class QuestionTailorService {
         if (waiting.isEmpty()) {
             return;
         }
-        if (!outcome.succeeded() && questionPoolService.retryForWaiting(outcome.cycleId())) {
+        if (!outcome.succeeded() && !outcome.rejected() && questionPoolService.retryForWaiting(outcome.cycleId())) {
             return;
         }
+        String failure = outcome.rejected()
+                ? "지금 분석 결과로는 새 질문을 만들 수 없습니다. 다시 시도해주세요."
+                : "새 질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.";
 
         for (QuestionTailorEntity tailor : waiting) {
             try {
                 if (outcome.succeeded()) {
                     resumeWaiting(tailor);
-                } else if (closeWaiting(tailor, "새 질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.")) {
+                } else if (closeWaiting(tailor, failure)) {
                     completePreparation(tailor);
                 }
             } catch (RuntimeException e) {

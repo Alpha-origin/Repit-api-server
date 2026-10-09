@@ -172,7 +172,7 @@ class QuestionTailorServiceWaitingTest {
     void 사이클이_도착하면_기다리던_준비를_이어가고_채점_기준을_실어_보낸다() {
         QuestionTailorEntity waiting = waitingTailor();
         when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
-                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, true, null));
+                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, true, false));
         when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
                 .thenReturn(List.of(waiting));
         when(questionTailorRepository.claimResume(eq(1L), any())).thenReturn(1);
@@ -195,7 +195,7 @@ class QuestionTailorServiceWaitingTest {
     @Test
     void 다른_쪽이_먼저_이어간_준비는_건드리지_않는다() {
         when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
-                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, true, null));
+                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, true, false));
         when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
                 .thenReturn(List.of(waitingTailor()));
         when(questionTailorRepository.claimResume(eq(1L), any())).thenReturn(0);
@@ -209,7 +209,7 @@ class QuestionTailorServiceWaitingTest {
     void 사이클이_실패하면_한_번_더_요청하고_기다리던_준비는_그대로_둔다() {
         QuestionTailorEntity waiting = waitingTailor();
         when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
-                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, false, "500 실패"));
+                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, false, false));
         when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
                 .thenReturn(List.of(waiting));
         when(questionPoolService.retryForWaiting(5L)).thenReturn(true);
@@ -224,7 +224,7 @@ class QuestionTailorServiceWaitingTest {
     void 다시_요청해도_실패하면_기다리던_준비를_실패로_알린다() {
         QuestionTailorEntity waiting = waitingTailor();
         when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
-                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, false, "500 실패"));
+                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, false, false));
         when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
                 .thenReturn(List.of(waiting));
         when(questionPoolService.retryForWaiting(5L)).thenReturn(false);
@@ -236,6 +236,28 @@ class QuestionTailorServiceWaitingTest {
         ArgumentCaptor<InterviewReadyResponse> failed = ArgumentCaptor.forClass(InterviewReadyResponse.class);
         verify(sseNotifier).sendFinal(eq("profile-1"), eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), failed.capture());
         assertThat(failed.getValue().getFailureStage()).isEqualTo(FailureStage.QUESTION_GENERATION);
+    }
+
+    /**
+     * 종합 데이터가 거부됐다(422). 같은 종합 데이터로 다시 요청해도 같은 422다. 다시 분석하려면 사용자 토큰이 있어야
+     * 해서 콜백에서는 못 하고, 다시 시도하면 면접 준비가 종합 데이터를 다시 요청한다.
+     */
+    @Test
+    void 사이클이_거부되면_다시_요청하지_않고_기다리던_준비를_다시_시도하라고_닫는다() {
+        QuestionTailorEntity waiting = waitingTailor();
+        when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
+                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, false, true));
+        when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
+                .thenReturn(List.of(waiting));
+        when(questionPoolService.retryForWaiting(5L)).thenReturn(true);
+        when(questionTailorRepository.claimExpiration(1L)).thenReturn(1);
+
+        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("failed").build(), 5L, 1);
+
+        verify(questionPoolService, never()).retryForWaiting(anyLong());
+        assertThat(waiting.getStatus()).isEqualTo(TailorStatus.FAILED);
+        assertThat(waiting.getErrorMessage()).isEqualTo("지금 분석 결과로는 새 질문을 만들 수 없습니다. 다시 시도해주세요.");
+        verify(sseNotifier).sendFinal(eq("profile-1"), eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), any());
     }
 
     @Test

@@ -61,4 +61,7 @@ public class QuestionCycleEntity {
 
     @Column(columnDefinition = "TEXT")
     private String errorMessage;
+
+    // 실패 콜백의 코드. 422면 이 종합 데이터로는 사이클을 만들 수 없다는 뜻이라 다시 요청하지 않는다.
+    private Integer errorStatusCode;
 }

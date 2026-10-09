@@ -198,7 +198,8 @@ public class InterviewService {
         if (!authUser.id().equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 시작할 수 있습니다.");
         }
-        // 예전 분석만 있는 사용자는 종합 데이터부터 요청한다. 질문 준비는 그 분석을 기다린다.
+        // 쓸 수 있는 종합 데이터가 없으면(예전 분석만 있거나, 분석 서버가 지금 것을 거부했으면) 종합 데이터부터 요청한다.
+        // 질문 준비는 그 분석을 기다린다.
         analysisLaunchService.launchIfMissing(authUser);
         // N:1은 질문 재작성이 아니라 신규 생성이 섞인 multi tailor로 간다. 갈림길은 서비스 안에 있다.
         QuestionTailorEntity tailor = questionTailorService.requestTailor(interview, authUser.user());
@@ -218,7 +219,7 @@ public class InterviewService {
             throw BusinessException.forbidden("본인의 면접만 다시 준비할 수 있습니다.");
         }
 
-        // 처음 시작할 때 종합 데이터를 요청하지 못했으면 여기서 다시 요청한다.
+        // 처음 시작할 때 종합 데이터를 요청하지 못했거나, 그 사이 분석 서버가 지금 것을 거부했으면 여기서 요청한다.
         analysisLaunchService.launchIfMissing(authUser);
         QuestionTailorEntity tailor = questionTailorService.retryPreparation(interview, authUser.user());
         return InterviewPrepareResponse.of(tailor, interview.getSessionId());
