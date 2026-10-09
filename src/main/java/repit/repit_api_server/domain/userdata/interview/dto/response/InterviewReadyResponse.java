@@ -50,6 +50,16 @@ public class InterviewReadyResponse {
                 .build();
     }
 
+    /** 새 질문 사이클을 기다리는 중이다. 준비는 이어지고, 웹은 안내 문구만 바꾼다. */
+    public static InterviewReadyResponse waiting(Long interviewId) {
+        return InterviewReadyResponse.builder()
+                .interviewId(interviewId)
+                .preparationStatus(PreparationStatus.PREPARING)
+                .retryable(false)
+                .message("새 질문을 준비하고 있어요. 1분 정도 걸려요")
+                .build();
+    }
+
     /**
      * 어느 단계에서 멈췄는지까지 실어 보낸다. 단계를 빼면 웹은 질문을 다시 만들어야 하는지
      * 전달만 다시 하면 되는지 모른 채 같은 버튼을 보여주게 된다.

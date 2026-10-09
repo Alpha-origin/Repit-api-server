@@ -6,13 +6,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
+import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.ExternalApiException;
 
 import java.time.LocalDateTime;
-import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * 포트폴리오 분석을 시작하고, 그 실행을 접수한다.
@@ -32,6 +34,8 @@ public class AnalysisLaunchService {
     private static final Logger log = LoggerFactory.getLogger(AnalysisLaunchService.class);
 
     private static final String CALLBACK_PATH = "/api/v1/ai/callback";
+    // 옛 /generate 결과와 섞이지 않게 경로를 나눈다.
+    private static final String PROFILE_CALLBACK_PATH = "/api/v1/ai/profile/callback";
 
     private final AiServerClient aiServerClient;
     private final AiMetaDataService aiMetaDataService;
@@ -39,26 +43,36 @@ public class AnalysisLaunchService {
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
 
-    public GenerateResponse launch(Long userId, MetaDataResponse metaData) {
-        return launch(userId, metaData, aiServerClient::generate);
+    /**
+     * 종합 데이터 분석(/profile)을 시작한다. 질문은 이 결과가 도착한 뒤 사이클로 따로 만든다.
+     *
+     * @param major 사용자 전공. 분석 서버가 탐색 우선순위에만 쓰고, 없으면 비워 보낸다.
+     */
+    public GenerateResponse launch(Long userId, String major, MetaDataResponse metaData) {
+        ProfileRequest request = ProfileRequest.builder()
+                .major(major == null || major.isBlank() ? null : major)
+                .portfolioUrl(metaData.getFileUrl())
+                .githubUrls(metaData.getGitUrls())
+                .callbackUrl(callbackBaseUrl + PROFILE_CALLBACK_PATH)
+                .build();
+        return launch(userId, AnalysisResultType.PROFILE, () -> aiServerClient.requestProfile(request));
     }
 
+    // 옛 /generate-mock. 분석 서버가 /generate를 걷어낼 때 함께 지운다.
     public GenerateResponse launchMock(Long userId, MetaDataResponse metaData) {
-        return launch(userId, metaData, aiServerClient::generateMock);
-    }
-
-    private GenerateResponse launch(Long userId, MetaDataResponse metaData,
-                                    Function<GenerateRequest, GenerateResponse> call) {
         GenerateRequest request = GenerateRequest.builder()
                 .portfolio_url(metaData.getFileUrl())
                 .github_urls(metaData.getGitUrls())
                 .callback_url(callbackBaseUrl + CALLBACK_PATH)
                 .build();
+        return launch(userId, AnalysisResultType.LEGACY_GENERATE, () -> aiServerClient.generateMock(request));
+    }
 
+    private GenerateResponse launch(Long userId, AnalysisResultType resultType, Supplier<GenerateResponse> call) {
         // 분석 서버에 넘기기 직전 시각. 이 작업에 남아 있는 결과가 지난 실행의 것인지 가르는 기준이다.
         LocalDateTime requestedAt = LocalDateTime.now();
-        GenerateResponse response = call.apply(request);
-        registerJob(response, userId, requestedAt);
+        GenerateResponse response = call.get();
+        registerJob(response, userId, requestedAt, resultType);
         return response;
     }
 
@@ -71,7 +85,8 @@ public class AnalysisLaunchService {
      * 실패시키면 클라이언트가 jobId를 받지 못해 결과를 영영 조회할 수 없게 되므로, 기록 실패는
      * 예외로 번지지 않게 막는다.
      */
-    private void registerJob(GenerateResponse response, Long userId, LocalDateTime requestedAt) {
+    private void registerJob(GenerateResponse response, Long userId, LocalDateTime requestedAt,
+                             AnalysisResultType resultType) {
         if (response == null || response.getJobId() == null) {
             // jobId가 없으면 구독도 조회도 할 수 없다. 성공으로 돌려주면 원인을 찾을 수 없다.
             log.error("분석 서버 응답에 jobId가 없습니다. status={}, message={}",
@@ -81,7 +96,7 @@ public class AnalysisLaunchService {
         }
 
         try {
-            aiMetaDataService.registerJob(response.getJobId(), userId, requestedAt);
+            aiMetaDataService.registerJob(response.getJobId(), userId, requestedAt, resultType);
         } catch (RuntimeException e) {
             log.error("분석 작업을 접수하지 못했습니다. jobId={}", response.getJobId(), e);
         }

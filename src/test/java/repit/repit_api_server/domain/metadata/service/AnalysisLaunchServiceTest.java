@@ -11,8 +11,10 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
+import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.ExternalApiException;
 
@@ -51,7 +53,7 @@ class AnalysisLaunchServiceTest {
         service = new AnalysisLaunchService(aiServerClient, aiMetaDataService);
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
 
-        when(aiServerClient.generate(any(GenerateRequest.class))).thenReturn(GenerateResponse.builder()
+        when(aiServerClient.requestProfile(any(ProfileRequest.class))).thenReturn(GenerateResponse.builder()
                 .jobId("job-1")
                 .status("accepted")
                 .build());
@@ -71,10 +73,10 @@ class AnalysisLaunchServiceTest {
     @Test
     void 분석을_요청하고_그_실행을_접수한다() {
 
-        GenerateResponse response = service.launch(OWNER_ID, metaData());
+        GenerateResponse response = service.launch(OWNER_ID, "MAJOR_BACKEND", metaData());
 
         assertThat(response.getJobId()).isEqualTo("job-1");
-        verify(aiMetaDataService).registerJob(eq("job-1"), eq(9L), any(LocalDateTime.class));
+        verify(aiMetaDataService).registerJob(eq("job-1"), eq(9L), any(LocalDateTime.class), eq(AnalysisResultType.PROFILE));
     }
 
     /**
@@ -84,34 +86,38 @@ class AnalysisLaunchServiceTest {
      */
     @Test
     void 분석을_요청한_뒤에_곧바로_접수한다() {
-        service.launch(OWNER_ID, metaData());
+        service.launch(OWNER_ID, "MAJOR_BACKEND", metaData());
 
         InOrder order = inOrder(aiServerClient, aiMetaDataService);
-        order.verify(aiServerClient).generate(any(GenerateRequest.class));
-        order.verify(aiMetaDataService).registerJob(eq("job-1"), eq(9L), any(LocalDateTime.class));
+        order.verify(aiServerClient).requestProfile(any(ProfileRequest.class));
+        order.verify(aiMetaDataService).registerJob(eq("job-1"), eq(9L), any(LocalDateTime.class), eq(AnalysisResultType.PROFILE));
     }
 
-    /** 콜백 주소를 설정에서 만든다. 박아두면 주소가 바뀐 순간 콜백이 영영 오지 않는다. */
+    /**
+     * 콜백 주소를 설정에서 만든다. 박아두면 주소가 바뀐 순간 콜백이 영영 오지 않는다.
+     * 옛 /generate 결과와 섞이지 않게 종합 데이터 전용 경로로 받는다.
+     */
     @Test
     void 콜백_주소를_설정에서_만든다() {
-        ArgumentCaptor<GenerateRequest> sent = ArgumentCaptor.forClass(GenerateRequest.class);
+        ArgumentCaptor<ProfileRequest> sent = ArgumentCaptor.forClass(ProfileRequest.class);
 
-        service.launch(OWNER_ID, metaData());
+        service.launch(OWNER_ID, "MAJOR_BACKEND", metaData());
 
-        verify(aiServerClient).generate(sent.capture());
-        assertThat(sent.getValue().getCallback_url()).isEqualTo("https://api.repit.test/api/v1/ai/callback");
-        assertThat(sent.getValue().getPortfolio_url()).isEqualTo("https://s3/portfolio.pdf");
-        assertThat(sent.getValue().getGithub_urls()).containsExactly("https://github.com/user/repo");
+        verify(aiServerClient).requestProfile(sent.capture());
+        assertThat(sent.getValue().getCallbackUrl()).isEqualTo("https://api.repit.test/api/v1/ai/profile/callback");
+        assertThat(sent.getValue().getPortfolioUrl()).isEqualTo("https://s3/portfolio.pdf");
+        assertThat(sent.getValue().getGithubUrls()).containsExactly("https://github.com/user/repo");
+        assertThat(sent.getValue().getMajor()).isEqualTo("MAJOR_BACKEND");
     }
 
     /** jobId가 없으면 구독도 조회도 할 수 없다. 성공으로 돌려주면 원인을 찾을 수 없다. */
     @Test
     void jobId가_없으면_실패로_돌린다() {
-        when(aiServerClient.generate(any(GenerateRequest.class))).thenReturn(GenerateResponse.builder()
+        when(aiServerClient.requestProfile(any(ProfileRequest.class))).thenReturn(GenerateResponse.builder()
                 .status("rejected")
                 .build());
 
-        assertThatThrownBy(() -> service.launch(OWNER_ID, metaData()))
+        assertThatThrownBy(() -> service.launch(OWNER_ID, null, metaData()))
                 .isInstanceOf(ExternalApiException.class);
     }
 
@@ -120,14 +126,14 @@ class AnalysisLaunchServiceTest {
     void 접수에_실패해도_jobId는_돌려준다() {
         doThrowOnRegister();
 
-        GenerateResponse response = service.launch(OWNER_ID, metaData());
+        GenerateResponse response = service.launch(OWNER_ID, null, metaData());
 
         assertThat(response.getJobId()).isEqualTo("job-1");
     }
 
     private void doThrowOnRegister() {
         org.mockito.Mockito.doThrow(new RuntimeException("DB 장애"))
-                .when(aiMetaDataService).registerJob(any(), any(), any());
+                .when(aiMetaDataService).registerJob(any(), any(), any(), any());
     }
 
     @Test
@@ -135,6 +141,7 @@ class AnalysisLaunchServiceTest {
 
         service.launchMock(OWNER_ID, metaData());
 
-        verify(aiMetaDataService).registerJob(eq("mock-job-1"), eq(9L), any(LocalDateTime.class));
+        verify(aiMetaDataService).registerJob(eq("mock-job-1"), eq(9L), any(LocalDateTime.class),
+                eq(AnalysisResultType.LEGACY_GENERATE));
     }
 }

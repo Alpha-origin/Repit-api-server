@@ -130,8 +130,13 @@ app:
   question-tailor:
     # 면접 시작 직전에 도는 작업이라 오래 기다릴 수 없다. 넘기면 원질문으로 면접을 연다.
     pending-timeout: 2m
+    # 꺼낼 질문 세트가 없어 새 사이클을 기다리는 시간. 넘기면 면접 준비를 실패로 알린다. 재작성 시간은 따로 센다.
+    waiting-timeout: 3m
     # 시간이 지난 준비 건을 훑는 간격. 폴링하지 않는 클라이언트에게도 이 주기로 실패가 나간다.
     sweep-interval: 30s
+  question-pool:
+    # 이 시간이 지나도록 콜백이 오지 않은 사이클 생성 요청은 잃어버린 것으로 보고, 면접을 시작할 때 다시 요청한다.
+    generating-timeout: 5m
   sse:
     # 구독에 빈 줄을 흘려보내는 간격(ms). 이보다 오래 조용하면 중간의 프록시가 연결을 끊는다.
     heartbeat-interval-ms: 15000

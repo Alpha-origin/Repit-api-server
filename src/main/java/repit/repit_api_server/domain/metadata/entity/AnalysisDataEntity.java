@@ -14,6 +14,7 @@ import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 
 import java.time.LocalDateTime;
@@ -39,6 +40,12 @@ public class AnalysisDataEntity {
     @Builder.Default
     private AnalysisStatus status = AnalysisStatus.PENDING;
 
+    // 옛 /generate 결과인지 /profile 결과인지. 면접 질문은 PROFILE에서만 나온다.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private AnalysisResultType resultType = AnalysisResultType.LEGACY_GENERATE;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private Object result;
@@ -53,6 +60,7 @@ public class AnalysisDataEntity {
     // 이번 실행의 것인지 지난 실행의 것인지는 이 값으로만 가릴 수 있다.
     private LocalDateTime completedAt;
 
+    // 접수 시각. 같은 jobId로 다시 요청하면 그 요청 시각으로 옮겨진다(clearPreviousRun).
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

@@ -46,7 +46,7 @@ public record PreparationState(PreparationStatus status,
         if (tailor == null) {
             return notRequested();
         }
-        if (tailor.getStatus() == TailorStatus.PENDING) {
+        if (tailor.getStatus() == TailorStatus.PENDING || tailor.getStatus() == TailorStatus.WAITING) {
             return PREPARING;
         }
         if (Boolean.TRUE.equals(tailor.getChatDelivered()) && tailor.getChatErrorMessage() == null) {

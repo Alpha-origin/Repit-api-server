@@ -35,7 +35,7 @@ public class QuestionTailorRequest {
         private String personaTone;
     }
 
-    /** /generate 산출물(interview[])을 그대로 되돌려주는 형태. 1~10개, id 중복 불가. */
+    /** 질문 풀에서 꺼낸 세트 한 건. 1~10개, id 중복 불가. */
     @Getter
     @Builder
     @NoArgsConstructor
@@ -44,7 +44,9 @@ public class QuestionTailorRequest {
         private Integer id;
         private String category;
         private String question;
-        // 재작성 대상이 아니라 재작성 후에도 유지해야 할 검증 포인트다.
+        // 이 질문으로 확인하려는 것. 재작성한 질문도 이것을 확인할 수 있어야 한다. 채점 기준이다.
+        private String intention;
+        // 모범답안. 재작성 대상이 아니라 참고값이다.
         private String expectedAnswer;
         private List<String> basedOn;
     }

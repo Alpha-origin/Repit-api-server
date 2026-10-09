@@ -24,6 +24,9 @@ public class TailoredQuestionResponse {
     private Long personaId;
     private String category;
     private String question;
+    // 이 질문으로 확인하려는 것. 채점 기준이라 재작성해도 바뀌지 않는다.
+    private String intention;
+    // 모범답안. 꼬리질문 생성과 참고용이다.
     private String expectedAnswer;
     private List<String> basedOn;
 }

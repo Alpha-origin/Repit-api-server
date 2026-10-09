@@ -104,7 +104,7 @@ class InterviewServiceSaveResultTest {
     private SaveInterviewRequest request() {
         SaveInterviewRequest.QnA first = new SaveInterviewRequest.QnA(
                 new SaveInterviewRequest.Question(1L, 5L, "tech_choice",
-                        "WebFlux 를 도입한 이유가 무엇인가요?", "도입 근거 확인",
+                        "WebFlux 를 도입한 이유가 무엇인가요?", null, "도입 근거 확인",
                         List.of("order-api/src/router.java")),
                 new SaveInterviewRequest.Answer(1L, 90, "스레드가 I/O 대기에 묶였습니다.",
                         LocalDateTime.parse("2026-08-18T01:01:30")));
@@ -112,13 +112,13 @@ class InterviewServiceSaveResultTest {
         // 꼬리질문은 채팅 서버가 면접 중에 만든 것이라 기대 답변이 없고, 번호가 음수다.
         SaveInterviewRequest.QnA follow = new SaveInterviewRequest.QnA(
                 new SaveInterviewRequest.Question(-1L, 5L, "대안 검토 확인",
-                        "가상 스레드는 고려하지 않으셨나요?", null, null),
+                        "가상 스레드는 고려하지 않으셨나요?", null, null, null),
                 new SaveInterviewRequest.Answer(-1L, 40, "측정은 못 해봤습니다.",
                         LocalDateTime.parse("2026-08-18T01:02:40")));
 
         SaveInterviewRequest.QnA unanswered = new SaveInterviewRequest.QnA(
                 new SaveInterviewRequest.Question(2L, 5L, "ops",
-                        "장애 대응 경험이 있나요?", "운영 경험 확인", null),
+                        "장애 대응 경험이 있나요?", null, "운영 경험 확인", null),
                 null);
 
         return new SaveInterviewRequest("sess-1", 3L, 7L, Status.COMPLETED,
@@ -127,7 +127,7 @@ class InterviewServiceSaveResultTest {
 
     private List<QuestionEntity> savedQuestions() {
         ArgumentCaptor<QuestionEntity> saved = ArgumentCaptor.forClass(QuestionEntity.class);
-        verify(questionRepository, org.mockito.Mockito.times(3)).save(saved.capture());
+        verify(questionRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
         return saved.getAllValues();
     }
 
@@ -188,6 +188,25 @@ class InterviewServiceSaveResultTest {
                 .containsExactly("도입 근거 확인", "대안 검토 확인", "운영 경험 확인");
     }
 
+    /** 채점 기준이 따로 오면 모범답안보다 그것을 쓴다. 꼬리질문도 같다. */
+    @Test
+    void 채점_기준이_오면_모범답안보다_먼저_쓴다() {
+        SaveInterviewRequest.QnA original = new SaveInterviewRequest.QnA(
+                new SaveInterviewRequest.Question(1L, 5L, "tech_choice", "WebFlux 를 도입한 이유가 무엇인가요?",
+                        "WebFlux를 고른 이유를 MVC와 비교해 설명할 수 있는지", "도입 근거 확인", null),
+                null);
+        SaveInterviewRequest.QnA follow = new SaveInterviewRequest.QnA(
+                new SaveInterviewRequest.Question(-1L, 5L, "대안 검토 확인", "가상 스레드는 고려하지 않으셨나요?",
+                        "대안을 비교했는지", null, null),
+                null);
+
+        service.saveInterview(new SaveInterviewRequest("sess-1", 3L, 7L, Status.COMPLETED,
+                LocalDateTime.parse("2026-08-18T01:00:00"), List.of(original, follow)));
+
+        assertThat(savedQuestions()).extracting(QuestionEntity::getIntention)
+                .containsExactly("WebFlux를 고른 이유를 MVC와 비교해 설명할 수 있는지", "대안을 비교했는지");
+    }
+
     @Test
     void 답변을_우리_질문_PK에_매단다() {
         service.saveInterview(request());
@@ -204,7 +223,7 @@ class InterviewServiceSaveResultTest {
     void 대응하는_질문이_없는_답변은_건너뛴다() {
         SaveInterviewRequest.QnA orphan = new SaveInterviewRequest.QnA(
                 new SaveInterviewRequest.Question(1L, 5L, "tech_choice",
-                        "WebFlux 를 도입한 이유가 무엇인가요?", "도입 근거 확인", null),
+                        "WebFlux 를 도입한 이유가 무엇인가요?", null, "도입 근거 확인", null),
                 new SaveInterviewRequest.Answer(999L, 90, "어느 질문에도 붙지 않는 답변",
                         LocalDateTime.parse("2026-08-18T01:01:30")));
 

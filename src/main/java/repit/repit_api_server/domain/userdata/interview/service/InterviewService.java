@@ -394,7 +394,7 @@ public class InterviewService {
                     .parentId(type == Type.FOLLOW ? lastOriginalId : null)
                     .personaId(question.getPersonaId())
                     .type(type)
-                    .intention(intentionOf(question))
+                    .intention(intentionOf(question, type))
                     .content(question.getQuestion())
                     // 채팅 서버는 질문마다의 시각을 보내지 않는다. 저장 순서가 곧 면접 순서라
                     // 받은 시각으로 채운다. 순서를 읽는 쪽은 question_id 오름차순을 쓴다.
@@ -428,12 +428,16 @@ public class InterviewService {
     /**
      * 질문 의도. 채점은 이 값 하나를 기준으로 이뤄진다.
      *
-     * <p>원질문은 면접을 열 때 우리가 넘긴 기대 답변이 그대로 돌아온다. 꼬리질문은 채팅 서버가
-     * 면접 중에 만든 것이라 기대 답변이 없고, 대신 그때 정한 의도가 category로 실려 온다.
+     * <p>intention이 오면 그것을 쓴다. 원질문은 면접을 열 때 우리가 넘긴 값이 그대로 돌아온다.
+     * 채팅 서버가 아직 intention을 따로 싣지 않으면, 꼬리질문은 그때 정한 의도가 category로 실려 오고
+     * 원질문은 모범답안으로 대신한다 — intention이 생기기 전의 채점 기준이 그것이었다.
      */
-    private String intentionOf(SaveInterviewRequest.Question question) {
+    private String intentionOf(SaveInterviewRequest.Question question, Type type) {
+        if (question.getIntention() != null && !question.getIntention().isBlank()) {
+            return question.getIntention();
+        }
         String expectedAnswer = question.getExpectedAnswer();
-        if (expectedAnswer != null && !expectedAnswer.isBlank()) {
+        if (type == Type.ORIGINAL && expectedAnswer != null && !expectedAnswer.isBlank()) {
             return expectedAnswer;
         }
         return question.getCategory();

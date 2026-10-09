@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 
 import java.time.LocalDateTime;
@@ -43,29 +44,35 @@ public interface AnalysisDataRepository extends JpaRepository<AnalysisDataEntity
     @Query("select a.jobId as jobId, a.userId as userId from AnalysisDataEntity a where a.jobId = :jobId")
     Optional<AnalysisOwner> findOwner(@Param("jobId") String jobId);
 
-    /** 분석이 끝난(result가 채워진) 가장 최근 작업. */
-    default Optional<AnalysisDataEntity> findLatestCompleted(Long userId) {
-        return findLatestCompleted(userId, PageRequest.of(0, 1)).stream().findFirst();
+    /** 분석이 끝난(result가 채워진) 작업 중 가장 나중에 요청한 것. 지금 면접 질문의 재료가 되는 결과다. */
+    default Optional<AnalysisDataEntity> findLatestCompleted(Long userId, AnalysisResultType resultType) {
+        return findLatestCompleted(userId, resultType, PageRequest.of(0, 1)).stream().findFirst();
     }
 
     /**
-     * 최근을 가리는 기준은 접수 시각이 아니라 완료 시각이다.
+     * 최근을 가리는 기준은 완료 시각이 아니라 요청 시각이다.
      *
-     * <p>같은 jobId로 분석을 다시 요청하면 행을 재사용하는데, createdAt은 처음 접수된 시각에
-     * 고정되어 있어 갱신되지 않는다. 접수 시각으로 줄을 세우면 그 사이에 접수된 다른 작업이 더
-     * 최근으로 보여, 방금 끝낸 분석 대신 옛 결과를 집어 든다.
+     * <p>사용자의 지금 자료는 마지막으로 올린 자료다. 완료 시각으로 줄을 세우면 먼저 올린 자료의
+     * 분석이 늦게 끝나거나 그 콜백이 다시 오는 순간 옛 자료가 최신으로 올라서, 새 자료로 만든 질문
+     * 풀이 폐기되고 옛 자료로 면접이 열린다.
      *
-     * <p>completedAt이 비어 있는 행은 이 열이 생기기 전에 저장된 결과다. 접수 시각으로 대신해
-     * 줄에 세운다 — 그냥 두면 Postgres가 내림차순에서 null을 맨 앞에 놓아, 가장 오래된 결과가
-     * 가장 최근으로 올라선다.
+     * <p>같은 jobId로 분석을 다시 요청하면 행을 재사용한다. 그때 {@link #clearPreviousRun}이 접수
+     * 시각을 이번 요청 시각으로 옮겨, 다시 요청한 분석도 그 시점의 요청으로 줄에 선다.
      */
     @Query("""
             select a from AnalysisDataEntity a
              where a.userId = :userId
+               and a.resultType = :resultType
                and a.result is not null
-             order by coalesce(a.completedAt, a.createdAt) desc
+             order by a.createdAt desc
             """)
-    List<AnalysisDataEntity> findLatestCompleted(@Param("userId") Long userId, Pageable pageable);
+    List<AnalysisDataEntity> findLatestCompleted(@Param("userId") Long userId,
+                                                 @Param("resultType") AnalysisResultType resultType,
+                                                 Pageable pageable);
+
+    /** 가장 최근에 요청한 작업. 끝났든 진행 중이든 지금 상태를 보여줄 때 쓴다. */
+    Optional<AnalysisDataEntity> findTopByUserIdAndResultTypeOrderByCreatedAtDesc(Long userId,
+                                                                               AnalysisResultType resultType);
 
     // 소유자만 갱신한다. 엔티티를 통째로 저장하면 콜백이 먼저 채워둔 result를 덮어쓸 수 있다.
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -77,6 +84,9 @@ public interface AnalysisDataRepository extends JpaRepository<AnalysisDataEntity
      *
      * <p>걷어내지 않으면 구독이 붙는 순간 옛 결과가 완료 이벤트로 나간다. 분석 서버는 아직
      * 콜백을 보내지도 않은 시점이라, 클라이언트는 새 분석이 끝난 줄 알고 옛 결과를 집어 든다.
+     *
+     * <p>접수 시각도 이번 요청 시각으로 옮긴다. 최근 결과는 요청 순서로 가리므로, 옮기지 않으면
+     * 다시 요청한 분석이 처음 요청한 자리에 머물러 그 사이 요청한 다른 분석에 밀린다.
      *
      * <p>이번 요청보다 나중에 끝난 결과는 이번 실행의 콜백이다. 요청 접수보다 콜백이 먼저
      * 도착할 수 있어서, 그 결과까지 지우지 않도록 completedAt으로 조건을 건다.
@@ -90,7 +100,8 @@ public interface AnalysisDataRepository extends JpaRepository<AnalysisDataEntity
                    a.result = null,
                    a.errorStatusCode = null,
                    a.errorMessage = null,
-                   a.completedAt = null
+                   a.completedAt = null,
+                   a.createdAt = :requestedAt
              where a.jobId = :jobId
                and (a.completedAt is null or a.completedAt < :requestedAt)
             """)

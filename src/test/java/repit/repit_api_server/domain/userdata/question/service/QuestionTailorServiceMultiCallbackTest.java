@@ -9,7 +9,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
@@ -57,7 +56,7 @@ class QuestionTailorServiceMultiCallbackTest {
     @Mock
     private PersonaRepository personaRepository;
     @Mock
-    private AnalysisDataRepository analysisDataRepository;
+    private QuestionPoolService questionPoolService;
     @Mock
     private AiServerClient aiServerClient;
     @Mock
@@ -75,7 +74,7 @@ class QuestionTailorServiceMultiCallbackTest {
     void setUp() {
         service = new QuestionTailorService(questionTailorRepository, interviewRepository,
                 interviewPersonaRepository, personaRepository,
-                analysisDataRepository, aiServerClient, chatInterviewHandoffService, sseNotifier,
+                questionPoolService, aiServerClient, chatInterviewHandoffService, sseNotifier,
                 new ObjectMapper());
 
         when(questionTailorRepository.claimChatDelivery(anyLong())).thenReturn(1);
@@ -109,7 +108,7 @@ class QuestionTailorServiceMultiCallbackTest {
 
     private QuestionTailorMultiCallbackRequest.Question question(int id, long personaId, String content) {
         return new QuestionTailorMultiCallbackRequest.Question(id, personaId, "tech_choice", content,
-                "이 질문으로 확인할 것 " + id, List.of("order-api/CacheConfig.java"));
+                "확인할 것 " + id, "이 질문으로 확인할 것 " + id, List.of("order-api/CacheConfig.java"));
     }
 
     @Test
@@ -127,6 +126,7 @@ class QuestionTailorServiceMultiCallbackTest {
         assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getPersonaId)
                 .containsExactly(11L, 12L);
         // 신규 질문의 채점 기준은 이 값뿐이다. 버리면 되찾을 데가 없다.
+        assertThat(saved.getQuestions().get(1).getIntention()).isEqualTo("확인할 것 6");
         assertThat(saved.getQuestions().get(1).getExpectedAnswer()).isEqualTo("이 질문으로 확인할 것 6");
     }
 
@@ -168,7 +168,7 @@ class QuestionTailorServiceMultiCallbackTest {
     void 쓸_수_있는_질문이_하나도_없으면_실패로_닫는다() {
         service.handleMultiCallback(new QuestionTailorMultiCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorMultiCallbackRequest.Result(List.of(
-                        new QuestionTailorMultiCallbackRequest.Question(6, 12L, "hr", "  ", "의도", List.of()))),
+                        new QuestionTailorMultiCallbackRequest.Question(6, 12L, "hr", "  ", "의도", "의도", List.of()))),
                 null));
 
         assertThat(lastSaved().getStatus()).isEqualTo(TailorStatus.FAILED);

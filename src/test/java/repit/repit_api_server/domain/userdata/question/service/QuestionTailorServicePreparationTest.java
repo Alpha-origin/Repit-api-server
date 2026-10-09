@@ -10,8 +10,6 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
-import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
-import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.metadata.sse.SseNotifier;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewReadyResponse;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
@@ -73,7 +71,7 @@ class QuestionTailorServicePreparationTest {
     @Mock
     private PersonaRepository personaRepository;
     @Mock
-    private AnalysisDataRepository analysisDataRepository;
+    private QuestionPoolService questionPoolService;
     @Mock
     private AiServerClient aiServerClient;
     @Mock
@@ -88,9 +86,10 @@ class QuestionTailorServicePreparationTest {
     void setUp() {
         service = new QuestionTailorService(questionTailorRepository, interviewRepository,
                 interviewPersonaRepository, personaRepository,
-                analysisDataRepository, aiServerClient, chatInterviewHandoffService, sseNotifier,
+                questionPoolService, aiServerClient, chatInterviewHandoffService, sseNotifier,
                 new ObjectMapper());
         ReflectionTestUtils.setField(service, "pendingTimeout", Duration.ofMinutes(2));
+        ReflectionTestUtils.setField(service, "waitingTimeout", Duration.ofMinutes(3));
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.test");
 
         when(questionTailorRepository.save(any(QuestionTailorEntity.class)))
@@ -99,14 +98,11 @@ class QuestionTailorServicePreparationTest {
         when(questionTailorRepository.claimExpiration(anyLong())).thenReturn(1);
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview()));
         when(personaRepository.findById(11L)).thenReturn(Optional.of(persona()));
-        when(analysisDataRepository.findLatestCompleted(7L))
-                .thenReturn(Optional.of(AnalysisDataEntity.builder()
-                        .jobId("analysis-1")
-                        .userId(7L)
-                        .result(Map.of("interview", List.of(
-                                Map.of("id", 1, "category", "tech_choice", "question", "왜 Redis 를 썼나요?",
-                                        "expected_answer", "캐시 선택 근거", "based_on", List.of()))))
-                        .build()));
+        when(questionPoolService.takeSet(7L, InterviewMode.SOLO, 3L))
+                .thenReturn(new QuestionPoolService.DrawnSet("analysis-1", List.of(TailoredQuestionResponse.builder()
+                        .id(1).category("tech_choice").question("왜 Redis 를 썼나요?")
+                        .intention("캐시 선택 근거를 설명할 수 있는지").expectedAnswer("캐시 선택 근거")
+                        .basedOn(List.of()).build()), null, null));
 
         user = org.mockito.Mockito.mock(UserResponse.class);
         when(user.getId()).thenReturn(7L);

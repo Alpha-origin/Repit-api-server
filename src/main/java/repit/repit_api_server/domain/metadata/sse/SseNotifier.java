@@ -26,6 +26,8 @@ public class SseNotifier {
     public static final String QUESTION_GENERATED = "question-generated";
     /** 분석이 실패했다. 이 흐름으로는 면접을 열 수 없다. */
     public static final String QUESTION_GENERATION_FAILED = "question-generation-failed";
+    /** 꺼낼 질문 세트가 없어 새 사이클을 기다린다. 준비가 평소보다 오래 걸린다는 안내이고 구독은 이어진다. */
+    public static final String QUESTIONS_WAITING = "questions-waiting";
     /** 질문이 확정되고 채팅 서버에 면접이 열렸다. 웹은 이때 입장한다. */
     public static final String INTERVIEW_READY = "interview-ready";
     /** 채팅 서버에 면접을 열지 못했다. 질문은 준비됐지만 입장할 수 없다. */
