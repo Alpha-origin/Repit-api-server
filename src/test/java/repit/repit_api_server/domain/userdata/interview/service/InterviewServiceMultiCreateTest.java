@@ -73,7 +73,7 @@ class InterviewServiceMultiCreateTest {
     void setUp() {
         service = new InterviewService(interviewRepository, questionRepository, chatServerClient,
                 answerRepository, personaRepository, questionTailorService,
-                interviewPersonaRepository);
+                interviewPersonaRepository, null);
 
 
         when(interviewRepository.save(any(InterviewEntity.class))).thenAnswer(invocation -> {

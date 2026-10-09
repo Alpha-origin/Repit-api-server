@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 import repit.repit_api_server.domain.userdata.interview.dto.request.CreateInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatAnswerResponse;
@@ -31,9 +32,9 @@ import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
+import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
-import repit.repit_api_server.global.response.UserResponse;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -60,6 +61,7 @@ public class InterviewService {
     private final PersonaRepository personaRepository;
     private final QuestionTailorService questionTailorService;
     private final InterviewPersonaRepository interviewPersonaRepository;
+    private final AnalysisLaunchService analysisLaunchService;
 
     public InterviewResponse createInterview(Long userId, CreateInterviewRequest request) {
         if (request.getPersonaIds() != null && !request.getPersonaIds().isEmpty()) {
@@ -190,14 +192,16 @@ public class InterviewService {
      * 재작성은 비동기라 여기서는 접수만 하고, 콜백이 도착해 질문이 확정되면 그때
      * 채팅 서버로 면접 데이터가 넘어간다. 준비 상태는 GET /api/questions/tailor 로 확인한다.
      */
-    public InterviewPrepareResponse prepareInterview(UserResponse user, Long interviewId) {
+    public InterviewPrepareResponse prepareInterview(AuthUser authUser, Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
-        if (!user.getId().equals(interview.getUserId())) {
+        if (!authUser.id().equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 시작할 수 있습니다.");
         }
+        // 예전 분석만 있는 사용자는 종합 데이터부터 요청한다. 질문 준비는 그 분석을 기다린다.
+        analysisLaunchService.launchIfMissing(authUser);
         // N:1은 질문 재작성이 아니라 신규 생성이 섞인 multi tailor로 간다. 갈림길은 서비스 안에 있다.
-        QuestionTailorEntity tailor = questionTailorService.requestTailor(interview, user);
+        QuestionTailorEntity tailor = questionTailorService.requestTailor(interview, authUser.user());
         return InterviewPrepareResponse.of(tailor, interview.getSessionId());
     }
 
@@ -207,14 +211,16 @@ public class InterviewService {
      * <p>실패한 건을 그대로 두면 면접 시작을 다시 눌러도 그 실패가 그대로 돌아온다. 특히 N:1은
      * 폴백할 원질문이 없어 한 번 실패하면 면접을 새로 만드는 것 말고는 길이 없었다.
      */
-    public InterviewPrepareResponse retryPreparation(UserResponse user, Long interviewId) {
+    public InterviewPrepareResponse retryPreparation(AuthUser authUser, Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
-        if (!user.getId().equals(interview.getUserId())) {
+        if (!authUser.id().equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 다시 준비할 수 있습니다.");
         }
 
-        QuestionTailorEntity tailor = questionTailorService.retryPreparation(interview, user);
+        // 처음 시작할 때 종합 데이터를 요청하지 못했으면 여기서 다시 요청한다.
+        analysisLaunchService.launchIfMissing(authUser);
+        QuestionTailorEntity tailor = questionTailorService.retryPreparation(interview, authUser.user());
         return InterviewPrepareResponse.of(tailor, interview.getSessionId());
     }
 

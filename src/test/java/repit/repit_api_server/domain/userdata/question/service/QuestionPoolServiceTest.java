@@ -15,7 +15,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleCallbackRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleRequest;
@@ -65,6 +67,8 @@ class QuestionPoolServiceTest {
     @Mock
     private AnalysisDataRepository analysisDataRepository;
     @Mock
+    private AiMetaDataService aiMetaDataService;
+    @Mock
     private AiServerClient aiServerClient;
 
     private QuestionPoolService service;
@@ -72,13 +76,14 @@ class QuestionPoolServiceTest {
     @BeforeEach
     void setUp() {
         service = new QuestionPoolService(questionCycleRepository, poolQuestionRepository, analysisDataRepository,
-                aiServerClient, new TransactionTemplate(mock(PlatformTransactionManager.class)));
+                aiMetaDataService, aiServerClient, new TransactionTemplate(mock(PlatformTransactionManager.class)));
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.test");
         ReflectionTestUtils.setField(service, "generatingTimeout", Duration.ofMinutes(5));
 
         AnalysisDataEntity profile = AnalysisDataEntity.builder()
                 .jobId(PROFILE_JOB)
                 .userId(USER_ID)
+                .status(AnalysisStatus.SUCCEEDED)
                 .resultType(AnalysisResultType.PROFILE)
                 .result(Map.of(
                         "profile", Map.of("schemaVersion", 1, "major", "MAJOR_BACKEND"),
@@ -87,6 +92,8 @@ class QuestionPoolServiceTest {
         when(analysisDataRepository.findLatestCompleted(USER_ID, AnalysisResultType.PROFILE))
                 .thenReturn(Optional.of(profile));
         when(analysisDataRepository.findById(PROFILE_JOB)).thenReturn(Optional.of(profile));
+        when(analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(USER_ID, AnalysisResultType.PROFILE))
+                .thenReturn(Optional.of(profile));
         when(poolQuestionRepository.findAllByInterviewIdOrderByQuestionIdAsc(anyLong())).thenReturn(List.of());
         when(questionCycleRepository.save(any(QuestionCycleEntity.class))).thenAnswer(call -> {
             QuestionCycleEntity cycle = call.getArgument(0);
@@ -394,5 +401,86 @@ class QuestionPoolServiceTest {
 
         assertThat(service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L, 1)).isNull();
         assertThat(generating.getStatus()).isEqualTo(CycleStatus.GENERATING);
+    }
+
+    private AnalysisDataEntity newProfile(AnalysisStatus status) {
+        return AnalysisDataEntity.builder()
+                .jobId("profile-2")
+                .userId(USER_ID)
+                .status(status)
+                .resultType(AnalysisResultType.PROFILE)
+                .build();
+    }
+
+    /** 자료를 새로 올렸다. 이전 자료로 질문을 꺼내면 바꾼 자료와 무관한 면접이 열린다. */
+    @Test
+    void 자료를_새로_분석하는_중이면_이전_자료로_꺼내지_않고_그_분석을_기다린다() {
+        AnalysisDataEntity analyzing = newProfile(AnalysisStatus.PENDING);
+        when(analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(USER_ID, AnalysisResultType.PROFILE))
+                .thenReturn(Optional.of(analyzing));
+        when(aiMetaDataService.isAnalyzing(analyzing)).thenReturn(true);
+        givenActive(cycle(1L, 1, CycleStatus.ACTIVE), unusedSets(1L, 1, 2, 3));
+
+        QuestionPoolService.DrawnSet drawn = service.takeSet(USER_ID, InterviewMode.SOLO, 3L);
+
+        assertThat(drawn.waiting()).isTrue();
+        // 웹은 이 작업으로 구독해 분석과 면접 준비를 함께 받는다.
+        assertThat(drawn.profileJobId()).isEqualTo("profile-2");
+        // 사이클은 분석 콜백이 요청한다. 여기서 이전 자료로 요청하면 곧 폐기될 질문을 만든다.
+        verify(aiServerClient, never()).requestQuestionCycle(any());
+        verify(poolQuestionRepository, never()).findAllByCycleIdAndUsedAtIsNullOrderBySetNoAscQuestionIdAsc(anyLong());
+    }
+
+    @Test
+    void 종합_데이터를_요청한_적이_없으면_분석부터_하라고_알린다() {
+        when(analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(USER_ID, AnalysisResultType.PROFILE))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.takeSet(USER_ID, InterviewMode.SOLO, 3L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("포트폴리오 분석을 먼저");
+    }
+
+    /** 분석 중인데 이전 자료의 사이클을 보고 이어가면, 이어가자마자 다시 기다리기로 돌아오길 되풀이한다. */
+    @Test
+    void 자료를_분석하는_중이면_기다리던_사이클이_끝난_것으로_보지_않는다() {
+        AnalysisDataEntity analyzing = newProfile(AnalysisStatus.PENDING);
+        when(analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(USER_ID, AnalysisResultType.PROFILE))
+                .thenReturn(Optional.of(analyzing));
+        when(aiMetaDataService.isAnalyzing(analyzing)).thenReturn(true);
+        when(questionCycleRepository.findTopByProfileJobIdAndModeOrderByCycleNoDesc(PROFILE_JOB, InterviewMode.SOLO))
+                .thenReturn(Optional.of(cycle(1L, 1, CycleStatus.ACTIVE)));
+
+        assertThat(service.settled(USER_ID, InterviewMode.SOLO)).isFalse();
+    }
+
+    /** 처음 면접을 시작하며 분석부터 하면 분석만으로 대기 시간을 넘긴다. 그동안 닫으면 면접이 끝내 열리지 않는다. */
+    @Test
+    void 기다리는_준비는_분석하는_동안_닫지_않고_분석이_끝난_때부터_센다() {
+        AnalysisDataEntity profile = newProfile(AnalysisStatus.PENDING);
+        when(analysisDataRepository.findById("profile-2")).thenReturn(Optional.of(profile));
+        when(aiMetaDataService.isAnalyzing(profile)).thenReturn(true);
+        LocalDateTime longAgo = LocalDateTime.now().minusMinutes(10);
+
+        assertThat(service.waitingFailure("profile-2", longAgo, Duration.ofMinutes(3))).isNull();
+
+        when(aiMetaDataService.isAnalyzing(profile)).thenReturn(false);
+        profile.setStatus(AnalysisStatus.SUCCEEDED);
+        profile.setCompletedAt(LocalDateTime.now().minusMinutes(1));
+        assertThat(service.waitingFailure("profile-2", longAgo, Duration.ofMinutes(3))).isNull();
+
+        profile.setCompletedAt(LocalDateTime.now().minusMinutes(4));
+        assertThat(service.waitingFailure("profile-2", longAgo, Duration.ofMinutes(3)))
+                .contains("새 질문을 제때 준비하지 못했습니다");
+    }
+
+    @Test
+    void 기다리던_분석이_실패하면_그_사유로_곧바로_닫는다() {
+        AnalysisDataEntity failed = newProfile(AnalysisStatus.FAILED);
+        failed.setErrorMessage("코드에서 확인할 수 있는 근거가 부족합니다.");
+        when(analysisDataRepository.findById("profile-2")).thenReturn(Optional.of(failed));
+
+        assertThat(service.waitingFailure("profile-2", LocalDateTime.now(), Duration.ofMinutes(3)))
+                .isEqualTo("자료를 분석하지 못해 질문을 준비하지 못했습니다. 코드에서 확인할 수 있는 근거가 부족합니다.");
     }
 }
