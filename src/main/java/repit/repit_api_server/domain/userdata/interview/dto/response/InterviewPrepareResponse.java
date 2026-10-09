@@ -24,6 +24,9 @@ public class InterviewPrepareResponse {
     private String sessionId;
     // 분석 서버가 발급한 질문 준비 작업 id
     private String jobId;
+    // 준비 상태를 구독할 열쇠(GET /api/v1/ai/subscribe/{analysisJobId}). 질문을 꺼낸 종합 데이터이고,
+    // 그 분석을 기다리는 중이면 분석 중인 종합 데이터다. 처음 면접을 시작하며 분석부터 하는 사용자는 이것으로만 알 수 있다.
+    private String analysisJobId;
 
     /** 면접에 들어갈 수 있는지. 조회 응답과 같은 판정이다. */
     private PreparationStatus preparationStatus;
@@ -42,6 +45,7 @@ public class InterviewPrepareResponse {
                 .interviewId(tailor.getInterviewId())
                 .sessionId(sessionId)
                 .jobId(tailor.getJobId())
+                .analysisJobId(tailor.getAnalysisJobId())
                 .preparationStatus(state.status())
                 .failureStage(state.failureStage())
                 .retryable(state.retryable())

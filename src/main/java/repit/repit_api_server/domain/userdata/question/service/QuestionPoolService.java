@@ -11,7 +11,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleCallbackRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleRequest;
@@ -39,8 +41,8 @@ import java.util.Set;
  * 질문 풀. 종합 데이터로 질문 사이클을 만들어 두고, 면접을 시작할 때 세트를 하나씩 꺼내 준다.
  *
  * <p>사이클 하나는 세트 3개다. 2번째 세트를 꺼낼 때 다음 사이클(대기본)을 미리 요청하고, 3번째 세트를
- * 꺼내면 대기본으로 넘어간다. 꺼낼 세트가 없으면 면접 준비는 다음 사이클을 기다린다 — 그 이어받기는
- * {@link QuestionTailorService}가 사이클 콜백에서 한다.
+ * 꺼내면 대기본으로 넘어간다. 꺼낼 세트가 없거나 자료를 새로 분석하는 중이면 면접 준비는 다음 사이클을
+ * 기다린다 — 그 이어받기는 {@link QuestionTailorService}가 사이클 콜백에서 한다.
  *
  * <p>분석 서버 호출은 트랜잭션 밖에서 한다. 느린 응답을 기다리는 동안 사이클 행 잠금과 DB 커넥션을
  * 붙잡지 않으려고 DB 작업과 호출을 나눈다.
@@ -64,6 +66,7 @@ public class QuestionPoolService {
     private final QuestionCycleRepository questionCycleRepository;
     private final PoolQuestionRepository poolQuestionRepository;
     private final AnalysisDataRepository analysisDataRepository;
+    private final AiMetaDataService aiMetaDataService;
     private final AiServerClient aiServerClient;
     private final TransactionTemplate transactionTemplate;
 
@@ -124,17 +127,23 @@ public class QuestionPoolService {
     }
 
     private Draw draw(Long userId, InterviewMode mode, Long interviewId) {
-        AnalysisDataEntity profile = analysisDataRepository.findLatestCompleted(userId, AnalysisResultType.PROFILE)
-                .orElseThrow(() -> BusinessException.notFound("포트폴리오 분석을 먼저 진행해주세요"));
-
         List<PoolQuestionEntity> taken = poolQuestionRepository.findAllByInterviewIdOrderByQuestionIdAsc(interviewId);
         if (!taken.isEmpty()) {
             AnalysisDataEntity source = questionCycleRepository.findById(taken.getFirst().getCycleId())
                     .flatMap(cycle -> analysisDataRepository.findById(cycle.getProfileJobId()))
-                    .orElse(profile);
+                    .orElseGet(() -> latestCompleted(userId));
             return new Draw(drawn(source, taken), null);
         }
 
+        // 자료를 새로 분석하는 중이면 이전 자료로 열지 않고 그 분석을 기다린다. 사이클은 분석 콜백이 요청한다.
+        AnalysisDataEntity latest = analysisDataRepository
+                .findTopByUserIdAndResultTypeOrderByCreatedAtDesc(userId, AnalysisResultType.PROFILE)
+                .orElseThrow(QuestionPoolService::noProfile);
+        if (aiMetaDataService.isAnalyzing(latest)) {
+            return new Draw(new DrawnSet(latest.getJobId(), null, null, null), null);
+        }
+
+        AnalysisDataEntity profile = latestCompleted(userId);
         String profileJobId = profile.getJobId();
         QuestionCycleEntity active = lock(profileJobId, mode, CycleStatus.ACTIVE)
                 .or(() -> promoteStandby(profileJobId, mode))
@@ -174,6 +183,15 @@ public class QuestionPoolService {
             toRequest = prepareCycle(profile, mode, active.getCycleNo() + 1);
         }
         return new Draw(drawn(profile, set), toRequest);
+    }
+
+    private AnalysisDataEntity latestCompleted(Long userId) {
+        return analysisDataRepository.findLatestCompleted(userId, AnalysisResultType.PROFILE)
+                .orElseThrow(QuestionPoolService::noProfile);
+    }
+
+    private static BusinessException noProfile() {
+        return BusinessException.notFound("포트폴리오 분석을 먼저 진행해주세요");
     }
 
     private Optional<QuestionCycleEntity> lock(String profileJobId, InterviewMode mode, CycleStatus status) {
@@ -402,10 +420,53 @@ public class QuestionPoolService {
      */
     @Transactional(readOnly = true)
     public boolean settled(Long userId, InterviewMode mode) {
+        // 종합 데이터를 분석하는 중이면 사이클은 아직 요청되지도 않았다. 이전 자료의 사이클을 보고 이어가면
+        // 다시 기다리기로 돌아와 이어가기를 되풀이한다.
+        boolean analyzing = analysisDataRepository
+                .findTopByUserIdAndResultTypeOrderByCreatedAtDesc(userId, AnalysisResultType.PROFILE)
+                .map(aiMetaDataService::isAnalyzing)
+                .orElse(false);
+        if (analyzing) {
+            return false;
+        }
         return analysisDataRepository.findLatestCompleted(userId, AnalysisResultType.PROFILE)
                 .flatMap(profile -> questionCycleRepository.findTopByProfileJobIdAndModeOrderByCycleNoDesc(profile.getJobId(), mode))
                 .map(cycle -> cycle.getStatus() != CycleStatus.GENERATING)
                 .orElse(false);
+    }
+
+    /**
+     * 사이클을 기다리는 준비를 닫을 사유. 더 기다릴 만하면 null.
+     *
+     * <p>사이클은 종합 데이터가 나온 뒤에야 요청된다. 그 분석을 기다리는 동안은 대기 시간을 세지 않고, 분석이
+     * 끝난 때부터 센다. 처음 면접을 시작하며 자료 분석부터 한 사용자는 분석만으로 대기 시간을 넘긴다.
+     * 분석이 실패했으면 더 기다려도 올 질문이 없다.
+     *
+     * @param profileJobId 기다리는 준비가 바라보는 종합 데이터
+     * @param waitingSince 기다리기 시작한 시각
+     */
+    @Transactional(readOnly = true)
+    public String waitingFailure(String profileJobId, LocalDateTime waitingSince, Duration timeout) {
+        AnalysisDataEntity profile = profileJobId == null ? null
+                : analysisDataRepository.findById(profileJobId).orElse(null);
+        LocalDateTime since = waitingSince;
+        if (profile != null) {
+            if (aiMetaDataService.isAnalyzing(profile)) {
+                return null;
+            }
+            if (profile.getStatus() == AnalysisStatus.FAILED) {
+                return profile.getErrorMessage() == null
+                        ? "자료를 분석하지 못해 질문을 준비하지 못했습니다."
+                        : "자료를 분석하지 못해 질문을 준비하지 못했습니다. " + profile.getErrorMessage();
+            }
+            if (profile.getCompletedAt() != null && since != null && profile.getCompletedAt().isAfter(since)) {
+                since = profile.getCompletedAt();
+            }
+        }
+        if (since == null || since.plus(timeout).isAfter(LocalDateTime.now())) {
+            return null;
+        }
+        return "새 질문을 제때 준비하지 못했습니다. 잠시 후 다시 시도해주세요.";
     }
 
     private String invalidReason(InterviewMode mode, QuestionCycleCallbackRequest.Result result) {

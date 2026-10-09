@@ -3,6 +3,7 @@ package repit.repit_api_server.domain.metadata.service;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
@@ -16,6 +17,7 @@ import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.global.exception.BusinessException;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -30,6 +32,10 @@ public class AiMetaDataService {
     private static final String STATUS_PENDING = "pending";
 
     private final AnalysisDataRepository analysisDataRepository;
+
+    // 종합 데이터 분석을 이만큼 기다려도 콜백이 없으면 잃어버린 것으로 본다.
+    @Value("${app.profile.pending-timeout:15m}")
+    private Duration profilePendingTimeout;
 
     /**
      * 분석 요청 시점에 이번 실행을 접수한다. 소유자를 기록하고, 지난 실행에 남은 결과를 걷어낸다.
@@ -298,21 +304,41 @@ public class AiMetaDataService {
         }
 
         String status = ProfileStatusResponse.PENDING;
+        String errorMessage = data.getErrorMessage();
         if (data.getStatus() == AnalysisStatus.FAILED) {
             status = ProfileStatusResponse.FAILED;
         } else if (isFinished(data)) {
             status = ProfileStatusResponse.COMPLETED;
+        } else if (!isAnalyzing(data)) {
+            // 콜백을 잃어버렸다. 분석 중으로 두면 웹은 면접 시작을 막은 채 다시 분석할 길도 보여주지 않는다.
+            status = ProfileStatusResponse.FAILED;
+            errorMessage = "분석 결과를 받지 못했습니다. 다시 분석해주세요.";
         }
 
         return ProfileStatusResponse.builder()
                 .jobId(data.getJobId())
                 .status(status)
                 .errorStatusCode(data.getErrorStatusCode())
-                .errorMessage(data.getErrorMessage())
+                .errorMessage(errorMessage)
+                .failureReason(ProfileStatusResponse.FAILED.equals(status)
+                        ? ProfileStatusResponse.reasonOf(data.getErrorStatusCode(), errorMessage)
+                        : null)
                 .completedAt(data.getCompletedAt())
                 .projectSummary(ProfileStatusResponse.COMPLETED.equals(status) && data.getResult() instanceof Map<?, ?> result
                         ? result.get("projectSummary")
                         : null)
                 .build();
+    }
+
+    /**
+     * 아직 분석하는 중인지. 그동안 면접 준비는 이 분석과 질문 사이클을 기다린다.
+     *
+     * <p>분석 서버는 콜백을 보내지 못하면 결과를 버린다. 오래된 요청까지 분석 중으로 보면 그 사용자의
+     * 면접 준비는 끝내 열리지 않으므로, 제한 시간이 지난 요청은 끝난 것으로 본다.
+     */
+    public boolean isAnalyzing(AnalysisDataEntity data) {
+        return data.getStatus() == AnalysisStatus.PENDING
+                && data.getCreatedAt() != null
+                && data.getCreatedAt().plus(profilePendingTimeout).isAfter(LocalDateTime.now());
     }
 }

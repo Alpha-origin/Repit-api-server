@@ -65,7 +65,7 @@ class InterviewServiceLookupTest {
     void setUp() {
         service = new InterviewService(interviewRepository, questionRepository, chatServerClient,
                 answerRepository, personaRepository, questionTailorService,
-                interviewPersonaRepository);
+                interviewPersonaRepository, null);
 
     }
 

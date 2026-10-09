@@ -244,10 +244,43 @@ class QuestionTailorServiceWaitingTest {
         when(questionTailorRepository.findAllByStatusAndCreatedAtBefore(eq(TailorStatus.WAITING), any()))
                 .thenReturn(List.of(waiting));
         when(questionTailorRepository.claimExpiration(1L)).thenReturn(1);
+        when(questionPoolService.waitingFailure(eq("profile-1"), any(), eq(Duration.ofMinutes(3))))
+                .thenReturn("새 질문을 제때 준비하지 못했습니다. 잠시 후 다시 시도해주세요.");
 
         service.sweepTimedOutPreparations();
 
         assertThat(waiting.getStatus()).isEqualTo(TailorStatus.FAILED);
+        assertThat(waiting.getErrorMessage()).isEqualTo("새 질문을 제때 준비하지 못했습니다. 잠시 후 다시 시도해주세요.");
         verify(sseNotifier).sendFinal(eq("profile-1"), eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), any());
+    }
+
+    /** 종합 데이터를 분석하는 중이다. 생성 시각만 보고 닫으면 처음 면접을 시작한 사용자는 분석이 끝나기 전에 실패를 받는다. */
+    @Test
+    void 질문_풀이_더_기다릴_만하다고_하면_스윕이_닫지_않는다() {
+        QuestionTailorEntity waiting = waitingTailor();
+        when(questionTailorRepository.findAllByStatusAndCreatedAtBefore(eq(TailorStatus.WAITING), any()))
+                .thenReturn(List.of(waiting));
+        when(questionPoolService.waitingFailure(eq("profile-1"), any(), any())).thenReturn(null);
+
+        service.sweepTimedOutPreparations();
+
+        assertThat(waiting.getStatus()).isEqualTo(TailorStatus.WAITING);
+        verify(questionTailorRepository, never()).claimExpiration(anyLong());
+        verify(sseNotifier, never()).sendFinal(any(), any(), any());
+    }
+
+    /** 기다리던 분석이 실패했다. 폴링하는 웹은 다음 조회에서 곧바로 그 사유를 받는다. */
+    @Test
+    void 조회할_때_기다리던_분석이_실패했으면_그_사유로_닫는다() {
+        QuestionTailorEntity waiting = waitingTailor();
+        when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(waiting));
+        when(questionTailorRepository.claimExpiration(1L)).thenReturn(1);
+        when(questionPoolService.waitingFailure(eq("profile-1"), any(), any()))
+                .thenReturn("자료를 분석하지 못해 질문을 준비하지 못했습니다. github 저장소 상태를 public으로 변경해주세요.");
+
+        service.getTailorResult(7L, 3L);
+
+        assertThat(waiting.getStatus()).isEqualTo(TailorStatus.FAILED);
+        assertThat(waiting.getErrorMessage()).contains("public으로 변경해주세요");
     }
 }

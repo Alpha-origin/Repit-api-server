@@ -70,6 +70,9 @@ public interface AnalysisDataRepository extends JpaRepository<AnalysisDataEntity
                                                  @Param("resultType") AnalysisResultType resultType,
                                                  Pageable pageable);
 
+    /** 이 종류의 분석을 한 번이라도 요청했는지. 예전 /generate 분석만 있는 사용자를 가려낸다. */
+    boolean existsByUserIdAndResultType(Long userId, AnalysisResultType resultType);
+
     /** 가장 최근에 요청한 작업. 끝났든 진행 중이든 지금 상태를 보여줄 때 쓴다. */
     Optional<AnalysisDataEntity> findTopByUserIdAndResultTypeOrderByCreatedAtDesc(Long userId,
                                                                                AnalysisResultType resultType);

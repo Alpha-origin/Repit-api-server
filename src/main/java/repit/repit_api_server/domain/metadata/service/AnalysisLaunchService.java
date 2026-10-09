@@ -10,6 +10,8 @@ import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
+import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.ExternalApiException;
 
@@ -39,6 +41,8 @@ public class AnalysisLaunchService {
 
     private final AiServerClient aiServerClient;
     private final AiMetaDataService aiMetaDataService;
+    private final MetaService metaService;
+    private final AnalysisDataRepository analysisDataRepository;
 
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
@@ -56,6 +60,25 @@ public class AnalysisLaunchService {
                 .callbackUrl(callbackBaseUrl + PROFILE_CALLBACK_PATH)
                 .build();
         return launch(userId, AnalysisResultType.PROFILE, () -> aiServerClient.requestProfile(request));
+    }
+
+    /**
+     * 종합 데이터를 한 번도 요청하지 않은 사용자면 저장된 자료로 요청한다. 예전 /generate 분석만 있는
+     * 사용자를 옮기는 길이다. 면접 준비는 이 분석과 질문 사이클을 기다렸다가 이어간다.
+     *
+     * <p>올린 자료가 모자라면 요청하지 않는다. 분석 서버가 접수부터 거부하고, 면접 준비가 분석부터 하라고 알린다.
+     */
+    public void launchIfMissing(AuthUser authUser) {
+        if (analysisDataRepository.existsByUserIdAndResultType(authUser.id(), AnalysisResultType.PROFILE)) {
+            return;
+        }
+        MetaDataResponse saved = metaService.getMetaData(authUser.token());
+        if (saved == null || saved.getFileUrl() == null || saved.getFileUrl().isBlank()
+                || saved.getGitUrls() == null || saved.getGitUrls().isEmpty()) {
+            return;
+        }
+        log.info("종합 데이터가 없는 사용자라 저장된 자료로 분석을 요청합니다. userId={}", authUser.id());
+        launch(authUser.id(), authUser.user().getMajor(), saved);
     }
 
     // 옛 /generate-mock. 분석 서버가 /generate를 걷어낼 때 함께 지운다.

@@ -37,8 +37,8 @@ public class InterviewController {
             @AuthenticationPrincipal AuthUser authUser,
             @PathVariable Long interviewId
     ) {
-        // 사용자 정보를 통째로 넘긴다. 질문 재작성이 전공(major)까지 실어 보내기 때문이다.
-        return ApiResponse.success(interviewService.prepareInterview(authUser.user(), interviewId));
+        // 토큰까지 넘긴다. 질문 재작성이 전공을 싣고, 종합 데이터가 없으면 저장된 자료를 읽어 분석부터 요청한다.
+        return ApiResponse.success(interviewService.prepareInterview(authUser, interviewId));
     }
 
     /**
@@ -53,7 +53,7 @@ public class InterviewController {
             @AuthenticationPrincipal AuthUser authUser,
             @PathVariable Long interviewId
     ) {
-        return ApiResponse.success(interviewService.retryPreparation(authUser.user(), interviewId));
+        return ApiResponse.success(interviewService.retryPreparation(authUser, interviewId));
     }
 
     @GetMapping("/getAll")

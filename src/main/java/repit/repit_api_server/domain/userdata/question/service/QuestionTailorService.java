@@ -493,13 +493,14 @@ public class QuestionTailorService {
      * 그 경우 콜백이 영영 오지 않으므로, 오래 걸린 PENDING은 실패로 정리한다.
      */
     private boolean expireIfTimedOut(QuestionTailorEntity tailor) {
-        Duration timeout = tailor.getStatus() == TailorStatus.PENDING ? pendingTimeout
-                : tailor.getStatus() == TailorStatus.WAITING ? waitingTimeout
-                : null;
-        if (timeout == null || tailor.getCreatedAt() == null) {
+        if (tailor.getStatus() == TailorStatus.WAITING) {
+            // 기다리는 시간은 종합 데이터 분석이 끝난 때부터 센다. 그 판정은 질문 풀이 한다.
+            return expire(tailor);
+        }
+        if (tailor.getStatus() != TailorStatus.PENDING || tailor.getCreatedAt() == null) {
             return false;
         }
-        if (tailor.getCreatedAt().plus(timeout).isAfter(LocalDateTime.now())) {
+        if (tailor.getCreatedAt().plus(pendingTimeout).isAfter(LocalDateTime.now())) {
             return false;
         }
         return expire(tailor);
@@ -513,9 +514,14 @@ public class QuestionTailorService {
      */
     private boolean expire(QuestionTailorEntity tailor) {
         if (tailor.getStatus() == TailorStatus.WAITING) {
-            log.warn("새 질문 사이클이 {} 내에 도착하지 않아 실패 처리합니다. tailorId={}, interviewId={}",
-                    waitingTimeout, tailor.getTailorId(), tailor.getInterviewId());
-            return closeWaiting(tailor, "새 질문을 제때 준비하지 못했습니다. 잠시 후 다시 시도해주세요.");
+            String reason = questionPoolService.waitingFailure(
+                    tailor.getAnalysisJobId(), tailor.getCreatedAt(), waitingTimeout);
+            if (reason == null) {
+                return false;
+            }
+            log.warn("질문 사이클을 기다리던 준비를 실패 처리합니다. tailorId={}, interviewId={}, 사유={}",
+                    tailor.getTailorId(), tailor.getInterviewId(), reason);
+            return closeWaiting(tailor, reason);
         }
         if (questionTailorRepository.claimExpiration(tailor.getTailorId()) == 0) {
             return false;
