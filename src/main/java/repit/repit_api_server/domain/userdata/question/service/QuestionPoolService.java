@@ -62,6 +62,10 @@ public class QuestionPoolService {
     private static final int EXCLUDE_CYCLES = 2;
     /** 질문을 기다리는 면접이 있을 때 한 사이클을 요청하는 최대 횟수(처음 포함). */
     private static final int MAX_ATTEMPTS_WHILE_WAITING = 2;
+    /** 받은 종합 데이터로는 사이클을 만들 수 없다는 실패 코드. 같은 종합 데이터로 다시 요청해도 같다. */
+    private static final int REJECTED = 422;
+    /** 사이클을 받아 둔 적이 있다는 뜻의 상태. 폐기(RETIRED)는 지금 종합 데이터의 사이클에 생기지 않는다. */
+    private static final Set<CycleStatus> SERVED = Set.of(CycleStatus.ACTIVE, CycleStatus.STANDBY, CycleStatus.EXHAUSTED);
 
     private final QuestionCycleRepository questionCycleRepository;
     private final PoolQuestionRepository poolQuestionRepository;
@@ -96,8 +100,12 @@ public class QuestionPoolService {
         }
     }
 
-    /** 사이클 콜백을 반영한 결과. 기다리는 면접 준비를 이어갈지 실패로 닫을지 정하는 데 쓴다. */
-    public record CycleOutcome(Long cycleId, Long userId, InterviewMode mode, boolean succeeded, String errorMessage) {
+    /**
+     * 사이클 콜백을 반영한 결과. 기다리는 면접 준비를 이어갈지 실패로 닫을지 정하는 데 쓴다.
+     *
+     * @param rejected 이 종합 데이터로는 사이클을 만들 수 없다고 거부됐다(422). 다시 요청해도 소용없다.
+     */
+    public record CycleOutcome(Long cycleId, Long userId, InterviewMode mode, boolean succeeded, boolean rejected) {
     }
 
     private record Draw(DrawnSet set, QuestionCycleEntity toRequest) {
@@ -150,6 +158,12 @@ public class QuestionPoolService {
                 .orElse(null);
 
         if (active == null) {
+            // 이 종합 데이터로는 사이클을 만들 수 없다. 면접을 시작하며 다시 분석하지 못했으면(자료가 모자라거나,
+            // 다시 만든 것마저 거부됐으면) 기다려도 올 질문이 없다.
+            if (rejected(profileJobId)) {
+                log.warn("사이클이 거부된 종합 데이터라 꺼낼 세트가 없습니다. userId={}, profileJobId={}", userId, profileJobId);
+                throw noProfile();
+            }
             // 마지막 사이클이 아직 생성 중이거나 실패했으면 그 사이클을, 다 썼거나 없으면 다음 사이클을 기다린다.
             QuestionCycleEntity last = questionCycleRepository
                     .findTopByProfileJobIdAndModeOrderByCycleNoDesc(profileJobId, mode)
@@ -209,8 +223,14 @@ public class QuestionPoolService {
      * cycleNo 사이클을 요청할 수 있게 만들어 돌려준다. 이미 생성 중이거나 만들어져 있으면 null.
      *
      * <p>실패한 사이클과 콜백을 잃어버린 사이클은 같은 행을 다시 쓴다. 번호를 건너뛰면 세트 순서를 되짚을 수 없다.
+     *
+     * <p>사이클이 거부된 종합 데이터면 null. 다시 요청해도 같은 422가 돌아온다 — 면접을 시작할 때 종합 데이터를
+     * 다시 만들고, 그 콜백이 새 사이클을 요청한다.
      */
     private QuestionCycleEntity prepareCycle(AnalysisDataEntity profile, InterviewMode mode, int cycleNo) {
+        if (rejected(profile.getJobId())) {
+            return null;
+        }
         LocalDateTime now = LocalDateTime.now();
         QuestionCycleEntity cycle = questionCycleRepository
                 .findByProfileJobIdAndModeAndCycleNo(profile.getJobId(), mode, cycleNo)
@@ -239,7 +259,23 @@ public class QuestionPoolService {
         cycle.setRequestedAt(now);
         cycle.setCompletedAt(null);
         cycle.setErrorMessage(null);
+        cycle.setErrorStatusCode(null);
         return cycle;
+    }
+
+    private boolean rejected(String profileJobId) {
+        return questionCycleRepository.existsByProfileJobIdAndErrorStatusCode(profileJobId, REJECTED);
+    }
+
+    /**
+     * 저장된 자료로 종합 데이터를 다시 만들어야 하는지.
+     *
+     * <p>사이클을 받아 쓰던 종합 데이터가 거부됐으면 그렇다 — 분석 서버가 종합 데이터 형태(schemaVersion)를 바꾼
+     * 것이다. 처음부터 거부된 종합 데이터는 다시 분석해도 같은 것이 나온다. 분석 서버의 문제라 다시 분석하지 않는다.
+     * 다시 만든 종합 데이터가 또 거부되는 경우도 여기서 멈춰, 같은 자료로 무거운 분석을 되풀이하지 않는다.
+     */
+    public boolean needsReanalysis(String profileJobId) {
+        return rejected(profileJobId) && questionCycleRepository.existsByProfileJobIdAndStatusIn(profileJobId, SERVED);
     }
 
     /**
@@ -382,7 +418,8 @@ public class QuestionPoolService {
         cycle.setJobId(request.getJobId());
         cycle.setCompletedAt(LocalDateTime.now());
 
-        String error = STATUS_SUCCEEDED.equalsIgnoreCase(request.getStatus())
+        boolean succeeded = STATUS_SUCCEEDED.equalsIgnoreCase(request.getStatus());
+        String error = succeeded
                 ? invalidReason(cycle.getMode(), request.getResult())
                 : failureMessage(request.getError());
         if (error != null) {
@@ -390,7 +427,14 @@ public class QuestionPoolService {
                     cycle.getCycleId(), cycle.getMode(), cycle.getCycleNo(), error);
             cycle.setStatus(CycleStatus.FAILED);
             cycle.setErrorMessage(error);
-            return new CycleOutcome(cycle.getCycleId(), cycle.getUserId(), cycle.getMode(), false, error);
+            // 코드는 실패 콜백에만 있다. 성공 콜백인데 구성이 어긋난 것은 다시 요청하면 풀릴 수 있다.
+            cycle.setErrorStatusCode(succeeded || request.getError() == null ? null : request.getError().getStatusCode());
+            boolean rejected = Integer.valueOf(REJECTED).equals(cycle.getErrorStatusCode());
+            if (rejected && !questionCycleRepository.existsByProfileJobIdAndStatusIn(cycle.getProfileJobId(), SERVED)) {
+                log.error("사이클을 받아 본 적 없는 종합 데이터가 거부됐습니다. 다시 분석해도 같으니 분석 서버를 확인해야 합니다. "
+                        + "userId={}, profileJobId={}, 사유={}", cycle.getUserId(), cycle.getProfileJobId(), error);
+            }
+            return new CycleOutcome(cycle.getCycleId(), cycle.getUserId(), cycle.getMode(), false, rejected);
         }
 
         poolQuestionRepository.saveAll(request.getResult().getQuestions().stream()
@@ -409,7 +453,7 @@ public class QuestionPoolService {
         boolean hasActive = lock(cycle.getProfileJobId(), cycle.getMode(), CycleStatus.ACTIVE).isPresent();
         cycle.setStatus(hasActive ? CycleStatus.STANDBY : CycleStatus.ACTIVE);
         cycle.setErrorMessage(null);
-        return new CycleOutcome(cycle.getCycleId(), cycle.getUserId(), cycle.getMode(), true, null);
+        return new CycleOutcome(cycle.getCycleId(), cycle.getUserId(), cycle.getMode(), true, false);
     }
 
     /**

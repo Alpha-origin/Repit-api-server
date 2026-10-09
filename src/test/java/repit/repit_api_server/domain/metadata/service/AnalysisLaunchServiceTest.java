@@ -14,8 +14,11 @@ import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.domain.userdata.question.service.QuestionPoolService;
 import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.response.UserResponse;
@@ -23,6 +26,8 @@ import repit.repit_api_server.global.exception.ExternalApiException;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -51,6 +56,8 @@ class AnalysisLaunchServiceTest {
     private MetaService metaService;
     @Mock
     private AnalysisDataRepository analysisDataRepository;
+    @Mock
+    private QuestionPoolService questionPoolService;
 
     /** 분석의 주인. 시큐리티 필터가 이미 확인한 사용자라 서비스는 id만 받는다. */
     private static final Long OWNER_ID = 9L;
@@ -59,7 +66,8 @@ class AnalysisLaunchServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AnalysisLaunchService(aiServerClient, aiMetaDataService, metaService, analysisDataRepository);
+        service = new AnalysisLaunchService(aiServerClient, aiMetaDataService, metaService, analysisDataRepository,
+                questionPoolService);
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
 
         when(aiServerClient.requestProfile(any(ProfileRequest.class))).thenReturn(GenerateResponse.builder()
@@ -79,6 +87,22 @@ class AnalysisLaunchServiceTest {
                 .build();
     }
 
+    /** 가장 나중에 요청한 종합 데이터. null이면 한 번도 요청한 적이 없다. */
+    private void givenLatestProfile(AnalysisDataEntity latest) {
+        when(analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(OWNER_ID, AnalysisResultType.PROFILE))
+                .thenReturn(Optional.ofNullable(latest));
+    }
+
+    private AnalysisDataEntity completedProfile() {
+        return AnalysisDataEntity.builder().jobId("profile-1").userId(OWNER_ID).resultType(AnalysisResultType.PROFILE)
+                .status(AnalysisStatus.SUCCEEDED).result(Map.of("profile", Map.of())).build();
+    }
+
+    private AnalysisDataEntity analyzingProfile() {
+        return AnalysisDataEntity.builder().jobId("profile-2").userId(OWNER_ID).resultType(AnalysisResultType.PROFILE)
+                .status(AnalysisStatus.PENDING).build();
+    }
+
     private AuthUser authUser() {
         UserResponse user = mock(UserResponse.class);
         when(user.getId()).thenReturn(OWNER_ID);
@@ -88,7 +112,7 @@ class AnalysisLaunchServiceTest {
 
     @Test
     void 종합_데이터가_없는_사용자는_저장된_자료로_분석을_요청한다() {
-        when(analysisDataRepository.existsByUserIdAndResultType(OWNER_ID, AnalysisResultType.PROFILE)).thenReturn(false);
+        givenLatestProfile(null);
         when(metaService.getMetaData("token-1")).thenReturn(metaData());
 
         service.launchIfMissing(authUser());
@@ -100,33 +124,57 @@ class AnalysisLaunchServiceTest {
     }
 
     @Test
-    void 종합_데이터를_요청한_적이_있으면_다시_요청하지_않는다() {
-        when(analysisDataRepository.existsByUserIdAndResultType(OWNER_ID, AnalysisResultType.PROFILE)).thenReturn(true);
+    void 쓸_수_있는_종합_데이터가_있으면_다시_요청하지_않는다() {
+        givenLatestProfile(completedProfile());
 
         service.launchIfMissing(authUser());
 
         verify(metaService, never()).getMetaData(any());
+        verify(aiServerClient, never()).requestProfile(any());
+    }
+
+    /** 분석 서버가 종합 데이터 형태를 바꿨다. 다시 만들지 않으면 자료를 다시 올리기 전까지 면접을 열 수 없다. */
+    @Test
+    void 쓰던_종합_데이터가_거부됐으면_저장된_자료로_다시_요청한다() {
+        givenLatestProfile(completedProfile());
+        when(questionPoolService.needsReanalysis("profile-1")).thenReturn(true);
+        when(metaService.getMetaData("token-1")).thenReturn(metaData());
+
+        service.launchIfMissing(authUser());
+
+        verify(aiServerClient).requestProfile(any(ProfileRequest.class));
+        verify(aiMetaDataService).registerJob(eq("job-1"), eq(OWNER_ID), any(LocalDateTime.class), eq(AnalysisResultType.PROFILE));
+    }
+
+    /** 다시 요청한 분석이 아직 돌거나 실패했다. 면접을 시작할 때마다 무거운 분석을 또 돌리지 않는다. */
+    @Test
+    void 가장_나중에_요청한_분석이_끝나지_않았으면_다시_요청하지_않는다() {
+        givenLatestProfile(analyzingProfile());
+        when(questionPoolService.needsReanalysis(any())).thenReturn(true);
+
+        service.launchIfMissing(authUser());
+
         verify(aiServerClient, never()).requestProfile(any());
     }
 
     /** 면접 시작이 겹쳤다. 앞 요청이 잠근 채 분석을 접수했으니 뒤 요청은 다시 요청하지 않고 그 분석을 기다린다. */
     @Test
     void 잠그고_다시_보니_다른_요청이_분석을_요청했으면_다시_요청하지_않는다() {
-        when(analysisDataRepository.existsByUserIdAndResultType(OWNER_ID, AnalysisResultType.PROFILE))
-                .thenReturn(false, true);
+        when(analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(OWNER_ID, AnalysisResultType.PROFILE))
+                .thenReturn(Optional.empty(), Optional.of(analyzingProfile()));
 
         service.launchIfMissing(authUser());
 
         InOrder order = inOrder(analysisDataRepository);
         order.verify(analysisDataRepository).lockProfileLaunch(OWNER_ID);
-        order.verify(analysisDataRepository).existsByUserIdAndResultType(OWNER_ID, AnalysisResultType.PROFILE);
+        order.verify(analysisDataRepository).findTopByUserIdAndResultTypeOrderByCreatedAtDesc(OWNER_ID, AnalysisResultType.PROFILE);
         verify(metaService, never()).getMetaData(any());
         verify(aiServerClient, never()).requestProfile(any());
     }
 
     @Test
     void 저장된_자료가_모자라면_요청하지_않는다() {
-        when(analysisDataRepository.existsByUserIdAndResultType(OWNER_ID, AnalysisResultType.PROFILE)).thenReturn(false);
+        givenLatestProfile(null);
         when(metaService.getMetaData("token-1")).thenReturn(MetaDataResponse.builder()
                 .fileUrl("https://s3/portfolio.pdf")
                 .gitUrls(List.of())
