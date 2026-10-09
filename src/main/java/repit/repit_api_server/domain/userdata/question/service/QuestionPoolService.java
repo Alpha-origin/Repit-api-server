@@ -232,6 +232,9 @@ public class QuestionPoolService {
      *
      * <p>사용자의 지금 종합 데이터일 때만 한다. 먼저 요청한 분석이 늦게 끝나거나 그 콜백이 다시 오면,
      * 그대로 진행했다가는 새 자료로 만든 사이클을 버리고 옛 자료로 질문을 만든다.
+     *
+     * <p>버리는 것은 이 종합 데이터보다 먼저 요청한 것의 사이클뿐이다. 지금인지 확인한 직후 더 나중에 요청한
+     * 분석이 끝나 사이클을 만들 수 있어, 확인만 믿고 나머지를 모두 버리면 그 새 사이클까지 버린다.
      */
     public void startCycles(String profileJobId) {
         AnalysisDataEntity profile = analysisDataRepository.findById(profileJobId).orElse(null);
@@ -239,17 +242,17 @@ public class QuestionPoolService {
             log.warn("주인을 알 수 없는 종합 데이터라 질문 사이클을 만들지 않습니다. profileJobId={}", profileJobId);
             return;
         }
-        String current = analysisDataRepository.findLatestCompleted(profile.getUserId(), AnalysisResultType.PROFILE)
-                .map(AnalysisDataEntity::getJobId)
-                .orElse(null);
-        if (!profileJobId.equals(current)) {
-            log.info("나중에 요청한 종합 데이터가 있어 질문 사이클을 만들지 않습니다. profileJobId={}, 지금={}",
-                    profileJobId, current);
-            return;
-        }
 
         List<QuestionCycleEntity> toRequest = transactionTemplate.execute(status -> {
-            int retired = questionCycleRepository.retireOthers(profile.getUserId(), profileJobId);
+            String current = analysisDataRepository.findLatestCompleted(profile.getUserId(), AnalysisResultType.PROFILE)
+                    .map(AnalysisDataEntity::getJobId)
+                    .orElse(null);
+            if (!profileJobId.equals(current)) {
+                log.info("나중에 요청한 종합 데이터가 있어 질문 사이클을 만들지 않습니다. profileJobId={}, 지금={}",
+                        profileJobId, current);
+                return List.<QuestionCycleEntity>of();
+            }
+            int retired = questionCycleRepository.retireRequestedBefore(profile.getUserId(), profile.getCreatedAt());
             if (retired > 0) {
                 log.info("자료가 바뀌어 이전 질문 사이클을 폐기합니다. userId={}, 폐기={}개", profile.getUserId(), retired);
             }

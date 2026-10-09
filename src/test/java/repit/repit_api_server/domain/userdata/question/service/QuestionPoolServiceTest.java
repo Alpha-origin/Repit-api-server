@@ -267,7 +267,7 @@ class QuestionPoolServiceTest {
     void 지금_종합_데이터면_이전_사이클을_버리고_두_모드_사이클_1을_요청한다() {
         service.startCycles(PROFILE_JOB);
 
-        verify(questionCycleRepository).retireOthers(USER_ID, PROFILE_JOB);
+        verify(questionCycleRepository).retireRequestedBefore(eq(USER_ID), any());
         ArgumentCaptor<QuestionCycleRequest> sent = ArgumentCaptor.forClass(QuestionCycleRequest.class);
         verify(aiServerClient, org.mockito.Mockito.times(2)).requestQuestionCycle(sent.capture());
         assertThat(sent.getAllValues()).extracting(QuestionCycleRequest::getMode).containsExactly("SOLO", "MULTI");
@@ -284,7 +284,7 @@ class QuestionPoolServiceTest {
 
         service.startCycles("profile-old");
 
-        verify(questionCycleRepository, never()).retireOthers(any(), any());
+        verify(questionCycleRepository, never()).retireRequestedBefore(any(), any());
         verify(aiServerClient, never()).requestQuestionCycle(any());
     }
 

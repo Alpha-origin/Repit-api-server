@@ -34,17 +34,23 @@ public interface QuestionCycleRepository extends JpaRepository<QuestionCycleEnti
 
     Optional<QuestionCycleEntity> findByProfileJobIdAndModeAndCycleNo(String profileJobId, InterviewMode mode, Integer cycleNo);
 
-    /** 자료가 바뀌었다. 이전 종합 데이터로 만든 사이클을 남은 세트와 대기본째 버린다. */
+    /**
+     * 자료가 바뀌었다. 이 시각보다 먼저 요청한 종합 데이터로 만든 사이클을 남은 세트와 대기본째 버린다.
+     *
+     * <p>더 나중에 요청한 종합 데이터의 사이클은 건드리지 않는다. 옛 분석의 콜백이 늦게 와서 이 갱신이 새
+     * 분석보다 뒤에 돌아도 새 질문 풀은 남는다.
+     */
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update QuestionCycleEntity c
                set c.status = repit.repit_api_server.domain.userdata.question.entity.enums.CycleStatus.RETIRED
              where c.userId = :userId
-               and c.profileJobId <> :profileJobId
                and c.status <> repit.repit_api_server.domain.userdata.question.entity.enums.CycleStatus.RETIRED
+               and c.profileJobId in (select a.jobId from AnalysisDataEntity a
+                                       where a.userId = :userId and a.createdAt < :requestedAt)
             """)
-    int retireOthers(@Param("userId") Long userId, @Param("profileJobId") String profileJobId);
+    int retireRequestedBefore(@Param("userId") Long userId, @Param("requestedAt") LocalDateTime requestedAt);
 
     /**
      * 접수 응답으로 받은 작업 id를 남긴다. 그 사이 콜백이 먼저 와 사이클이 끝났으면 건드리지 않는다.
