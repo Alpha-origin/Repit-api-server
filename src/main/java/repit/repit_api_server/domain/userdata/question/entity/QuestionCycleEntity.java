@@ -49,6 +49,11 @@ public class QuestionCycleEntity {
     @Builder.Default
     private Integer attempt = 1;
 
+    // 이 사이클을 요청한 차례. 다시 요청할 때마다 오르고 콜백 주소에 실린다. 다른 차례의 콜백은 버린다.
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer requestNo = 1;
+
     @Column(nullable = false)
     private LocalDateTime requestedAt;
 

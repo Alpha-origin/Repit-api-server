@@ -573,8 +573,8 @@ public class QuestionTailorService {
      * <p>준비 한 건이 걸려 넘어져도 나머지는 이어간다. 여기서 예외가 나면 분석 서버가 콜백을 다시 보내도
      * 사이클은 이미 반영돼 아무도 이어주지 않는다.
      */
-    public void handleCycleCallback(QuestionCycleCallbackRequest request, Long cycleId) {
-        QuestionPoolService.CycleOutcome outcome = questionPoolService.applyCycleResult(request, cycleId);
+    public void handleCycleCallback(QuestionCycleCallbackRequest request, Long cycleId, Integer requestNo) {
+        QuestionPoolService.CycleOutcome outcome = questionPoolService.applyCycleResult(request, cycleId, requestNo);
         if (outcome == null) {
             return;
         }

@@ -217,6 +217,7 @@ public class QuestionPoolService {
         cycle.setStatus(CycleStatus.GENERATING);
         cycle.setJobId(null);
         cycle.setAttempt(1);
+        cycle.setRequestNo(cycle.getRequestNo() + 1);
         cycle.setRequestedAt(now);
         cycle.setCompletedAt(null);
         cycle.setErrorMessage(null);
@@ -228,11 +229,22 @@ public class QuestionPoolService {
      *
      * <p>이전 종합 데이터의 사이클은 남은 세트와 대기본째 버린다. 콜백이 다시 와도 이미 요청한 사이클은
      * 다시 요청하지 않는다. 요청이 실패한 모드는 면접을 시작할 때 다시 요청한다.
+     *
+     * <p>사용자의 지금 종합 데이터일 때만 한다. 먼저 요청한 분석이 늦게 끝나거나 그 콜백이 다시 오면,
+     * 그대로 진행했다가는 새 자료로 만든 사이클을 버리고 옛 자료로 질문을 만든다.
      */
     public void startCycles(String profileJobId) {
         AnalysisDataEntity profile = analysisDataRepository.findById(profileJobId).orElse(null);
         if (profile == null || profile.getUserId() == null) {
             log.warn("주인을 알 수 없는 종합 데이터라 질문 사이클을 만들지 않습니다. profileJobId={}", profileJobId);
+            return;
+        }
+        String current = analysisDataRepository.findLatestCompleted(profile.getUserId(), AnalysisResultType.PROFILE)
+                .map(AnalysisDataEntity::getJobId)
+                .orElse(null);
+        if (!profileJobId.equals(current)) {
+            log.info("나중에 요청한 종합 데이터가 있어 질문 사이클을 만들지 않습니다. profileJobId={}, 지금={}",
+                    profileJobId, current);
             return;
         }
 
@@ -263,7 +275,8 @@ public class QuestionPoolService {
     /**
      * 사이클 생성을 분석 서버에 맡긴다. 보내지 못하면 실패로 남기고 예외를 그대로 던진다.
      *
-     * <p>콜백 주소에 사이클 번호를 싣는다. 접수 응답보다 콜백이 먼저 오면 작업 id로는 사이클을 찾지 못한다.
+     * <p>콜백 주소에 사이클 번호와 요청 차례를 싣는다. 접수 응답보다 콜백이 먼저 오면 작업 id로는 사이클을
+     * 찾지 못하고, 다시 요청한 사이클에 이전 요청의 콜백이 늦게 오면 작업 id가 비어 있어 가려낼 수 없다.
      */
     private void requestCycle(QuestionCycleEntity cycle) {
         try {
@@ -276,7 +289,8 @@ public class QuestionPoolService {
                     .mode(cycle.getMode().name())
                     .profile(profile)
                     .excludeQuestions(exclude)
-                    .callbackUrl(callbackBaseUrl + CALLBACK_PATH + "?cycleId=" + cycle.getCycleId())
+                    .callbackUrl(callbackBaseUrl + CALLBACK_PATH
+                            + "?cycleId=" + cycle.getCycleId() + "&requestNo=" + cycle.getRequestNo())
                     .build());
             if (accepted == null || accepted.getJobId() == null) {
                 throw new ExternalApiException("분석 서버가 작업 번호를 돌려주지 않았습니다.", null, null);
@@ -321,7 +335,7 @@ public class QuestionPoolService {
      * 같은 행 잠금을 거쳐, 마지막 세트를 꺼내는 중에 도착한 사이클이 대기본으로 묻히지 않게 한다.
      */
     @Transactional
-    public CycleOutcome applyCycleResult(QuestionCycleCallbackRequest request, Long cycleId) {
+    public CycleOutcome applyCycleResult(QuestionCycleCallbackRequest request, Long cycleId, Integer requestNo) {
         QuestionCycleEntity cycle = (cycleId != null
                 ? questionCycleRepository.lockById(cycleId)
                 : Optional.ofNullable(request.getJobId())
@@ -332,8 +346,10 @@ public class QuestionPoolService {
             log.warn("알 수 없는 질문 사이클 콜백을 받았습니다. jobId={}, cycleId={}", request.getJobId(), cycleId);
             return null;
         }
-        if (cycle.getJobId() != null && !cycle.getJobId().equals(request.getJobId())) {
-            log.info("다시 요청하기 전 작업의 콜백이라 버립니다. cycleId={}, jobId={}", cycle.getCycleId(), request.getJobId());
+        if ((requestNo != null && !requestNo.equals(cycle.getRequestNo()))
+                || (cycle.getJobId() != null && !cycle.getJobId().equals(request.getJobId()))) {
+            log.info("다시 요청하기 전 작업의 콜백이라 버립니다. cycleId={}, jobId={}, requestNo={}, 지금 requestNo={}",
+                    cycle.getCycleId(), request.getJobId(), requestNo, cycle.getRequestNo());
             return null;
         }
         if (cycle.getStatus() != CycleStatus.GENERATING) {

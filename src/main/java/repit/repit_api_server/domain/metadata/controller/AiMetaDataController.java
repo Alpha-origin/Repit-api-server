@@ -223,15 +223,16 @@ public class AiMetaDataController {
     /**
      * 분석 서버가 질문 사이클을 만들고 보내는 콜백. 그 사이클을 기다리던 면접 준비를 이어간다.
      *
-     * <p>cycleId는 요청할 때 콜백 주소에 실어 보낸 값이다. 접수 응답보다 콜백이 먼저 오면 작업 id로는
-     * 사이클을 찾지 못한다.
+     * <p>cycleId와 requestNo는 요청할 때 콜백 주소에 실어 보낸 값이다. 접수 응답보다 콜백이 먼저 오면 작업
+     * id로는 사이클을 찾지 못하고, 다시 요청한 사이클에 이전 요청의 콜백이 오면 requestNo로 가려낸다.
      */
     @PostMapping("/question-cycle/callback")
     public ResponseEntity<Void> questionCycleCallback(
             @RequestParam(required = false) Long cycleId,
+            @RequestParam(required = false) Integer requestNo,
             @RequestBody QuestionCycleCallbackRequest request
     ) {
-        questionTailorService.handleCycleCallback(request, cycleId);
+        questionTailorService.handleCycleCallback(request, cycleId, requestNo);
         return ResponseEntity.ok().build();
     }
 

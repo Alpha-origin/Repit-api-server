@@ -83,6 +83,7 @@ public interface QuestionCycleRepository extends JpaRepository<QuestionCycleEnti
             update QuestionCycleEntity c
                set c.status = repit.repit_api_server.domain.userdata.question.entity.enums.CycleStatus.GENERATING,
                    c.attempt = c.attempt + 1,
+                   c.requestNo = c.requestNo + 1,
                    c.jobId = null,
                    c.errorMessage = null,
                    c.completedAt = null,

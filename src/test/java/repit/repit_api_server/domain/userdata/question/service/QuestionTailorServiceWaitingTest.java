@@ -171,14 +171,14 @@ class QuestionTailorServiceWaitingTest {
     @Test
     void 사이클이_도착하면_기다리던_준비를_이어가고_채점_기준을_실어_보낸다() {
         QuestionTailorEntity waiting = waitingTailor();
-        when(questionPoolService.applyCycleResult(any(), eq(5L)))
+        when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
                 .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, true, null));
         when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
                 .thenReturn(List.of(waiting));
         when(questionTailorRepository.claimResume(eq(1L), any())).thenReturn(1);
         when(questionPoolService.takeSet(7L, InterviewMode.SOLO, 3L)).thenReturn(SET);
 
-        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("succeeded").build(), 5L);
+        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("succeeded").build(), 5L, 1);
 
         assertThat(waiting.getStatus()).isEqualTo(TailorStatus.PENDING);
         assertThat(waiting.getJobId()).isEqualTo("tailor-job");
@@ -194,13 +194,13 @@ class QuestionTailorServiceWaitingTest {
 
     @Test
     void 다른_쪽이_먼저_이어간_준비는_건드리지_않는다() {
-        when(questionPoolService.applyCycleResult(any(), eq(5L)))
+        when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
                 .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, true, null));
         when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
                 .thenReturn(List.of(waitingTailor()));
         when(questionTailorRepository.claimResume(eq(1L), any())).thenReturn(0);
 
-        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("succeeded").build(), 5L);
+        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("succeeded").build(), 5L, 1);
 
         verify(questionPoolService, never()).takeSet(anyLong(), any(), anyLong());
     }
@@ -208,13 +208,13 @@ class QuestionTailorServiceWaitingTest {
     @Test
     void 사이클이_실패하면_한_번_더_요청하고_기다리던_준비는_그대로_둔다() {
         QuestionTailorEntity waiting = waitingTailor();
-        when(questionPoolService.applyCycleResult(any(), eq(5L)))
+        when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
                 .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, false, "500 실패"));
         when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
                 .thenReturn(List.of(waiting));
         when(questionPoolService.retryForWaiting(5L)).thenReturn(true);
 
-        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("failed").build(), 5L);
+        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("failed").build(), 5L, 1);
 
         assertThat(waiting.getStatus()).isEqualTo(TailorStatus.WAITING);
         verify(sseNotifier, never()).sendFinal(any(), any(), any());
@@ -223,14 +223,14 @@ class QuestionTailorServiceWaitingTest {
     @Test
     void 다시_요청해도_실패하면_기다리던_준비를_실패로_알린다() {
         QuestionTailorEntity waiting = waitingTailor();
-        when(questionPoolService.applyCycleResult(any(), eq(5L)))
+        when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
                 .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, false, "500 실패"));
         when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
                 .thenReturn(List.of(waiting));
         when(questionPoolService.retryForWaiting(5L)).thenReturn(false);
         when(questionTailorRepository.claimExpiration(1L)).thenReturn(1);
 
-        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("failed").build(), 5L);
+        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("failed").build(), 5L, 1);
 
         assertThat(waiting.getStatus()).isEqualTo(TailorStatus.FAILED);
         ArgumentCaptor<InterviewReadyResponse> failed = ArgumentCaptor.forClass(InterviewReadyResponse.class);

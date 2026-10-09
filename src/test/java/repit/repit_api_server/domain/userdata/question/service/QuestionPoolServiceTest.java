@@ -175,7 +175,7 @@ class QuestionPoolServiceTest {
         assertThat(sent.getValue().getExcludeQuestions()).containsExactly("1세트 1번 질문");
         // 접수 응답보다 콜백이 먼저 와도 사이클을 찾을 수 있게 번호를 싣는다.
         assertThat(sent.getValue().getCallbackUrl())
-                .isEqualTo("https://api.test/api/v1/ai/question-cycle/callback?cycleId=99");
+                .isEqualTo("https://api.test/api/v1/ai/question-cycle/callback?cycleId=99&requestNo=1");
         verify(questionCycleRepository).recordJob(99L, "cycle-job");
     }
 
@@ -207,7 +207,11 @@ class QuestionPoolServiceTest {
 
         assertThat(failed.getStatus()).isEqualTo(CycleStatus.GENERATING);
         assertThat(failed.getJobId()).isNull();
-        verify(aiServerClient).requestQuestionCycle(any());
+        // 다시 요청한 차례다. 이전 요청의 콜백이 늦게 와도 이 번호로 가려낸다.
+        assertThat(failed.getRequestNo()).isEqualTo(2);
+        ArgumentCaptor<QuestionCycleRequest> sent = ArgumentCaptor.forClass(QuestionCycleRequest.class);
+        verify(aiServerClient).requestQuestionCycle(sent.capture());
+        assertThat(sent.getValue().getCallbackUrl()).endsWith("?cycleId=2&requestNo=2");
         verify(questionCycleRepository).recordJob(2L, "cycle-job");
     }
 
@@ -259,6 +263,31 @@ class QuestionPoolServiceTest {
                 .isEqualTo(HttpStatus.NOT_FOUND);
     }
 
+    @Test
+    void 지금_종합_데이터면_이전_사이클을_버리고_두_모드_사이클_1을_요청한다() {
+        service.startCycles(PROFILE_JOB);
+
+        verify(questionCycleRepository).retireOthers(USER_ID, PROFILE_JOB);
+        ArgumentCaptor<QuestionCycleRequest> sent = ArgumentCaptor.forClass(QuestionCycleRequest.class);
+        verify(aiServerClient, org.mockito.Mockito.times(2)).requestQuestionCycle(sent.capture());
+        assertThat(sent.getAllValues()).extracting(QuestionCycleRequest::getMode).containsExactly("SOLO", "MULTI");
+    }
+
+    /**
+     * 먼저 요청한 분석이 늦게 끝나거나 그 콜백이 다시 왔다. 그대로 진행하면 나중에 올린 자료로 만든 사이클을
+     * 버리고, 버린 자리를 채울 사이클도 없어 그 사용자는 면접을 열 수 없다.
+     */
+    @Test
+    void 나중에_요청한_종합_데이터가_있으면_아무것도_버리지_않는다() {
+        when(analysisDataRepository.findById("profile-old")).thenReturn(Optional.of(AnalysisDataEntity.builder()
+                .jobId("profile-old").userId(USER_ID).resultType(AnalysisResultType.PROFILE).result(Map.of()).build()));
+
+        service.startCycles("profile-old");
+
+        verify(questionCycleRepository, never()).retireOthers(any(), any());
+        verify(aiServerClient, never()).requestQuestionCycle(any());
+    }
+
     // --- 사이클 콜백 ---
 
     private QuestionCycleCallbackRequest succeeded(InterviewMode mode, int perSet) {
@@ -284,7 +313,7 @@ class QuestionPoolServiceTest {
         QuestionCycleEntity generating = cycle(5L, 1, CycleStatus.GENERATING);
         when(questionCycleRepository.lockById(5L)).thenReturn(Optional.of(generating));
 
-        QuestionPoolService.CycleOutcome outcome = service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L);
+        QuestionPoolService.CycleOutcome outcome = service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L, 1);
 
         assertThat(outcome.succeeded()).isTrue();
         assertThat(generating.getStatus()).isEqualTo(CycleStatus.ACTIVE);
@@ -302,7 +331,7 @@ class QuestionPoolServiceTest {
         when(questionCycleRepository.findFirstByProfileJobIdAndModeAndStatusOrderByCycleNoAsc(
                 PROFILE_JOB, InterviewMode.SOLO, CycleStatus.ACTIVE)).thenReturn(Optional.of(cycle(1L, 1, CycleStatus.ACTIVE)));
 
-        service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L);
+        service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L, 1);
 
         assertThat(generating.getStatus()).isEqualTo(CycleStatus.STANDBY);
     }
@@ -314,7 +343,7 @@ class QuestionPoolServiceTest {
         when(questionCycleRepository.lockById(5L)).thenReturn(Optional.of(generating));
 
         // 1:1 사이클인데 세트당 두 문항씩 왔다.
-        QuestionPoolService.CycleOutcome outcome = service.applyCycleResult(succeeded(InterviewMode.MULTI, 2), 5L);
+        QuestionPoolService.CycleOutcome outcome = service.applyCycleResult(succeeded(InterviewMode.MULTI, 2), 5L, 1);
 
         assertThat(outcome.succeeded()).isFalse();
         assertThat(generating.getStatus()).isEqualTo(CycleStatus.FAILED);
@@ -328,7 +357,7 @@ class QuestionPoolServiceTest {
         QuestionCycleCallbackRequest request = succeeded(InterviewMode.SOLO, 5);
         ReflectionTestUtils.setField(request.getResult().getQuestions().getFirst(), "intention", " ");
 
-        assertThat(service.applyCycleResult(request, 5L).succeeded()).isFalse();
+        assertThat(service.applyCycleResult(request, 5L, 1).succeeded()).isFalse();
         assertThat(generating.getStatus()).isEqualTo(CycleStatus.FAILED);
     }
 
@@ -337,7 +366,22 @@ class QuestionPoolServiceTest {
     void 폐기한_사이클의_콜백은_버린다() {
         when(questionCycleRepository.lockById(5L)).thenReturn(Optional.of(cycle(5L, 1, CycleStatus.RETIRED)));
 
-        assertThat(service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L)).isNull();
+        assertThat(service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L, 1)).isNull();
+        verify(poolQuestionRepository, never()).saveAll(any());
+    }
+
+    /**
+     * 다시 요청한 뒤 새 접수 응답이 오기 전이라 작업 id가 비어 있다. 그 틈에 온 이전 요청의 콜백은 요청 차례로
+     * 가려낸다. 받아들이면 옛 질문이 새 결과로 저장되고, 정작 새 요청의 콜백은 버려진다.
+     */
+    @Test
+    void 이전_차례의_콜백은_작업_id가_비어_있어도_버린다() {
+        QuestionCycleEntity generating = cycle(5L, 1, CycleStatus.GENERATING);
+        generating.setRequestNo(2);
+        when(questionCycleRepository.lockById(5L)).thenReturn(Optional.of(generating));
+
+        assertThat(service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L, 1)).isNull();
+        assertThat(generating.getStatus()).isEqualTo(CycleStatus.GENERATING);
         verify(poolQuestionRepository, never()).saveAll(any());
     }
 
@@ -348,7 +392,7 @@ class QuestionPoolServiceTest {
         generating.setJobId("new-job");
         when(questionCycleRepository.lockById(5L)).thenReturn(Optional.of(generating));
 
-        assertThat(service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L)).isNull();
+        assertThat(service.applyCycleResult(succeeded(InterviewMode.SOLO, 5), 5L, 1)).isNull();
         assertThat(generating.getStatus()).isEqualTo(CycleStatus.GENERATING);
     }
 }

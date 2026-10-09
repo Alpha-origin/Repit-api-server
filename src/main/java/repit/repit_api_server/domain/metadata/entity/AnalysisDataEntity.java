@@ -60,6 +60,7 @@ public class AnalysisDataEntity {
     // 이번 실행의 것인지 지난 실행의 것인지는 이 값으로만 가릴 수 있다.
     private LocalDateTime completedAt;
 
+    // 접수 시각. 같은 jobId로 다시 요청하면 그 요청 시각으로 옮겨진다(clearPreviousRun).
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
