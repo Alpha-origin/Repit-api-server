@@ -4,7 +4,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
-import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
@@ -52,12 +51,6 @@ public class AiServerClient {
                 this::resolveMessage, true);
 
         return response == null ? null : response.getData();
-    }
-
-    public GenerateResponse generateMock(GenerateRequest request) {
-        return executor.execute(SERVER_NAME,
-                () -> aiServerApi.generateMock(request),
-                this::resolveMessage, false);
     }
 
     public GenerateResponse requestProfile(ProfileRequest request) {

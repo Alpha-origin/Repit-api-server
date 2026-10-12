@@ -81,19 +81,9 @@ public class AiMetaDataService {
      * <p>실패 콜백에는 result가 없다. status를 보지 않고 그대로 덮어쓰면 먼저 받아둔 성공
      * 결과까지 지워지므로, 성공 콜백일 때만 결과를 저장한다.
      *
-     * <p>돌려주는 값은 요청을 되비춘 것이 아니라 DB에 남은 것이다. 이 메서드는 요청을 여러 갈래로
-     * 걸러내므로, 요청을 그대로 흘려보내면 저장이 걸러낸 값까지 구독으로 새어나간다. 클라이언트는
-     * DB에 없는 성공을 받아들고 결과를 조회하다 빈손이 된다.
+     * <p>돌려주는 값은 요청을 되비춘 것이 아니라 DB에 남은 것이다. 저장하지 못했으면 아무것도 돌려주지 않는다.
      *
-     * <p>저장하지 못했으면 아무것도 돌려주지 않는다. 흘려보낼 상태가 없다는 뜻이다.
-     */
-    @Transactional
-    public CallbackSuccessResponse saveResult(CallbackSuccessRequest request) {
-        return saveResult(request, AnalysisResultType.LEGACY_GENERATE);
-    }
-
-    /**
-     * 결과 종류를 콜백 경로로 정한다. 접수보다 콜백이 먼저 도착하면 행을 여기서 만들게 되는데,
+     * <p>결과 종류를 콜백 경로로 정한다. 접수보다 콜백이 먼저 도착하면 행을 여기서 만들게 되는데,
      * 그때 종류를 빠뜨리면 /profile 결과가 옛 결과로 남아 면접을 열 수 없다.
      */
     @Transactional

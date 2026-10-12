@@ -104,9 +104,9 @@ class AiMetaDataControllerSseTest {
         SseEmitter emitter = controller.subscribe(AUTH_USER, "job-2");
 
         CallbackSuccessRequest request = analysisCallback("job-2");
-        when(aiMetaDataService.saveResult(request)).thenReturn(saved("job-2", "succeeded"));
+        when(aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE)).thenReturn(saved("job-2", "succeeded"));
 
-        controller.callback(request);
+        controller.profileCallback(request);
 
         assertThat(sseEmitterRepository.get("job-2")).isSameAs(emitter);
     }
@@ -118,9 +118,9 @@ class AiMetaDataControllerSseTest {
         controller.subscribe(AUTH_USER, "job-3");
 
         CallbackSuccessRequest request = analysisCallback("job-3");
-        when(aiMetaDataService.saveResult(request)).thenReturn(saved("job-3", "failed"));
+        when(aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE)).thenReturn(saved("job-3", "failed"));
 
-        controller.callback(request);
+        controller.profileCallback(request);
 
         assertThat(sseEmitterRepository.get("job-3")).isNull();
     }
@@ -161,10 +161,10 @@ class AiMetaDataControllerSseTest {
         sseEmitterRepository.save("job-6", emitter);
 
         CallbackSuccessRequest request = analysisCallback("job-6");
-        when(aiMetaDataService.saveResult(request)).thenReturn(saved("job-6", "succeeded"));
+        when(aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE)).thenReturn(saved("job-6", "succeeded"));
 
-        controller.callback(request);
-        controller.callback(request);
+        controller.profileCallback(request);
+        controller.profileCallback(request);
 
         verify(emitter, times(1)).send(any(SseEmitter.SseEventBuilder.class));
     }
@@ -199,9 +199,9 @@ class AiMetaDataControllerSseTest {
         sseEmitterRepository.save("job-8", gone);
 
         CallbackSuccessRequest request = analysisCallback("job-8");
-        when(aiMetaDataService.saveResult(request)).thenReturn(saved("job-8", "succeeded"));
+        when(aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE)).thenReturn(saved("job-8", "succeeded"));
 
-        controller.callback(request);
+        controller.profileCallback(request);
 
         assertThat(sseEmitterRepository.get("job-8")).isNull();
         verify(gone).complete();
@@ -217,9 +217,9 @@ class AiMetaDataControllerSseTest {
         sseEmitterRepository.save("job-9", broken);
 
         CallbackSuccessRequest request = analysisCallback("job-9");
-        when(aiMetaDataService.saveResult(request)).thenReturn(saved("job-9", "succeeded"));
+        when(aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE)).thenReturn(saved("job-9", "succeeded"));
 
-        controller.callback(request);
+        controller.profileCallback(request);
 
         assertThat(sseEmitterRepository.get("job-9")).isNull();
         verify(broken).completeWithError(failure);
@@ -240,9 +240,9 @@ class AiMetaDataControllerSseTest {
                 .status("succeeded")
                 .build();
         CallbackSuccessResponse stored = saved("job-10", "failed");
-        when(aiMetaDataService.saveResult(request)).thenReturn(stored);
+        when(aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE)).thenReturn(stored);
 
-        controller.callback(request);
+        controller.profileCallback(request);
 
         ArgumentCaptor<SseEmitter.SseEventBuilder> event =
                 ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
@@ -267,9 +267,9 @@ class AiMetaDataControllerSseTest {
                 .status("succeeded")
                 .result(Map.of("project_summary", "요약"))
                 .build();
-        when(aiMetaDataService.saveResult(request)).thenReturn(null);
+        when(aiMetaDataService.saveResult(request, AnalysisResultType.PROFILE)).thenReturn(null);
 
-        controller.callback(request);
+        controller.profileCallback(request);
 
         // 구독이 그대로 남아 있다는 건 아무것도 흘려보내지 않았다는 뜻이다.
         assertThat(sseEmitterRepository.get("job-11")).isSameAs(emitter);

@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
@@ -37,8 +36,6 @@ public class AnalysisLaunchService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisLaunchService.class);
 
-    private static final String CALLBACK_PATH = "/api/v1/ai/callback";
-    // 옛 /generate 결과와 섞이지 않게 경로를 나눈다.
     private static final String PROFILE_CALLBACK_PATH = "/api/v1/ai/profile/callback";
 
     private final AiServerClient aiServerClient;
@@ -105,16 +102,6 @@ public class AnalysisLaunchService {
         return analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(userId, AnalysisResultType.PROFILE)
                 .map(latest -> latest.getResult() != null && questionPoolService.needsReanalysis(latest.getJobId()))
                 .orElse(true);
-    }
-
-    // 옛 /generate-mock. 분석 서버가 /generate를 걷어낼 때 함께 지운다.
-    public GenerateResponse launchMock(Long userId, MetaDataResponse metaData) {
-        GenerateRequest request = GenerateRequest.builder()
-                .portfolio_url(metaData.getFileUrl())
-                .github_urls(metaData.getGitUrls())
-                .callback_url(callbackBaseUrl + CALLBACK_PATH)
-                .build();
-        return launch(userId, AnalysisResultType.LEGACY_GENERATE, () -> aiServerClient.generateMock(request));
     }
 
     private GenerateResponse launch(Long userId, AnalysisResultType resultType, Supplier<GenerateResponse> call) {

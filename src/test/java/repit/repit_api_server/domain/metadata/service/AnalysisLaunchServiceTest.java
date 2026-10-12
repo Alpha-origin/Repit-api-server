@@ -10,7 +10,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
-import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
@@ -72,10 +71,6 @@ class AnalysisLaunchServiceTest {
 
         when(aiServerClient.requestProfile(any(ProfileRequest.class))).thenReturn(GenerateResponse.builder()
                 .jobId("job-1")
-                .status("accepted")
-                .build());
-        when(aiServerClient.generateMock(any(GenerateRequest.class))).thenReturn(GenerateResponse.builder()
-                .jobId("mock-job-1")
                 .status("accepted")
                 .build());
     }
@@ -249,14 +244,5 @@ class AnalysisLaunchServiceTest {
     private void doThrowOnRegister() {
         org.mockito.Mockito.doThrow(new RuntimeException("DB 장애"))
                 .when(aiMetaDataService).registerJob(any(), any(), any(), any());
-    }
-
-    @Test
-    void mock_분석도_같은_접수를_거친다() {
-
-        service.launchMock(OWNER_ID, metaData());
-
-        verify(aiMetaDataService).registerJob(eq("mock-job-1"), eq(9L), any(LocalDateTime.class),
-                eq(AnalysisResultType.LEGACY_GENERATE));
     }
 }

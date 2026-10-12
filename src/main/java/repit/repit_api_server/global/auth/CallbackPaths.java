@@ -15,7 +15,6 @@ public final class CallbackPaths {
     /** 분석 서버가 결과를 보내오는 자리와, 채팅 서버가 면접 기록을 넘기는 자리. */
     public static final String[] ALL = {
             // 분석 서버 콜백
-            "/api/v1/ai/callback",
             "/api/v1/ai/profile/callback",
             "/api/v1/ai/question-cycle/callback",
             "/api/questions/tailor/callback",
