@@ -14,6 +14,9 @@ import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysis
 import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisResponse;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisResponse.Answer;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisResponse.Status;
 import repit.repit_api_server.domain.userdata.analysis.entity.AudioAnalysisEntity;
 import repit.repit_api_server.domain.userdata.analysis.entity.AudioAnalysisResultEntity;
 import repit.repit_api_server.domain.userdata.analysis.entity.enums.AudioAnalysisStatus;
@@ -44,7 +47,9 @@ import java.util.stream.LongStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -562,6 +567,184 @@ class AudioAnalysisServiceTest {
         service.handleCallback(callback("audio-request-001", "weird", List.of()));
 
         assertThat(pending.getStatus()).isEqualTo(AudioAnalysisStatus.UNAVAILABLE);
+    }
+
+    // ---- 웹 조회 ----
+
+    @Test
+    void 없는_면접은_404_남의_면접은_403이다() {
+        assertThatThrownBy(() -> service.get(7L, 999L))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+        assertThatThrownBy(() -> service.get(8L, INTERVIEW_ID))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+    }
+
+    @Test
+    void 답변_녹음이_없는_면접은_NONE이다() {
+        answerRecordings();
+
+        AudioAnalysisResponse response = service.get(7L, INTERVIEW_ID);
+
+        assertThat(response.status()).isEqualTo(Status.NONE);
+        assertThat(response.answers()).isEmpty();
+    }
+
+    @Test
+    void 요청_전에는_WAITING_요청_뒤_콜백_전에는_ANALYZING이다() {
+        answerRecordings(loaded(301L, 101L, 201L, null), loaded(302L, 102L, 202L, null));
+        assertThat(service.get(7L, INTERVIEW_ID).status()).isEqualTo(Status.WAITING);
+
+        analyses.add(analysis("audio-1", AudioAnalysisStatus.PENDING, List.of(301L, 302L), LocalDateTime.now()));
+        AudioAnalysisResponse response = service.get(7L, INTERVIEW_ID);
+
+        assertThat(response.status()).isEqualTo(Status.ANALYZING);
+        assertThat(response.answers()).extracting(Answer::status).containsExactly(Status.ANALYZING, Status.ANALYZING);
+    }
+
+    @Test
+    void 답변별_결과가_섞이면_전체는_PARTIAL이고_지표는_저장된_그대로다() {
+        answerRecordings(loaded(301L, 101L, 201L, null), loaded(302L, 102L, 202L, null), loaded(303L, 103L, 203L, null));
+        AudioAnalysisEntity done = analysis("audio-1", AudioAnalysisStatus.PARTIAL, List.of(301L, 302L, 303L), LocalDateTime.now());
+        analyses.add(done);
+        results(resultRow(done, 1L, 301L, "READY", null), resultRow(done, 2L, 302L, "PARTIAL", null),
+                resultRow(done, 3L, 303L, "UNAVAILABLE", null));
+
+        AudioAnalysisResponse response = service.get(7L, INTERVIEW_ID);
+
+        assertThat(response.status()).isEqualTo(Status.PARTIAL);
+        assertThat(response.answers())
+                .extracting(Answer::questionId, Answer::answerId, Answer::recordingId, Answer::status)
+                .containsExactly(tuple("101", "201", "301", Status.READY), tuple("102", "202", "302", Status.PARTIAL),
+                        tuple("103", "203", "303", Status.UNAVAILABLE));
+        Answer first = response.answers().getFirst();
+        assertThat(first.durationMs()).isEqualTo(120000L);
+        assertThat(first.timing()).isEqualTo(TIMING);
+        assertThat(first.fluency()).isEqualTo(FLUENCY);
+    }
+
+    @Test
+    void 전체_상태는_답변별_상태를_모아_정한다() {
+        assertThat(overall(Status.READY, Status.READY)).isEqualTo(Status.READY);
+        assertThat(overall(Status.UNAVAILABLE, Status.FAILED)).isEqualTo(Status.UNAVAILABLE);
+        assertThat(overall(Status.WAITING, Status.WAITING)).isEqualTo(Status.WAITING);
+        assertThat(overall(Status.WAITING, Status.READY)).isEqualTo(Status.ANALYZING);
+        assertThat(overall(Status.ANALYZING, Status.FAILED)).isEqualTo(Status.ANALYZING);
+        assertThat(overall(Status.READY, Status.FAILED)).isEqualTo(Status.PARTIAL);
+    }
+
+    @Test
+    void 녹음_13개가_두_요청으로_나뉘어도_두_요청의_결과가_모두_실린다() {
+        answerRecordings(LongStream.rangeClosed(1, 13)
+                .mapToObj(i -> loaded(300 + i, 100 + i, 200 + i, null)).toArray(AnswerRecording[]::new));
+        AudioAnalysisEntity first = analysis("audio-1", AudioAnalysisStatus.READY,
+                LongStream.rangeClosed(301, 312).boxed().toList(), LocalDateTime.now());
+        analyses.add(first);
+        AudioAnalysisEntity second = analysis("audio-2", AudioAnalysisStatus.READY, List.of(313L), LocalDateTime.now());
+        analyses.add(second);
+        List<AudioAnalysisResultEntity> rows = new ArrayList<>();
+        for (long recordingId = 301; recordingId <= 312; recordingId++) {
+            rows.add(resultRow(first, recordingId, recordingId, "READY", null));
+        }
+        rows.add(resultRow(second, 313L, 313L, "READY", null));
+        results(rows.toArray(AudioAnalysisResultEntity[]::new));
+
+        AudioAnalysisResponse response = service.get(7L, INTERVIEW_ID);
+
+        assertThat(response.status()).isEqualTo(Status.READY);
+        assertThat(response.answers()).hasSize(13).allMatch(answer -> answer.status() == Status.READY);
+        assertThat(response.answers().getLast().recordingId()).isEqualTo("313");
+    }
+
+    @Test
+    void 실패로_닫은_뒤_다시_분석한_녹음은_도착_순서와_무관하게_나중_요청의_결과를_쓴다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+        AudioAnalysisEntity failed = analysis("audio-1", AudioAnalysisStatus.FAILED, List.of(301L), LocalDateTime.now());
+        analyses.add(failed);
+        AudioAnalysisEntity again = analysis("audio-2", AudioAnalysisStatus.READY, List.of(301L), LocalDateTime.now());
+        analyses.add(again);
+        // 다시 맡긴 요청의 결과가 먼저 왔고, 실패로 닫았던 요청의 결과가 뒤늦게 왔다.
+        results(resultRow(again, 1L, 301L, "READY", null), resultRow(failed, 2L, 301L, "UNAVAILABLE", null));
+
+        assertThat(service.get(7L, INTERVIEW_ID).answers().getFirst().status()).isEqualTo(Status.READY);
+    }
+
+    @Test
+    void 실패로_닫힌_요청에만_실린_녹음은_FAILED다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+        analyses.add(analysis("audio-1", AudioAnalysisStatus.FAILED, List.of(301L), LocalDateTime.now()));
+
+        AudioAnalysisResponse response = service.get(7L, INTERVIEW_ID);
+
+        assertThat(response.answers().getFirst().status()).isEqualTo(Status.FAILED);
+        assertThat(response.status()).isEqualTo(Status.UNAVAILABLE);
+    }
+
+    @Test
+    void 면접_기록이_다시_와_질문_PK가_바뀌어도_지금의_질문_id로_내려준다() {
+        // 요청할 때는 질문 101·답변 201이었고(결과 행에 남은 값), 기록이 다시 와 지금은 111·211이다. 녹음은 그대로다.
+        answerRecordings(loaded(301L, 111L, 211L, null));
+        AudioAnalysisEntity done = analysis("audio-1", AudioAnalysisStatus.READY, List.of(301L), LocalDateTime.now());
+        analyses.add(done);
+        results(resultRow(done, 1L, 301L, "READY", null));
+
+        Answer answer = service.get(7L, INTERVIEW_ID).answers().getFirst();
+
+        assertThat(answer.questionId()).isEqualTo("111");
+        assertThat(answer.answerId()).isEqualTo("211");
+        assertThat(answer.status()).isEqualTo(Status.READY);
+    }
+
+    @Test
+    void 답변_녹음이_다시_올라오면_이전_녹음의_결과는_쓰지_않는다() {
+        answerRecordings(loaded(305L, 101L, 201L, null));
+        AudioAnalysisEntity done = analysis("audio-1", AudioAnalysisStatus.READY, List.of(301L), LocalDateTime.now());
+        analyses.add(done);
+        results(resultRow(done, 1L, 301L, "READY", null));
+
+        Answer answer = service.get(7L, INTERVIEW_ID).answers().getFirst();
+
+        assertThat(answer.recordingId()).isEqualTo("305");
+        assertThat(answer.status()).isEqualTo(Status.WAITING);
+        assertThat(answer.timing()).isNull();
+    }
+
+    @Test
+    void 저장된_실패_사유는_JSON이면_객체로_아니면_message로_내려준다() {
+        answerRecordings(loaded(301L, 101L, 201L, null), loaded(302L, 102L, 202L, null));
+        AudioAnalysisEntity done = analysis("audio-1", AudioAnalysisStatus.UNAVAILABLE, List.of(301L, 302L), LocalDateTime.now());
+        analyses.add(done);
+        results(resultRow(done, 1L, 301L, "UNAVAILABLE",
+                        "{\"code\":\"AUDIO_DECODE_FAILED\",\"message\":\"해석할 수 없는 음성입니다.\",\"retryable\":false}"),
+                resultRow(done, 2L, 302L, "UNAVAILABLE", "timeout"));
+
+        assertThat(service.get(7L, INTERVIEW_ID).answers()).extracting(Answer::error).containsExactly(
+                new AudioAnalysisResponse.Error("AUDIO_DECODE_FAILED", "해석할 수 없는 음성입니다.", false),
+                new AudioAnalysisResponse.Error(null, "timeout", null));
+    }
+
+    private static Status overall(Status... statuses) {
+        return AudioAnalysisService.overallStatus(List.of(statuses).stream()
+                .map(status -> new Answer("1", "1", "1", status, null, null, null, null))
+                .toList());
+    }
+
+    private void results(AudioAnalysisResultEntity... rows) {
+        when(resultRepository.findAllByAnalysisIdIn(anyCollection())).thenReturn(List.of(rows));
+    }
+
+    private static final Map<String, Object> TIMING = Map.of("status", "ready",
+            "data", Map.of("speed", Map.of(), "silence", Map.of(), "stability", Map.of()));
+    private static final Map<String, Object> FLUENCY = Map.of("status", "partial",
+            "data", Map.of("fillerCandidateCount", 2, "observations", List.of()));
+
+    /** 저장된 결과 행. 질문·답변 id는 요청할 때의 값(101·201)으로 남아 있다. */
+    private static AudioAnalysisResultEntity resultRow(AudioAnalysisEntity analysis, long resultId, long recordingId,
+                                                       String status, String error) {
+        return AudioAnalysisResultEntity.builder()
+                .resultId(resultId).analysisId(analysis.getAnalysisId()).recordingId(recordingId)
+                .questionId(101L).answerId(201L).status(status).durationMs(120000L)
+                .timing(TIMING).fluency(FLUENCY).error(error)
+                .build();
     }
 
     private void answerRecordings(AnswerRecording... loaded) {

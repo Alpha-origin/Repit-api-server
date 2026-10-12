@@ -12,6 +12,7 @@ import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysis
 import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisResponse;
 import repit.repit_api_server.domain.userdata.analysis.entity.AudioAnalysisEntity;
 import repit.repit_api_server.domain.userdata.analysis.entity.AudioAnalysisResultEntity;
 import repit.repit_api_server.domain.userdata.analysis.entity.enums.AudioAnalysisStatus;
@@ -37,6 +38,10 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,9 +50,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
- * 답변 음성을 분석 서버의 음성 분석(POST /analysis/audio)에 맡기고, 콜백으로 온 결과를 남긴다.
+ * 답변 음성을 분석 서버의 음성 분석(POST /analysis/audio)에 맡기고, 콜백으로 온 결과를 남겨 웹 조회에 내려준다.
  *
  * <p>채점과는 따로 돈다. 채점은 질문·답변만 있으면 되지만 음성 분석은 답변 음성이 모여야 해서,
  * 언제 보낼지는 {@code FeedbackDispatchService}가 정하고 이 서비스는 보내는 일만 한다.
@@ -135,6 +141,128 @@ public class AudioAnalysisService {
                     pending.subList(from, Math.min(from + MAX_RECORDINGS_PER_REQUEST, pending.size()));
             sendAsNewRequest(interview, chunk, callbackUrl);
         }
+    }
+
+    /**
+     * 웹이 보는 음성 분석 상태와 답변별 지표.
+     *
+     * <ul>
+     *   <li>답변과 녹음은 요청을 만들 때와 같은 규칙({@link #analyzable})으로 잇는다. 요청에 실릴 수 없는 녹음을 담으면
+     *       영영 WAITING으로 남아 웹이 조회를 멈추지 못한다.</li>
+     *   <li>질문·답변 id는 저장된 결과의 값이 아니라 지금 값을 쓴다. 채팅 서버가 면접 기록을 다시 보내면 PK가 바뀌지만
+     *       녹음의 채팅 질문 번호는 그대로다.</li>
+     *   <li>결과는 녹음 id로 찾고, 여럿이면 요청 순서(analysis_id)로 가장 나중 것을 쓴다. 도착 순서로 고르면 늦게 온 옛
+     *       결과가 새 결과를 가린다.</li>
+     * </ul>
+     */
+    public AudioAnalysisResponse get(Long userId, Long interviewId) {
+        InterviewEntity interview = interviewRepository.findById(interviewId)
+                .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+        if (!Objects.equals(userId, interview.getUserId())) {
+            throw BusinessException.forbidden("본인의 면접만 볼 수 있습니다.");
+        }
+        Collection<AnswerRecording> loaded = analyzable(interviewId).values();
+        if (loaded.isEmpty()) {
+            return new AudioAnalysisResponse(AudioAnalysisResponse.Status.NONE, List.of());
+        }
+
+        // 요청 순서대로 덮어 쓰므로 녹음마다 가장 나중 요청·결과가 남는다.
+        List<AudioAnalysisEntity> requests = analysisRepository.findAllByInterviewIdOrderByAnalysisIdAsc(interviewId);
+        Map<Long, AudioAnalysisEntity> requestByRecording = new HashMap<>();
+        for (AudioAnalysisEntity request : requests) {
+            for (Long recordingId : Objects.requireNonNullElse(request.getRecordingIds(), List.<Long>of())) {
+                requestByRecording.put(recordingId, request);
+            }
+        }
+        Map<Long, AudioAnalysisResultEntity> resultByRecording = new HashMap<>();
+        if (!requests.isEmpty()) {
+            resultRepository.findAllByAnalysisIdIn(requests.stream().map(AudioAnalysisEntity::getAnalysisId).toList())
+                    .stream()
+                    .filter(result -> result.getRecordingId() != null)
+                    .sorted(Comparator.comparing(AudioAnalysisResultEntity::getAnalysisId))
+                    .forEach(result -> resultByRecording.put(result.getRecordingId(), result));
+        }
+
+        List<AudioAnalysisResponse.Answer> answers = loaded.stream()
+                .map(one -> toAnswer(one, resultByRecording.get(one.recording().getRecordingId()),
+                        requestByRecording.get(one.recording().getRecordingId())))
+                .toList();
+        return new AudioAnalysisResponse(overallStatus(answers), answers);
+    }
+
+    private AudioAnalysisResponse.Answer toAnswer(AnswerRecording loaded, AudioAnalysisResultEntity result,
+                                                  AudioAnalysisEntity latestRequest) {
+        String questionId = String.valueOf(loaded.questionId());
+        String answerId = String.valueOf(loaded.answerId());
+        String recordingId = String.valueOf(loaded.recording().getRecordingId());
+        if (result == null) {
+            return new AudioAnalysisResponse.Answer(questionId, answerId, recordingId, statusWithoutResult(latestRequest),
+                    null, null, null, null);
+        }
+        return new AudioAnalysisResponse.Answer(questionId, answerId, recordingId, resultStatus(result.getStatus()),
+                result.getDurationMs(), result.getTiming(), result.getFluency(), errorOf(result.getError()));
+    }
+
+    /** 결과 행이 없는 녹음의 상태. 그 녹음을 실은 가장 나중 요청을 따른다. */
+    private static AudioAnalysisResponse.Status statusWithoutResult(AudioAnalysisEntity latestRequest) {
+        if (latestRequest == null) {
+            return AudioAnalysisResponse.Status.WAITING;
+        }
+        return switch (latestRequest.getStatus()) {
+            case PENDING -> AudioAnalysisResponse.Status.ANALYZING;
+            case FAILED -> AudioAnalysisResponse.Status.FAILED;
+            // 끝난 요청인데 이 녹음의 결과만 빠졌다. 다시 요청되지 않으므로 받을 결과가 없다.
+            case READY, PARTIAL, UNAVAILABLE -> AudioAnalysisResponse.Status.UNAVAILABLE;
+        };
+    }
+
+    /** 결과 행의 status(대문자로 저장). 모르는 값은 받을 수 있는 결과가 없는 것으로 본다 — 콜백 상태와 같은 규칙이다. */
+    private static AudioAnalysisResponse.Status resultStatus(String status) {
+        if ("READY".equals(status)) {
+            return AudioAnalysisResponse.Status.READY;
+        }
+        return "PARTIAL".equals(status) ? AudioAnalysisResponse.Status.PARTIAL : AudioAnalysisResponse.Status.UNAVAILABLE;
+    }
+
+    /** 답변별 상태를 모은 전체 상태. */
+    static AudioAnalysisResponse.Status overallStatus(List<AudioAnalysisResponse.Answer> answers) {
+        Set<AudioAnalysisResponse.Status> statuses = answers.stream()
+                .map(AudioAnalysisResponse.Answer::status)
+                .collect(Collectors.toCollection(() -> EnumSet.noneOf(AudioAnalysisResponse.Status.class)));
+        if (statuses.isEmpty()) {
+            return AudioAnalysisResponse.Status.NONE;
+        }
+        if (statuses.equals(EnumSet.of(AudioAnalysisResponse.Status.WAITING))) {
+            return AudioAnalysisResponse.Status.WAITING;
+        }
+        if (statuses.contains(AudioAnalysisResponse.Status.WAITING) || statuses.contains(AudioAnalysisResponse.Status.ANALYZING)) {
+            return AudioAnalysisResponse.Status.ANALYZING;
+        }
+        if (statuses.equals(EnumSet.of(AudioAnalysisResponse.Status.READY))) {
+            return AudioAnalysisResponse.Status.READY;
+        }
+        if (EnumSet.of(AudioAnalysisResponse.Status.UNAVAILABLE, AudioAnalysisResponse.Status.FAILED).containsAll(statuses)) {
+            return AudioAnalysisResponse.Status.UNAVAILABLE;
+        }
+        return AudioAnalysisResponse.Status.PARTIAL;
+    }
+
+    /** 저장된 실패 사유({@link #errorText})를 되돌린다. JSON 객체였으면 그 값으로, 아니면 글을 message에 담는다. */
+    private AudioAnalysisResponse.Error errorOf(String text) {
+        if (text == null) {
+            return null;
+        }
+        Object parsed;
+        try {
+            parsed = objectMapper.readValue(text, Object.class);
+        } catch (JacksonException e) {
+            parsed = null;
+        }
+        if (!(parsed instanceof Map<?, ?> error)) {
+            return new AudioAnalysisResponse.Error(null, text, null);
+        }
+        return new AudioAnalysisResponse.Error(errorField(error, "code", String.class),
+                errorField(error, "message", String.class), errorField(error, "retryable", Boolean.class));
     }
 
     /**
