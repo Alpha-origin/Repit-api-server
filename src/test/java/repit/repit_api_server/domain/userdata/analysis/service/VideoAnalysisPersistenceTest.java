@@ -10,6 +10,7 @@ import org.springframework.data.domain.Limit;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisAcceptedResponse;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisJobResponse;
 import repit.repit_api_server.domain.userdata.analysis.entity.VideoAnalysisEntity;
 import repit.repit_api_server.domain.userdata.analysis.entity.enums.VideoAnalysisRequestedBy;
 import repit.repit_api_server.domain.userdata.analysis.entity.enums.VideoAnalysisStatus;
@@ -21,6 +22,8 @@ import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordin
 import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 import repit.repit_api_server.domain.userdata.recording.repository.InterviewRecordingRepository;
 import repit.repit_api_server.global.client.AiServerClient;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -224,7 +227,243 @@ class VideoAnalysisPersistenceTest {
         assertThat(candidates()).isEmpty();
     }
 
+    // ---- 분석 서버 계약 예시(repit-analysis-server-v2 docs/video-api.md)를 그대로 넣어 본다 ----
+
+    @Test
+    void 분석기_미연결_결과는_분석_오류를_남긴_UNAVAILABLE이다() {
+        VideoAnalysisEntity pending = pendingRow();
+
+        callbackHandler.handle(example(CALLBACK_UNCONFIGURED, pending, "job-" + UUID.randomUUID()));
+
+        VideoAnalysisEntity stored = reload(pending);
+        assertThat(stored.getStatus()).isEqualTo(VideoAnalysisStatus.UNAVAILABLE);
+        assertThat(stored.getErrorCode()).isEqualTo("ANALYZER_NOT_CONFIGURED");
+        assertThat(stored.getErrorRetryable()).isFalse();
+        // 웹은 result.result.analysis를 읽는다. 본문 전체를 그대로 둔다.
+        assertThat(stored.getResult()).containsKey("result").containsEntry("status", "unavailable");
+        assertThat(unmatchedCount()).isZero();
+    }
+
+    @Test
+    void 파일_문제_결과는_파일_오류를_남긴_UNAVAILABLE이다() {
+        VideoAnalysisEntity pending = pendingRow();
+
+        callbackHandler.handle(example(CALLBACK_FILE_ERROR, pending, "job-" + UUID.randomUUID()));
+
+        VideoAnalysisEntity stored = reload(pending);
+        assertThat(stored.getStatus()).isEqualTo(VideoAnalysisStatus.UNAVAILABLE);
+        assertThat(stored.getErrorCode()).isEqualTo("VIDEO_FORMAT_UNSUPPORTED");
+        assertThat(stored.getErrorRetryable()).isFalse();
+        assertThat(unmatchedCount()).isZero();
+    }
+
+    @Test
+    void 문서_생성_실패는_결과_없이_FAILED로_닫는다() {
+        VideoAnalysisEntity pending = pendingRow();
+
+        callbackHandler.handle(example(CALLBACK_FAILED, pending, "job-" + UUID.randomUUID()));
+
+        VideoAnalysisEntity stored = reload(pending);
+        assertThat(stored.getStatus()).isEqualTo(VideoAnalysisStatus.FAILED);
+        assertThat(stored.getErrorCode()).isEqualTo("INTERNAL_ERROR");
+        assertThat(stored.getErrorRetryable()).isFalse();
+        assertThat(stored.getResult()).isNull();
+        assertThat(unmatchedCount()).isZero();
+    }
+
+    @Test
+    void 분석_완료_결과는_READY로_남는다() {
+        VideoAnalysisEntity pending = pendingRow();
+
+        callbackHandler.handle(example(CALLBACK_READY, pending, "job-" + UUID.randomUUID()));
+
+        VideoAnalysisEntity stored = reload(pending);
+        assertThat(stored.getStatus()).isEqualTo(VideoAnalysisStatus.READY);
+        assertThat(stored.getErrorCode()).isNull();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> analysis = (Map<String, Object>) ((Map<String, Object>) stored.getResult().get("result")).get("analysis");
+        assertThat(analysis.get("data")).isEqualTo(Map.of("gaze", 0.8));
+    }
+
+    @Test
+    void 다른_녹화의_결과는_ID_MISMATCH로_따로_남기고_행은_그대로다() {
+        VideoAnalysisEntity pending = pendingRow();
+
+        callbackHandler.handle(example(CALLBACK_UNCONFIGURED, pending, "job-" + UUID.randomUUID())
+                .replace("\"videoId\": \"" + pending.getRecordingId() + "\"", "\"videoId\": \"" + (pending.getRecordingId() + 1) + "\""));
+
+        assertThat(jdbc.queryForList("select reason from unmatched_callback where payload like ?",
+                String.class, "%" + sessionId + "%")).containsExactly("ID_MISMATCH");
+        VideoAnalysisEntity untouched = reload(pending);
+        assertThat(untouched.getStatus()).isEqualTo(VideoAnalysisStatus.PENDING);
+        assertThat(untouched.getResult()).isNull();
+    }
+
+    @Test
+    void 재시도할_만한_파일_오류는_자동_재분석으로_잇는다() {
+        VideoAnalysisEntity pending = pendingRow();
+
+        callbackHandler.handle(example(CALLBACK_FILE_ERROR, pending, "job-" + UUID.randomUUID())
+                .replace("VIDEO_FORMAT_UNSUPPORTED", "SOURCE_DOWNLOAD_FAILED")
+                .replace("\"retryable\": false", "\"retryable\": true"));
+        backdateUpdates();
+
+        VideoAnalysisEntity stored = reload(pending);
+        assertThat(stored.getErrorCode()).isEqualTo("SOURCE_DOWNLOAD_FAILED");
+        assertThat(stored.getErrorRetryable()).isTrue();
+        assertThat(candidates()).extracting(VideoAnalysisEntity::getAnalysisId).containsExactly(pending.getAnalysisId());
+    }
+
+    @Test
+    void 작업_조회로_받은_결과는_콜백과_같게_저장된다() {
+        VideoAnalysisEntity unavailableByCallback = pendingRow();
+        callbackHandler.handle(example(CALLBACK_UNCONFIGURED, unavailableByCallback, "job-" + UUID.randomUUID()));
+        VideoAnalysisEntity unavailableByJob = pendingRow("job-" + UUID.randomUUID());
+        when(aiServerClient.getVideoAnalysisJob(unavailableByJob.getJobId())).thenReturn(new VideoAnalysisJobResponse(
+                unavailableByJob.getJobId(), "completed",
+                json(example(CALLBACK_UNCONFIGURED, unavailableByJob, unavailableByJob.getJobId())), null));
+        service.check(unavailableByJob);
+
+        VideoAnalysisEntity failedByCallback = pendingRow();
+        callbackHandler.handle(example(CALLBACK_FAILED, failedByCallback, "job-" + UUID.randomUUID()));
+        // snapshot-failed: result는 실패 콜백 본문 전체, error는 그 error와 같다.
+        VideoAnalysisEntity failedByJob = pendingRow("job-" + UUID.randomUUID());
+        Map<String, Object> failedBody = json(example(CALLBACK_FAILED, failedByJob, failedByJob.getJobId()));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> failedError = (Map<String, Object>) failedBody.get("error");
+        when(aiServerClient.getVideoAnalysisJob(failedByJob.getJobId())).thenReturn(new VideoAnalysisJobResponse(
+                failedByJob.getJobId(), "failed", failedBody, failedError));
+        service.check(failedByJob);
+
+        assertSameOutcome(reload(unavailableByJob), reload(unavailableByCallback));
+        assertSameOutcome(reload(failedByJob), reload(failedByCallback));
+        assertThat(reload(failedByJob).getStatus()).isEqualTo(VideoAnalysisStatus.FAILED);
+        assertThat(unmatchedCount()).isZero();
+    }
+
+    private static void assertSameOutcome(VideoAnalysisEntity actual, VideoAnalysisEntity expected) {
+        assertThat(actual.getStatus()).isEqualTo(expected.getStatus());
+        assertThat(actual.getErrorCode()).isEqualTo(expected.getErrorCode());
+        assertThat(actual.getErrorRetryable()).isEqualTo(expected.getErrorRetryable());
+        assertThat(actual.getErrorMessage()).isEqualTo(expected.getErrorMessage());
+        assertThat(actual.getResult() == null).isEqualTo(expected.getResult() == null);
+    }
+
     // ---- 준비 ----
+
+    /** 그 면접의 새 영상에 결과를 기다리는 요청 하나. */
+    private VideoAnalysisEntity pendingRow() {
+        return pendingRow(null);
+    }
+
+    private VideoAnalysisEntity pendingRow(String jobId) {
+        VideoAnalysisEntity row = row(video(interview, LocalDateTime.now()), "chain-" + UUID.randomUUID(),
+                VideoAnalysisStatus.PENDING, null);
+        row.setJobId(jobId);
+        return analysisRepository.save(row);
+    }
+
+    private VideoAnalysisEntity reload(VideoAnalysisEntity analysis) {
+        return analysisRepository.findById(analysis.getAnalysisId()).orElseThrow();
+    }
+
+    /** 계약 예시의 식별자를 이 요청의 값으로 바꾼다. 나머지는 그대로다. */
+    private static String example(String body, VideoAnalysisEntity analysis, String jobId) {
+        return body.replace("\"9f0c1e\"", "\"" + jobId + "\"")
+                .replace("\"video-request-001\"", "\"" + analysis.getRequestId() + "\"")
+                .replace("\"b1c2d3\"", "\"" + analysis.getSessionId() + "\"")
+                .replace("\"interviewId\": \"42\"", "\"interviewId\": \"" + analysis.getInterviewId() + "\"")
+                .replace("\"userId\": \"7\"", "\"userId\": \"" + analysis.getUserId() + "\"")
+                .replace("\"videoId\": \"501\"", "\"videoId\": \"" + analysis.getRecordingId() + "\"");
+    }
+
+    private static Map<String, Object> json(String body) {
+        return JsonMapper.builder().build().readValue(body, new TypeReference<>() {
+        });
+    }
+
+    private static final String CALLBACK_UNCONFIGURED = """
+            {
+              "schemaVersion": "1",
+              "jobId": "9f0c1e",
+              "requestId": "video-request-001",
+              "sessionId": "b1c2d3",
+              "interviewId": "42",
+              "userId": "7",
+              "status": "unavailable",
+              "result": {
+                "videoId": "501",
+                "durationMs": 734120,
+                "status": "unavailable",
+                "analysis": {
+                  "status": "unavailable",
+                  "data": null,
+                  "error": {"code": "ANALYZER_NOT_CONFIGURED", "message": "영상 행동 분석기가 아직 연결되지 않았습니다.", "retryable": false}
+                },
+                "error": null
+              },
+              "error": null
+            }
+            """;
+
+    private static final String CALLBACK_FILE_ERROR = """
+            {
+              "schemaVersion": "1",
+              "jobId": "9f0c1e",
+              "requestId": "video-request-001",
+              "sessionId": "b1c2d3",
+              "interviewId": "42",
+              "userId": "7",
+              "status": "unavailable",
+              "result": {
+                "videoId": "501",
+                "durationMs": null,
+                "status": "unavailable",
+                "analysis": {
+                  "status": "unavailable",
+                  "data": null,
+                  "error": {"code": "VIDEO_FORMAT_UNSUPPORTED", "message": "지원하지 않는 영상 형식입니다. WebM(VP8/VP9) 또는 MP4(H.264)만 지원합니다.", "retryable": false}
+                },
+                "error": {"code": "VIDEO_FORMAT_UNSUPPORTED", "message": "지원하지 않는 영상 형식입니다. WebM(VP8/VP9) 또는 MP4(H.264)만 지원합니다.", "retryable": false}
+              },
+              "error": null
+            }
+            """;
+
+    private static final String CALLBACK_FAILED = """
+            {
+              "schemaVersion": "1",
+              "jobId": "9f0c1e",
+              "requestId": "video-request-001",
+              "sessionId": "b1c2d3",
+              "interviewId": "42",
+              "userId": "7",
+              "status": "failed",
+              "result": null,
+              "error": {"code": "INTERNAL_ERROR", "message": "영상 분석 서버 내부 오류가 발생했습니다.", "retryable": false}
+            }
+            """;
+
+    // 계약에 ready 예시는 없다(분석기 미연결). 미연결 예시에서 상태와 analysis만 바꿨다. data 모양은 아직 정해지지 않았다.
+    private static final String CALLBACK_READY = """
+            {
+              "schemaVersion": "1",
+              "jobId": "9f0c1e",
+              "requestId": "video-request-001",
+              "sessionId": "b1c2d3",
+              "interviewId": "42",
+              "userId": "7",
+              "status": "ready",
+              "result": {
+                "videoId": "501",
+                "durationMs": 734120,
+                "status": "ready",
+                "analysis": {"status": "ready", "data": {"gaze": 0.8}, "error": null},
+                "error": null
+              },
+              "error": null
+            }
+            """;
 
     private List<Long> toStart() {
         LocalDateTime now = LocalDateTime.now();
@@ -277,7 +516,7 @@ class VideoAnalysisPersistenceTest {
     private String callback(VideoAnalysisEntity analysis, String jobId, String status, String extra) {
         return "{\"jobId\":\"" + jobId + "\",\"requestId\":\"" + analysis.getRequestId() + "\""
                 + ",\"sessionId\":\"" + sessionId + "\",\"interviewId\":\"" + analysis.getInterviewId() + "\""
-                + ",\"userId\":\"" + analysis.getUserId() + "\",\"videoId\":\"" + analysis.getRecordingId() + "\""
+                + ",\"userId\":\"" + analysis.getUserId() + "\",\"result\":{\"videoId\":\"" + analysis.getRecordingId() + "\"}"
                 + ",\"schemaVersion\":\"1\",\"status\":\"" + status + "\"" + extra + "}";
     }
 

@@ -20,7 +20,7 @@ public enum VideoAnalysisStatus {
     /** 결과 없이 닫았다. */
     FAILED;
 
-    /** 결과 본문의 status 값. ready / partial / unavailable이 아니면 null. */
+    /** 결과 본문의 status 값. ready / partial / unavailable / failed가 아니면 null. failed는 결과 문서 없이 끝난 작업이다. */
     public static VideoAnalysisStatus fromResult(String value) {
         if (value == null) {
             return null;
@@ -29,6 +29,7 @@ public enum VideoAnalysisStatus {
             case "ready" -> READY;
             case "partial" -> PARTIAL;
             case "unavailable" -> UNAVAILABLE;
+            case "failed" -> FAILED;
             default -> null;
         };
     }

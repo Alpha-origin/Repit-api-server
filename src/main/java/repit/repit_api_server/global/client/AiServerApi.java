@@ -29,6 +29,8 @@ import java.util.Map;
 
 public interface AiServerApi {
 
+    String INTERNAL_TOKEN = "X-Internal-Token";
+
     @PostExchange("/api/v1/ai/createMetaData")
     MetaDataResponse createMetaData(@RequestHeader("Authorization") String authorization,
                                     @RequestBody MetaDataRequest request);
@@ -64,13 +66,15 @@ public interface AiServerApi {
     AudioAnalysisJobResponse getAudioAnalysisJob(@PathVariable String jobId);
 
     // 면접 화면 전체 녹화 분석. 음성 분석과 따로 돈다. 같은 요청을 다시 보낼 때 내용이 같아야 하므로
-    // 처음 보낸 본문을 저장해 두고 그대로 싣는다.
+    // 처음 보낸 본문을 저장해 두고 그대로 싣는다. 영상 두 엔드포인트만 X-Internal-Token을 먼저 검사한다(없으면 401).
     @PostExchange("/analysis/video")
-    VideoAnalysisAcceptedResponse requestVideoAnalysis(@RequestBody Map<String, Object> request);
+    VideoAnalysisAcceptedResponse requestVideoAnalysis(@RequestHeader(INTERNAL_TOKEN) String token,
+                                                       @RequestBody Map<String, Object> request);
 
     // 맡긴 영상 분석의 진행과 결과. 콜백이 오지 않을 때 결과를 여기서 가져온다.
     @GetExchange("/analysis/video/jobs/{jobId}")
-    VideoAnalysisJobResponse getVideoAnalysisJob(@PathVariable String jobId);
+    VideoAnalysisJobResponse getVideoAnalysisJob(@RequestHeader(INTERNAL_TOKEN) String token,
+                                                 @PathVariable String jobId);
 
     // 면접 시작 직전 원질문 재작성. 마찬가지로 202 접수 후 결과는 콜백으로 온다.
     @PostExchange("/questions/tailor")
