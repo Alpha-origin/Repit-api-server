@@ -115,6 +115,10 @@ public class VideoAnalysisService {
     @Value("${app.internal-auth.token:}")
     private String internalAuthToken;
 
+    // 분석 서버로 보내는 영상 요청·조회의 인증값(AiServerClient가 싣는다). 켜려면 반드시 있어야 한다.
+    @Value("${app.video-analysis.api-token:}")
+    private String videoApiToken;
+
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
 
@@ -126,13 +130,21 @@ public class VideoAnalysisService {
      *
      * <p>영상 콜백은 어긋난 본문까지 원문으로 남기므로 인증 없이는 받지 않는다(CallbackPaths.ALWAYS_AUTHENTICATED).
      * 그 상태로 요청을 보내면 콜백은 모두 401로 튕기고 결과는 조회로만 늦게 들어오는데, 겉으로는 정상처럼 보인다.
-     * 잘못된 설정을 배포 시점에 드러낸다 — 블루/그린 배포라 새 서버가 뜨지 않으면 이전 서버가 그대로 남는다.
+     * 요청 인증값이 없으면 접수가 모두 401로 거절돼 닫힌다. 잘못된 설정을 배포 시점에 드러낸다 — 블루/그린 배포라
+     * 새 서버가 뜨지 않으면 이전 서버가 그대로 남는다.
      */
     @PostConstruct
-    void requireCallbackAuth() {
-        if (enabled && (internalAuthToken == null || internalAuthToken.isBlank())) {
+    void requireAuthTokens() {
+        if (!enabled) {
+            return;
+        }
+        if (internalAuthToken == null || internalAuthToken.isBlank()) {
             throw new IllegalStateException("영상 분석(VIDEO_ANALYSIS_ENABLED)을 켜려면 INTERNAL_AUTH_TOKEN이 필요합니다. "
                     + "없으면 영상 분석 콜백을 받지 않습니다.");
+        }
+        if (videoApiToken == null || videoApiToken.isBlank()) {
+            throw new IllegalStateException("영상 분석(VIDEO_ANALYSIS_ENABLED)을 켜려면 VIDEO_ANALYSIS_API_TOKEN이 필요합니다. "
+                    + "없으면 분석 서버가 영상 요청을 모두 401로 거절합니다.");
         }
     }
 

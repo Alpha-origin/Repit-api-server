@@ -21,9 +21,10 @@ import java.util.Objects;
 /**
  * 영상 분석 결과(콜백, 또는 작업 조회로 받은 같은 본문)를 검증해 저장한다.
  *
- * <p>정상 결과로 반영하기 전에 이 서버가 보낸 요청의 결과인지 대조한다 — 요청 id로 찾은 행의 세션·면접·사용자·영상,
- * 그리고 이미 적어 둔 작업 id. 하나라도 다르거나 필수 값이 빠졌으면 원문을 {@code unmatched_callback}에 따로 남기고
- * 행은 건드리지 않는다. 잘못 이어 붙인 결과는 남의 면접에 보이고, 되돌릴 단서도 남지 않는다.
+ * <p>정상 결과로 반영하기 전에 이 서버가 보낸 요청의 결과인지 대조한다 — 요청 id로 찾은 행의 세션·면접·사용자·영상
+ * (result.videoId), 그리고 이미 적어 둔 작업 id. failed는 결과 문서가 없어 영상은 대조하지 않는다. 하나라도 다르거나
+ * 필수 값이 빠졌으면 원문을 {@code unmatched_callback}에 따로 남기고 행은 건드리지 않는다. 잘못 이어 붙인
+ * 결과는 남의 면접에 보이고, 되돌릴 단서도 남지 않는다.
  *
  * <p>따로 남기는 데 성공하면 예외 없이 끝나 2xx로 답한다. 4xx로 답하면 분석 서버가 재전송을 멈추고, 같은
  * 원문을 계속 받아 봐야 다시 반영되지 않는다. 저장 자체가 실패하면 예외가 올라가 5xx가 되고 분석 서버가 다시 보낸다.
@@ -38,7 +39,7 @@ public class VideoAnalysisCallbackHandler {
     // 이 서버가 읽을 줄 아는 결과 스키마. 추가된 선택 필드는 원문과 함께 저장될 뿐이다.
     static final String SCHEMA_VERSION = "1";
     private static final List<String> REQUIRED =
-            List.of("jobId", "requestId", "sessionId", "interviewId", "userId", "videoId", "status", "schemaVersion");
+            List.of("jobId", "requestId", "sessionId", "interviewId", "userId", "status", "schemaVersion");
 
     private final VideoAnalysisRepository analysisRepository;
     private final UnmatchedCallbackRepository unmatchedRepository;
@@ -91,10 +92,11 @@ public class VideoAnalysisCallbackHandler {
         }
 
         VideoAnalysisStatus status = VideoAnalysisStatus.fromResult(text(body, "status"));
-        Map<?, ?> error = body.get("error") instanceof Map<?, ?> map ? map : null;
+        Map<?, ?> error = error(body);
         analysis.setJobId(jobId);
         analysis.setStatus(status);
-        analysis.setResult(body);
+        // failed에는 보여 줄 결과 문서가 없다. 비워 두어야 화면이 직전 완료 결과를 계속 보여 준다(작업 조회로 닫을 때와 같다).
+        analysis.setResult(status == VideoAnalysisStatus.FAILED ? null : body);
         analysis.setErrorCode(error == null ? null : textOf(error.get("code")));
         analysis.setErrorRetryable(error != null && error.get("retryable") instanceof Boolean retryable ? retryable : null);
         analysis.setErrorMessage(error == null ? null : textOf(error.get("message")));
@@ -113,8 +115,15 @@ public class VideoAnalysisCallbackHandler {
                 return "필수 필드 " + field + "가 없습니다.";
             }
         }
-        if (VideoAnalysisStatus.fromResult(text(body, "status")) == null) {
+        VideoAnalysisStatus status = VideoAnalysisStatus.fromResult(text(body, "status"));
+        if (status == null) {
             return "알 수 없는 결과 상태입니다: " + text(body, "status");
+        }
+        if (status != VideoAnalysisStatus.FAILED) {
+            String videoId = videoId(body);
+            if (videoId == null || videoId.isBlank()) {
+                return "필수 필드 result.videoId가 없습니다.";
+            }
         }
         if (!SCHEMA_VERSION.equals(text(body, "schemaVersion"))) {
             return "지원하지 않는 스키마 버전입니다: " + text(body, "schemaVersion");
@@ -137,7 +146,8 @@ public class VideoAnalysisCallbackHandler {
         if (!String.valueOf(analysis.getUserId()).equals(text(body, "userId"))) {
             return "사용자가 다릅니다.";
         }
-        if (!String.valueOf(analysis.getRecordingId()).equals(text(body, "videoId"))) {
+        if (VideoAnalysisStatus.fromResult(text(body, "status")) != VideoAnalysisStatus.FAILED
+                && !String.valueOf(analysis.getRecordingId()).equals(videoId(body))) {
             return "영상이 다릅니다.";
         }
         if (analysis.getJobId() != null && !analysis.getJobId().equals(jobId)) {
@@ -181,6 +191,30 @@ public class VideoAnalysisCallbackHandler {
         } catch (JacksonException e) {
             return String.valueOf(body);
         }
+    }
+
+    /** 영상 결과 문서(result)의 videoId. failed는 문서가 없어 null이다. */
+    private static String videoId(Map<String, Object> body) {
+        return body.get("result") instanceof Map<?, ?> result ? textOf(result.get("videoId")) : null;
+    }
+
+    /**
+     * 저장할 오류. 최상위 error(failed) → result.error(파일 문제) → result.analysis.error(분석기 미연결·부분 실패)
+     * 순서로 처음 있는 것. 파일 문제는 뒤의 둘에 같은 값이 온다.
+     */
+    private static Map<?, ?> error(Map<String, Object> body) {
+        if (body.get("error") instanceof Map<?, ?> error) {
+            return error;
+        }
+        if (!(body.get("result") instanceof Map<?, ?> result)) {
+            return null;
+        }
+        if (result.get("error") instanceof Map<?, ?> error) {
+            return error;
+        }
+        return result.get("analysis") instanceof Map<?, ?> analysis && analysis.get("error") instanceof Map<?, ?> error
+                ? error
+                : null;
     }
 
     /** id는 문자열로 오지만 숫자로 와도 같은 값으로 본다. 객체·배열은 값이 없는 것으로 본다. */

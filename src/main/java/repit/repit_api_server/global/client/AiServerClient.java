@@ -1,6 +1,7 @@
 package repit.repit_api_server.global.client;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
@@ -34,6 +35,10 @@ public class AiServerClient {
 
     private final AiServerApi aiServerApi;
     private final ExternalApiExecutor executor;
+
+    // 분석 서버 VIDEO_API_TOKEN과 같은 값. 콜백 인증값(INTERNAL_AUTH_TOKEN)과는 다르다.
+    @Value("${app.video-analysis.api-token:}")
+    private String videoApiToken;
 
     public MetaDataResponse sendMetaData(String authorization, MetaDataRequest request) {
         return executor.execute(SERVER_NAME,
@@ -93,13 +98,13 @@ public class AiServerClient {
 
     public VideoAnalysisAcceptedResponse requestVideoAnalysis(Map<String, Object> request) {
         return executor.execute(SERVER_NAME,
-                () -> aiServerApi.requestVideoAnalysis(request),
+                () -> aiServerApi.requestVideoAnalysis(videoApiToken, request),
                 this::resolveMessage, false);
     }
 
     public VideoAnalysisJobResponse getVideoAnalysisJob(String jobId) {
         return executor.execute(SERVER_NAME,
-                () -> aiServerApi.getVideoAnalysisJob(jobId),
+                () -> aiServerApi.getVideoAnalysisJob(videoApiToken, jobId),
                 this::resolveMessage, true);
     }
 
