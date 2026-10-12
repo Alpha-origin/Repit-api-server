@@ -13,6 +13,7 @@ import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysis
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisResponse;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisResponse.Status;
 import repit.repit_api_server.domain.userdata.analysis.entity.AudioAnalysisEntity;
 import repit.repit_api_server.domain.userdata.analysis.entity.AudioAnalysisResultEntity;
 import repit.repit_api_server.domain.userdata.analysis.entity.enums.AudioAnalysisStatus;
@@ -21,6 +22,9 @@ import repit.repit_api_server.domain.userdata.analysis.repository.AudioAnalysisR
 import repit.repit_api_server.domain.userdata.analysis.service.AudioRecordingLoader.AnswerRecording;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
+import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackDispatchEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchKind;
+import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackDispatchRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
@@ -82,6 +86,7 @@ public class AudioAnalysisService {
     private final InterviewRepository interviewRepository;
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
+    private final FeedbackDispatchRepository dispatchRepository;
     private final AudioRecordingLoader recordingLoader;
     private final AiServerClient aiServerClient;
     private final ObjectMapper objectMapper;
@@ -148,11 +153,12 @@ public class AudioAnalysisService {
      *
      * <ul>
      *   <li>답변과 녹음은 요청을 만들 때와 같은 규칙({@link #analyzable})으로 잇는다. 요청에 실릴 수 없는 녹음을 담으면
-     *       영영 WAITING으로 남아 웹이 조회를 멈추지 못한다.</li>
+     *       영영 PENDING으로 남아 웹이 조회를 멈추지 못한다.</li>
      *   <li>질문·답변 id는 저장된 결과의 값이 아니라 지금 값을 쓴다. 채팅 서버가 면접 기록을 다시 보내면 PK가 바뀌지만
      *       녹음의 채팅 질문 번호는 그대로다.</li>
      *   <li>결과는 녹음 id로 찾고, 여럿이면 요청 순서(analysis_id)로 가장 나중 것을 쓴다. 도착 순서로 고르면 늦게 온 옛
      *       결과가 새 결과를 가린다.</li>
+     *   <li>결과 없는 녹음이 앞으로 요청될지는 음성 분석 대기 행으로 정한다({@link #toBeRequested}).</li>
      * </ul>
      */
     public AudioAnalysisResponse get(Long userId, Long interviewId) {
@@ -161,22 +167,27 @@ public class AudioAnalysisService {
         if (!Objects.equals(userId, interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 볼 수 있습니다.");
         }
+        Status toBeRequested = toBeRequested(interviewId);
         Collection<AnswerRecording> loaded = analyzable(interviewId).values();
         if (loaded.isEmpty()) {
-            return new AudioAnalysisResponse(AudioAnalysisResponse.Status.NONE, List.of());
+            // 음성이 아직 올라오는 중일 수 있다. 요청할 때가 지났는데도 없으면 받을 결과가 없다(텍스트 면접 등).
+            return new AudioAnalysisResponse(toBeRequested == Status.PENDING ? Status.PENDING : Status.UNAVAILABLE,
+                    List.of());
         }
 
         // 요청 순서대로 덮어 쓰므로 녹음마다 가장 나중 요청·결과가 남는다.
         List<AudioAnalysisEntity> requests = analysisRepository.findAllByInterviewIdOrderByAnalysisIdAsc(interviewId);
+        Map<Long, AudioAnalysisEntity> requestById = new HashMap<>();
         Map<Long, AudioAnalysisEntity> requestByRecording = new HashMap<>();
         for (AudioAnalysisEntity request : requests) {
+            requestById.put(request.getAnalysisId(), request);
             for (Long recordingId : Objects.requireNonNullElse(request.getRecordingIds(), List.<Long>of())) {
                 requestByRecording.put(recordingId, request);
             }
         }
         Map<Long, AudioAnalysisResultEntity> resultByRecording = new HashMap<>();
         if (!requests.isEmpty()) {
-            resultRepository.findAllByAnalysisIdIn(requests.stream().map(AudioAnalysisEntity::getAnalysisId).toList())
+            resultRepository.findAllByAnalysisIdIn(requestById.keySet())
                     .stream()
                     .filter(result -> result.getRecordingId() != null)
                     .sorted(Comparator.comparing(AudioAnalysisResultEntity::getAnalysisId))
@@ -184,67 +195,91 @@ public class AudioAnalysisService {
         }
 
         List<AudioAnalysisResponse.Answer> answers = loaded.stream()
-                .map(one -> toAnswer(one, resultByRecording.get(one.recording().getRecordingId()),
-                        requestByRecording.get(one.recording().getRecordingId())))
+                .map(one -> {
+                    Long recordingId = one.recording().getRecordingId();
+                    AudioAnalysisResultEntity result = resultByRecording.get(recordingId);
+                    return result == null
+                            ? withoutResult(one, requestByRecording.get(recordingId), toBeRequested)
+                            : withResult(one, result, requestById.get(result.getAnalysisId()));
+                })
                 .toList();
         return new AudioAnalysisResponse(overallStatus(answers), answers);
     }
 
-    private AudioAnalysisResponse.Answer toAnswer(AnswerRecording loaded, AudioAnalysisResultEntity result,
-                                                  AudioAnalysisEntity latestRequest) {
-        String questionId = String.valueOf(loaded.questionId());
-        String answerId = String.valueOf(loaded.answerId());
-        String recordingId = String.valueOf(loaded.recording().getRecordingId());
-        if (result == null) {
-            return new AudioAnalysisResponse.Answer(questionId, answerId, recordingId, statusWithoutResult(latestRequest),
-                    null, null, null, null);
-        }
-        return new AudioAnalysisResponse.Answer(questionId, answerId, recordingId, resultStatus(result.getStatus()),
-                result.getDurationMs(), result.getTiming(), result.getFluency(), errorOf(result.getError()));
+    private AudioAnalysisResponse.Answer withResult(AnswerRecording loaded, AudioAnalysisResultEntity result,
+                                                    AudioAnalysisEntity request) {
+        return new AudioAnalysisResponse.Answer(String.valueOf(loaded.questionId()), String.valueOf(loaded.answerId()),
+                String.valueOf(loaded.recording().getRecordingId()), request == null ? null : request.getRequestId(),
+                resultStatus(result.getStatus()), result.getDurationMs(), result.getTiming(), result.getFluency(),
+                errorOf(result.getError()));
     }
 
-    /** 결과 행이 없는 녹음의 상태. 그 녹음을 실은 가장 나중 요청을 따른다. */
-    private static AudioAnalysisResponse.Status statusWithoutResult(AudioAnalysisEntity latestRequest) {
-        if (latestRequest == null) {
-            return AudioAnalysisResponse.Status.WAITING;
-        }
-        return switch (latestRequest.getStatus()) {
-            case PENDING -> AudioAnalysisResponse.Status.ANALYZING;
-            case FAILED -> AudioAnalysisResponse.Status.FAILED;
+    /**
+     * 결과 행이 없는 녹음. 그 녹음을 실은 가장 나중 요청을 따른다.
+     *
+     * <p>요청에 실리지 않았거나 실패로 닫힌 요청에만 실렸으면 다음 요청을 기다리는 것이다 — 닫힌 요청의 녹음은 다음
+     * 요청에 다시 실린다. 그때는 다음 요청이 나갈지({@code toBeRequested})를 따른다.
+     */
+    private static AudioAnalysisResponse.Answer withoutResult(AnswerRecording loaded, AudioAnalysisEntity latestRequest,
+                                                              Status toBeRequested) {
+        Status status = latestRequest == null ? toBeRequested : switch (latestRequest.getStatus()) {
+            case PENDING -> Status.PENDING;
+            case FAILED -> toBeRequested == Status.PENDING ? Status.PENDING : Status.FAILED;
             // 끝난 요청인데 이 녹음의 결과만 빠졌다. 다시 요청되지 않으므로 받을 결과가 없다.
-            case READY, PARTIAL, UNAVAILABLE -> AudioAnalysisResponse.Status.UNAVAILABLE;
+            case READY, PARTIAL, UNAVAILABLE -> Status.UNAVAILABLE;
         };
+        return new AudioAnalysisResponse.Answer(String.valueOf(loaded.questionId()), String.valueOf(loaded.answerId()),
+                String.valueOf(loaded.recording().getRecordingId()),
+                latestRequest == null ? null : latestRequest.getRequestId(), status, null, null, null, null);
+    }
+
+    /**
+     * 아직 맡기지 않은 녹음이 앞으로 요청될지. 음성 분석 대기 행이 정한다.
+     *
+     * <ul>
+     *   <li>행이 없다 — 면접 기록이 아직 오지 않았다. 기록이 오면 행이 생기고 요청이 나간다.</li>
+     *   <li>WAITING·SENDING — 음성이 모이기를 기다리거나 요청하는 중이다.</li>
+     *   <li>DONE — 요청을 마쳤다. 그 뒤에 올라온 녹음은 이번 분석에 들지 않는다.</li>
+     *   <li>FAILED — 요청을 포기했다.</li>
+     * </ul>
+     */
+    private Status toBeRequested(Long interviewId) {
+        return dispatchRepository.findByInterviewIdAndKind(interviewId, FeedbackDispatchKind.AUDIO_ANALYSIS)
+                .map(FeedbackDispatchEntity::getStatus)
+                .map(dispatch -> switch (dispatch) {
+                    case WAITING, SENDING -> Status.PENDING;
+                    case DONE -> Status.UNAVAILABLE;
+                    case FAILED -> Status.FAILED;
+                })
+                .orElse(Status.PENDING);
     }
 
     /** 결과 행의 status(대문자로 저장). 모르는 값은 받을 수 있는 결과가 없는 것으로 본다 — 콜백 상태와 같은 규칙이다. */
-    private static AudioAnalysisResponse.Status resultStatus(String status) {
+    private static Status resultStatus(String status) {
         if ("READY".equals(status)) {
-            return AudioAnalysisResponse.Status.READY;
+            return Status.READY;
         }
-        return "PARTIAL".equals(status) ? AudioAnalysisResponse.Status.PARTIAL : AudioAnalysisResponse.Status.UNAVAILABLE;
+        return "PARTIAL".equals(status) ? Status.PARTIAL : Status.UNAVAILABLE;
     }
 
-    /** 답변별 상태를 모은 전체 상태. */
-    static AudioAnalysisResponse.Status overallStatus(List<AudioAnalysisResponse.Answer> answers) {
-        Set<AudioAnalysisResponse.Status> statuses = answers.stream()
+    /** 답변별 상태를 모은 전체 상태. 하나라도 진행 중이면 진행 중이다 — 웹은 PENDING일 때만 다시 조회한다. */
+    static Status overallStatus(List<AudioAnalysisResponse.Answer> answers) {
+        Set<Status> statuses = answers.stream()
                 .map(AudioAnalysisResponse.Answer::status)
-                .collect(Collectors.toCollection(() -> EnumSet.noneOf(AudioAnalysisResponse.Status.class)));
-        if (statuses.isEmpty()) {
-            return AudioAnalysisResponse.Status.NONE;
+                .collect(Collectors.toCollection(() -> EnumSet.noneOf(Status.class)));
+        if (statuses.contains(Status.PENDING)) {
+            return Status.PENDING;
         }
-        if (statuses.equals(EnumSet.of(AudioAnalysisResponse.Status.WAITING))) {
-            return AudioAnalysisResponse.Status.WAITING;
+        if (statuses.equals(EnumSet.of(Status.READY))) {
+            return Status.READY;
         }
-        if (statuses.contains(AudioAnalysisResponse.Status.WAITING) || statuses.contains(AudioAnalysisResponse.Status.ANALYZING)) {
-            return AudioAnalysisResponse.Status.ANALYZING;
+        if (statuses.equals(EnumSet.of(Status.FAILED))) {
+            return Status.FAILED;
         }
-        if (statuses.equals(EnumSet.of(AudioAnalysisResponse.Status.READY))) {
-            return AudioAnalysisResponse.Status.READY;
+        if (EnumSet.of(Status.UNAVAILABLE, Status.FAILED).containsAll(statuses)) {
+            return Status.UNAVAILABLE;
         }
-        if (EnumSet.of(AudioAnalysisResponse.Status.UNAVAILABLE, AudioAnalysisResponse.Status.FAILED).containsAll(statuses)) {
-            return AudioAnalysisResponse.Status.UNAVAILABLE;
-        }
-        return AudioAnalysisResponse.Status.PARTIAL;
+        return Status.PARTIAL;
     }
 
     /** 저장된 실패 사유({@link #errorText})를 되돌린다. JSON 객체였으면 그 값으로, 아니면 글을 message에 담는다. */
