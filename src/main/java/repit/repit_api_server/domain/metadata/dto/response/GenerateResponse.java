@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-/** 분석 서버의 접수 응답(202). /generate, /profile, /questions/cycle이 같은 모양이다. */
+/** 분석 서버의 접수 응답(202). /profile, /questions/cycle이 같은 모양이다. */
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor

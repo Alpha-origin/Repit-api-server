@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * N:1 질문 구성 요청 본문. 분석 서버는 camelCase로만 받고, 이름이 어긋나면 422로 거부한다.
- * 프로젝트 요약은 /generate가 snake_case로 내려준 값을 옮겨 싣는 자리라 특히 어긋나기 쉽다.
+ * 프로젝트 요약은 저장된 종합 데이터를 옮겨 싣는 자리라 이름이 어긋나기 쉽다.
  */
 class QuestionTailorMultiRequestSerializationTest {
 
@@ -77,7 +77,7 @@ class QuestionTailorMultiRequestSerializationTest {
             assertThat(json).contains("\"projectSummary\":");
             assertThat(json).contains("\"coreFeatures\":");
             assertThat(json).contains("\"techStack\":[\"Spring\",\"Redis\"]");
-            // /generate가 내려준 snake_case가 그대로 새어나가면 근거 없이 질문이 만들어진다.
+            // snake_case 이름이 섞여 나가면 분석 서버가 요약을 읽지 못해 근거 없이 질문이 만들어진다.
             assertThat(json).doesNotContain("core_features");
             assertThat(json).doesNotContain("tech_stack");
             assertThat(json).doesNotContain("based_on");

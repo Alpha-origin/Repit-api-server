@@ -13,7 +13,7 @@ class CallbackSuccessRequestDeserializationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(JacksonAutoConfiguration.class));
 
-    // /generate 콜백의 작업 식별자는 jobId다. 실패면 result 없이 error만 온다.
+    // /profile 콜백의 작업 식별자는 jobId다. 실패면 result 없이 error만 온다.
     private static final String FAILURE_CALLBACK = """
             {
               "jobId": "3f0a",

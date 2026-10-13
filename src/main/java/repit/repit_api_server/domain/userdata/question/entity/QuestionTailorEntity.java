@@ -42,7 +42,7 @@ public class QuestionTailorEntity {
     @Column(length = 64)
     private String jobId;
 
-    // 원질문이 나온 /generate 작업 id. 재작성본이 어느 분석에서 비롯됐는지 되짚는 데만 쓴다.
+    // 원질문 세트가 나온 종합 데이터(/profile) 작업 id. 면접 준비 상태를 구독하는 열쇠로도 쓴다.
     // 채팅 서버는 이 값을 받지 않는다.
     @Column(length = 64)
     private String analysisJobId;

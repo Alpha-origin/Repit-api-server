@@ -65,10 +65,7 @@ public class QuestionTailorMultiRequest {
     }
 
     /**
-     * /generate 산출물의 project_summary.
-     *
-     * <p>분석 서버가 받는 이름은 camelCase지만 /generate가 내려주는 원본은 snake_case다.
-     * 저장은 원본 그대로 해두고 여기서 이름을 맞춰 옮긴다.
+     * 종합 데이터(/profile) 결과의 projectSummary. 분석 서버가 받는 camelCase 그대로 옮긴다.
      */
     @Getter
     @Builder
