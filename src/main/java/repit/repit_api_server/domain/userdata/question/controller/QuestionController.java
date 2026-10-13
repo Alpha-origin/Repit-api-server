@@ -16,10 +16,6 @@ import java.util.List;
 public class QuestionController {
     private final QuestionService questionService;
 
-    @PostMapping
-    public ApiResponse<QuestionResponse> createQuestion() {
-        return ApiResponse.created(questionService.createQuestion());
-    }
 
     @GetMapping
     public ApiResponse<QuestionResponse> getQuestionById(

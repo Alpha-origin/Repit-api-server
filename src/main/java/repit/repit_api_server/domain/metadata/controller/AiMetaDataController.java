@@ -8,12 +8,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
-import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.dto.response.ProfileStatusResponse;
-import repit.repit_api_server.domain.metadata.dto.response.ResultResponse;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
@@ -27,7 +25,6 @@ import repit.repit_api_server.domain.userdata.question.service.QuestionPoolServi
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import repit.repit_api_server.global.auth.AuthUser;
-import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.common.ApiResponse;
 
 import java.io.IOException;
@@ -51,7 +48,6 @@ public class AiMetaDataController {
     private final QuestionTailorService questionTailorService;
     private final QuestionPoolService questionPoolService;
 
-    private final AiServerClient aiServerClient;
     private final AnalysisLaunchService analysisLaunchService;
 
     /**
@@ -133,19 +129,6 @@ public class AiMetaDataController {
         }
     }
 
-    @PostMapping("/sendMetaData")
-    public ResponseEntity<MetaDataResponse> sendMetaData(@AuthenticationPrincipal AuthUser authUser) {
-        // 인증 서버와 분석 서버 모두 사용자 토큰을 그대로 요구하는 자리다. 확인은 필터가 이미
-        // 마쳤고, 여기서는 그때 확인한 토큰을 다시 실어 보내기만 한다.
-        MetaDataResponse forRequest = metaService.getMetaData(authUser.token());
-        MetaDataRequest request = MetaDataRequest.builder()
-                .gitUrls(forRequest.getGitUrls())
-                .fileUrl(forRequest.getFileUrl())
-                .build();
-
-        MetaDataResponse response = aiServerClient.sendMetaData(authUser.token(), request);
-        return ResponseEntity.ok(response);
-    }
 
     // 이미 올려둔 자료로 분석만 다시 요청한다. 자료를 올리는 길과 같은 접수를 거친다.
     @PostMapping("/generate")
@@ -212,14 +195,4 @@ public class AiMetaDataController {
         return ApiResponse.success(aiMetaDataService.getLatestProfile(authUser.id()));
     }
 
-    // 분석 결과 조회. 면접 질문은 재작성이 끝나는 시점에 채팅 서버로 직접 넘어간다.
-    @GetMapping
-    public ApiResponse<ResultResponse> getResult(
-            @AuthenticationPrincipal AuthUser authUser,
-            @RequestParam String jobId
-    ) {
-        // 소유자 확인은 조회와 같은 트랜잭션에서 한다. 따로 부르면 같은 행을 두 번 읽으며
-        // result jsonb를 두 번 풀어낸다.
-        return ApiResponse.success(aiMetaDataService.getResultForOwner(jobId, authUser.id()));
-    }
 }

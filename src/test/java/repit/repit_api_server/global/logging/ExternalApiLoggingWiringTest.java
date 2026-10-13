@@ -10,8 +10,8 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.web.client.RestClient;
+import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
 import repit.repit_api_server.global.client.AiServerApi;
-import repit.repit_api_server.global.common.ApiResponse;
 import repit.repit_api_server.global.config.HttpInterfaceConfig;
 
 import java.io.OutputStream;
@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ExternalApiLoggingWiringTest {
 
-    private static final String RESPONSE_BODY = "{\"success\":true,\"data\":{\"questionId\":7}}";
+    private static final String RESPONSE_BODY = "{\"jobId\":\"job-7\",\"status\":\"processing\"}";
 
     private HttpServer aiServer;
     private Logger interceptorLogger;
@@ -37,7 +37,7 @@ class ExternalApiLoggingWiringTest {
     @BeforeEach
     void 가짜_분석_서버를_띄운다() throws Exception {
         aiServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        aiServer.createContext("/api/v1/ai/createQuestion", exchange -> {
+        aiServer.createContext("/analysis/audio/jobs/job-7", exchange -> {
             byte[] body = RESPONSE_BODY.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
@@ -64,19 +64,19 @@ class ExternalApiLoggingWiringTest {
         contextRunner().run(context -> {
             AiServerApi aiServerApi = context.getBean(AiServerApi.class);
 
-            ApiResponse<?> response = aiServerApi.createQuestion();
+            AudioAnalysisJobResponse response = aiServerApi.getAudioAnalysisJob("job-7");
 
             // 로그가 본문을 먼저 읽어도 호출한 쪽은 같은 본문을 받아야 한다.
-            assertThat(response.getSuccess()).isTrue();
-            assertThat(response.getData()).isNotNull();
+            assertThat(response.getJobId()).isEqualTo("job-7");
+            assertThat(response.getStatus()).isEqualTo("processing");
 
             assertThat(messages()).anySatisfy(message -> assertThat(message)
                     .contains("ext --> [AI] GET")
-                    .contains("/api/v1/ai/createQuestion"));
+                    .contains("/analysis/audio/jobs/job-7"));
             assertThat(messages()).anySatisfy(message -> assertThat(message)
                     .contains("ext <-- [AI] GET")
                     .contains("200 OK")
-                    .contains("\"questionId\":7"));
+                    .contains("\"jobId\":\"job-7\""));
         });
     }
 
@@ -85,7 +85,7 @@ class ExternalApiLoggingWiringTest {
         contextRunner()
                 .withPropertyValues("app.http-logging.enabled=false")
                 .run(context -> {
-                    context.getBean(AiServerApi.class).createQuestion();
+                    context.getBean(AiServerApi.class).getAudioAnalysisJob("job-7");
 
                     assertThat(capturedLogs.list).isEmpty();
                 });

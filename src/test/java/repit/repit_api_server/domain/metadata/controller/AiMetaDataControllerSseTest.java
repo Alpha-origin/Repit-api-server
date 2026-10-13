@@ -23,7 +23,6 @@ import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewRe
 import repit.repit_api_server.domain.userdata.question.service.QuestionPoolService;
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
 import repit.repit_api_server.global.auth.AuthUser;
-import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.response.UserResponse;
 
 import java.io.IOException;
@@ -57,8 +56,6 @@ class AiMetaDataControllerSseTest {
     @Mock
     private QuestionPoolService questionPoolService;
     @Mock
-    private AiServerClient aiServerClient;
-    @Mock
     private AnalysisLaunchService analysisLaunchService;
 
     private SseEmitterRepository sseEmitterRepository;
@@ -70,7 +67,7 @@ class AiMetaDataControllerSseTest {
         controller = new AiMetaDataController(
                 metaService, aiMetaDataService, sseEmitterRepository,
                 new SseNotifier(sseEmitterRepository), questionTailorService, questionPoolService,
-                aiServerClient, analysisLaunchService);
+                analysisLaunchService);
     }
 
     /**
