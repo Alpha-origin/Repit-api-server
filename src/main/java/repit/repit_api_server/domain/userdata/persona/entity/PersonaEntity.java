@@ -64,4 +64,8 @@ public class PersonaEntity {
     // 카드에 쓰는 한 줄 소개. 없으면 프론트가 비워둔다.
     @Column(columnDefinition = "TEXT")
     private String description;
+
+    // 음성 카탈로그 번호(1~5). 채팅 서버가 이 번호로 TTS 음성을 고른다. 없으면 기본 음성이다.
+    @Column(name = "voice_index")
+    private Integer voiceIndex;
 }

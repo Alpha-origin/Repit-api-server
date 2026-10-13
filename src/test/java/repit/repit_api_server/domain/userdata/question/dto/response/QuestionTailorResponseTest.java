@@ -7,6 +7,8 @@ import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus
 import repit.repit_api_server.domain.userdata.question.preparation.FailureStage;
 import repit.repit_api_server.domain.userdata.question.preparation.PreparationStatus;
 
+import tools.jackson.databind.ObjectMapper;
+
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,7 +24,7 @@ class QuestionTailorResponseTest {
     private TailoredQuestionResponse question(int id) {
         return TailoredQuestionResponse.builder()
                 .id(id).category("tech_choice").question("질문 " + id)
-                .expectedAnswer("기대 답변 " + id).build();
+                .spokenText("발음 " + id).expectedAnswer("기대 답변 " + id).build();
     }
 
     private QuestionTailorEntity.QuestionTailorEntityBuilder tailor(InterviewMode mode) {
@@ -141,5 +143,19 @@ class QuestionTailorResponseTest {
         assertThat(PreparedQuestionResponse.class.getDeclaredFields())
                 .extracting(java.lang.reflect.Field::getName)
                 .doesNotContain("expectedAnswer");
+    }
+
+    /** 발음 문장은 채팅 서버의 TTS용이다. 브라우저 응답 어디에도 실리지 않는다. */
+    @Test
+    void 준비_조회에는_발음_문장을_싣지_않는다() {
+        QuestionTailorResponse response = QuestionTailorResponse.of(tailor(InterviewMode.SOLO)
+                .status(TailorStatus.SUCCEEDED)
+                .questions(List.of(question(1)))
+                .chatDelivered(true)
+                .build());
+
+        String json = new ObjectMapper().writeValueAsString(response);
+
+        assertThat(json).contains("질문 1").doesNotContain("spokenText").doesNotContain("발음 1");
     }
 }

@@ -6,9 +6,11 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 
 import java.util.List;
@@ -67,6 +69,13 @@ public class ChatInterviewPrepareRequest {
      * 채팅 서버가 최상위에서만 받으므로 진행 순서 첫 면접관의 값이 대표로 나간다.
      */
     private List<Question> questions;
+    /**
+     * 이 면접의 면접관 전체. 1:1은 한 명, N:1은 진행 순서(personaOrder)대로다.
+     *
+     * <p>위의 대표 설정과 달리 면접관마다 값이 따로 나가, 채팅 서버가 질문의 personaId로 찾아
+     * 면접관별 음성과 억양을 고른다. 대표 설정은 이 필드를 모르는 채팅 서버를 위해 그대로 둔다.
+     */
+    private List<Persona> personas;
 
     /**
      * 면접 질문 한 건.
@@ -91,6 +100,8 @@ public class ChatInterviewPrepareRequest {
          * 그렇게 돌아온 값으로 채워진다. 채팅 서버가 이 칸을 모르면 버리고 category를 쓴다.
          */
         private String intention;
+        // TTS용 발음 문장. 없으면 채팅 서버가 question으로 합성한다.
+        private String spokenText;
         /**
          * 모범답안. 꼬리질문을 만들 때 참고한다.
          *
@@ -101,5 +112,25 @@ public class ChatInterviewPrepareRequest {
         private List<String> basedOn;
         // 이 질문을 던지는 면접관. 1:1은 모든 질문이 같은 면접관이다.
         private Long personaId;
+    }
+
+    /** 면접관 한 명. enum은 상수명 그대로 나가 채팅 서버의 enum과 맞물린다. */
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Persona {
+        private Long personaId;
+        private String personaName;
+        private Role role;
+        // 실제 전공이다. 비기술 면접관은 비어 있다 — 대표 설정의 대체값을 여기에 쓰지 않는다.
+        private Major major;
+        private Type type;
+        private InterviewTone tone;
+        private Level level;
+        private int career;
+        private Gender gender;
+        // 음성 카탈로그 번호. 예전 페르소나는 비어 있고, 채팅 서버가 기본 음성을 쓴다.
+        private Integer voiceIndex;
     }
 }

@@ -26,6 +26,8 @@ public class PersonaResponse {
     // 카드에 쓰는 사진과 한 줄 소개. 등록할 때 비워 보냈으면 비어 있다.
     private String imageUrl;
     private String description;
+    // 음성 카탈로그 번호. 예전 페르소나는 비어 있다.
+    private Integer voiceIndex;
 
 
     public static PersonaResponse from(PersonaEntity persona) {
@@ -40,7 +42,8 @@ public class PersonaResponse {
                 persona.getCareer(),
                 persona.getGender(),
                 persona.getImageUrl(),
-                persona.getDescription()
+                persona.getDescription(),
+                persona.getVoiceIndex()
         );
     }
 }

@@ -67,7 +67,7 @@ class ChatInterviewHandoffServiceTest {
 
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(1L)));
         when(personaRepository.findById(1L)).thenReturn(Optional.of(persona(
-                1L, "압박 면접관", Role.TECH, Major.BACKEND, Type.METICULOUS, InterviewTone.PRESSURING, Level.HARD)));
+                1L, "압박 면접관", Role.TECH, Major.BACKEND, Type.METICULOUS, InterviewTone.PRESSURING, Level.HARD, 3)));
     }
 
     private PersonaEntity persona(
@@ -77,7 +77,8 @@ class ChatInterviewHandoffServiceTest {
             Major major,
             Type type,
             InterviewTone tone,
-            Level level
+            Level level,
+            Integer voiceIndex
     ) {
         return PersonaEntity.builder()
                 .personaId(personaId)
@@ -89,21 +90,35 @@ class ChatInterviewHandoffServiceTest {
                 .level(level)
                 .career(10)
                 .gender(Gender.MALE)
+                .voiceIndex(voiceIndex)
                 .build();
     }
 
-    /** N:1 면접의 면접관 등록. 진행 순서 맨 앞이 기술 면접관이다. */
-    private void multiMembers(Long... personaIds) {
+    private PersonaEntity techPersona() {
+        return persona(11L, "기술 면접관", Role.TECH, Major.FRONTEND, Type.REALISTIC, InterviewTone.DIRECT, Level.NORMAL, 2);
+    }
+
+    private PersonaEntity hrPersona() {
+        return persona(12L, "인사 면접관", Role.HR, null, Type.FRIENDLY, InterviewTone.GENTLE, Level.EASY, 4);
+    }
+
+    /**
+     * N:1 면접의 면접관 등록. 진행 순서 맨 앞이 기술 면접관이다.
+     * 페르소나 일괄 조회는 순서를 지키지 않으므로 일부러 거꾸로 돌려준다.
+     */
+    private void multiMembers(PersonaEntity... personas) {
         List<InterviewPersonaEntity> members = new ArrayList<>();
-        for (int order = 0; order < personaIds.length; order++) {
+        for (int order = 0; order < personas.length; order++) {
             members.add(InterviewPersonaEntity.builder()
                     .interviewPersonaId((long) order + 1)
                     .interviewId(3L)
-                    .personaId(personaIds[order])
+                    .personaId(personas[order].getPersonaId())
                     .personaOrder(order)
                     .build());
         }
         when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(members);
+        when(personaRepository.findAllById(members.stream().map(InterviewPersonaEntity::getPersonaId).toList()))
+                .thenReturn(new ArrayList<>(List.of(personas)).reversed());
     }
 
     private InterviewEntity interview(Long personaId) {
@@ -141,6 +156,7 @@ class ChatInterviewHandoffServiceTest {
                 .category("tech_choice")
                 .question(content)
                 .intention("캐시로 Redis를 고른 이유를 설명할 수 있는지")
+                .spokenText(content + " (발음)")
                 .expectedAnswer("선택 근거와 대안 비교")
                 .basedOn(List.of("order-api/src/cache.py"))
                 .build();
@@ -171,6 +187,8 @@ class ChatInterviewHandoffServiceTest {
         assertThat(question.getQuestion()).isEqualTo("다시 쓴 Redis 질문");
         // 채점 기준. 채팅 서버가 면접 기록과 함께 그대로 돌려줘야 채점에 쓴다.
         assertThat(question.getIntention()).isEqualTo("캐시로 Redis를 고른 이유를 설명할 수 있는지");
+        // TTS용 발음 문장. 채팅 서버가 이 값으로 질문 음성을 합성한다.
+        assertThat(question.getSpokenText()).isEqualTo("다시 쓴 Redis 질문 (발음)");
         // 질문마다 면접관이 붙는다. 1:1은 모든 질문이 같은 면접관이다.
         assertThat(question.getPersonaId()).isEqualTo(1L);
         assertThat(question.getCategory()).isEqualTo("tech_choice");
@@ -212,6 +230,27 @@ class ChatInterviewHandoffServiceTest {
         ChatInterviewPrepareRequest.Question question = sentRequest.getValue().getQuestions().getFirst();
         assertThat(question.getCategory()).isEqualTo("tech_choice");
         assertThat(question.getExpectedAnswer()).isNull();
+        // 발음 문장이 없으면 비운 채 넘긴다. 채팅 서버가 본문으로 합성한다.
+        assertThat(question.getSpokenText()).isNull();
+    }
+
+    @Test
+    void 일대일은_면접관_한_명을_음성_번호와_함께_넘긴다() {
+        service.deliver(tailor(true));
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        assertThat(sentRequest.getValue().getPersonas()).singleElement().satisfies(persona -> {
+            assertThat(persona.getPersonaId()).isEqualTo(1L);
+            assertThat(persona.getPersonaName()).isEqualTo("압박 면접관");
+            assertThat(persona.getRole()).isEqualTo(Role.TECH);
+            assertThat(persona.getMajor()).isEqualTo(Major.BACKEND);
+            assertThat(persona.getType()).isEqualTo(Type.METICULOUS);
+            assertThat(persona.getTone()).isEqualTo(InterviewTone.PRESSURING);
+            assertThat(persona.getLevel()).isEqualTo(Level.HARD);
+            assertThat(persona.getCareer()).isEqualTo(10);
+            assertThat(persona.getGender()).isEqualTo(Gender.MALE);
+            assertThat(persona.getVoiceIndex()).isEqualTo(3);
+        });
     }
 
     @Test
@@ -231,9 +270,7 @@ class ChatInterviewHandoffServiceTest {
     @Test
     void N대1은_질문에_붙어온_면접관을_그대로_넘긴다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null, InterviewMode.MULTI)));
-        multiMembers(11L, 12L);
-        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(
-                11L, "기술 면접관", Role.TECH, Major.FRONTEND, Type.REALISTIC, InterviewTone.DIRECT, Level.NORMAL)));
+        multiMembers(techPersona(), hrPersona());
         QuestionTailorEntity tailor = tailor(true);
         tailor.setQuestions(List.of(
                 TailoredQuestionResponse.builder()
@@ -258,9 +295,7 @@ class ChatInterviewHandoffServiceTest {
     @Test
     void N대1_면접은_MULTI로_넘긴다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null, InterviewMode.MULTI)));
-        multiMembers(11L, 12L);
-        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(
-                11L, "기술 면접관", Role.TECH, Major.FRONTEND, Type.REALISTIC, InterviewTone.DIRECT, Level.NORMAL)));
+        multiMembers(techPersona(), hrPersona());
         QuestionTailorEntity tailor = tailor(true);
         tailor.setQuestions(List.of(TailoredQuestionResponse.builder()
                 .id(2).personaId(11L).category("tech_choice")
@@ -279,11 +314,7 @@ class ChatInterviewHandoffServiceTest {
     @Test
     void N대1은_진행_순서_첫_면접관의_설정을_넘긴다() {
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null, InterviewMode.MULTI)));
-        multiMembers(11L, 12L);
-        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(
-                11L, "기술 면접관", Role.TECH, Major.FRONTEND, Type.REALISTIC, InterviewTone.DIRECT, Level.NORMAL)));
-        when(personaRepository.findById(12L)).thenReturn(Optional.of(persona(
-                12L, "인사 면접관", Role.HR, null, Type.FRIENDLY, InterviewTone.GENTLE, Level.EASY)));
+        multiMembers(techPersona(), hrPersona());
         QuestionTailorEntity tailor = tailor(true);
         tailor.setQuestions(List.of(
                 TailoredQuestionResponse.builder()
@@ -303,6 +334,58 @@ class ChatInterviewHandoffServiceTest {
         assertThat(sent.getLevel()).isEqualTo(Level.NORMAL);
     }
 
+    /** 면접관마다 음성과 억양이 다르다. 채팅 서버는 질문의 personaId로 이 목록에서 면접관을 찾는다. */
+    @Test
+    void N대1은_면접관_전체를_진행_순서대로_넘긴다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null, InterviewMode.MULTI)));
+        multiMembers(techPersona(), hrPersona());
+        QuestionTailorEntity tailor = tailor(true);
+        tailor.setQuestions(List.of(
+                TailoredQuestionResponse.builder().id(2).personaId(11L).question("왜 Redis 를 썼나요?").build(),
+                TailoredQuestionResponse.builder().id(6).personaId(12L).question("팀에서 갈등이 있었다면?").build()));
+
+        service.deliver(tailor);
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        List<ChatInterviewPrepareRequest.Persona> personas = sentRequest.getValue().getPersonas();
+        // 일괄 조회가 거꾸로 돌려줘도 진행 순서를 따른다.
+        assertThat(personas).extracting(ChatInterviewPrepareRequest.Persona::getPersonaId).containsExactly(11L, 12L);
+        assertThat(personas).extracting(ChatInterviewPrepareRequest.Persona::getVoiceIndex).containsExactly(2, 4);
+        assertThat(personas).extracting(ChatInterviewPrepareRequest.Persona::getTone)
+                .containsExactly(InterviewTone.DIRECT, InterviewTone.GENTLE);
+        // 비기술 면접관의 전공은 대체값 없이 비어 있다. 대체는 최상위 대표 설정에만 쓴다.
+        assertThat(personas.get(1).getMajor()).isNull();
+    }
+
+    /** 등록된 면접관 중 하나라도 페르소나가 없으면 면접관별 설정을 온전히 채울 수 없다. */
+    @Test
+    void N대1_면접관_정보가_일치하지_않으면_넘기지_않는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null, InterviewMode.MULTI)));
+        multiMembers(techPersona(), hrPersona());
+        when(personaRepository.findAllById(List.of(11L, 12L))).thenReturn(List.of(techPersona()));
+
+        assertThatThrownBy(() -> service.deliver(tailor(true)))
+                .isInstanceOf(BusinessException.class);
+
+        verify(chatServerClient, never()).prepareInterview(any());
+    }
+
+    /** 채팅 서버가 같은 조건으로 반려한다. 먼저 막아 원인을 이쪽 로그에 남긴다. */
+    @Test
+    void 질문의_면접관이_면접에_없으면_넘기지_않는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null, InterviewMode.MULTI)));
+        multiMembers(techPersona());
+        QuestionTailorEntity tailor = tailor(true);
+        tailor.setQuestions(List.of(
+                TailoredQuestionResponse.builder().id(2).personaId(11L).question("왜 Redis 를 썼나요?").build(),
+                TailoredQuestionResponse.builder().id(6).personaId(12L).question("팀에서 갈등이 있었다면?").build()));
+
+        assertThatThrownBy(() -> service.deliver(tailor))
+                .isInstanceOf(BusinessException.class);
+
+        verify(chatServerClient, never()).prepareInterview(any());
+    }
+
     /**
      * 인사·CEO 면접관에게는 전공이 없지만 채팅 서버는 전공을 필수로 받는다.
      * 비워 보내면 면접이 아예 열리지 않아 하나를 채워 넘긴다.
@@ -310,13 +393,17 @@ class ChatInterviewHandoffServiceTest {
     @Test
     void 전공이_없는_면접관은_전공을_채워_넘긴다() {
         when(personaRepository.findById(1L)).thenReturn(Optional.of(persona(
-                1L, "인사 면접관", Role.HR, null, Type.FRIENDLY, InterviewTone.GENTLE, Level.EASY)));
+                1L, "인사 면접관", Role.HR, null, Type.FRIENDLY, InterviewTone.GENTLE, Level.EASY, null)));
 
         service.deliver(tailor(true));
 
         verify(chatServerClient).prepareInterview(sentRequest.capture());
         ChatInterviewPrepareRequest sent = sentRequest.getValue();
         assertThat(sent.getMajor()).isEqualTo(Major.BACKEND);
+        // 대체는 최상위에만 쓴다. 면접관 목록에는 실제 값이 나간다.
+        assertThat(sent.getPersonas().getFirst().getMajor()).isNull();
+        // 음성 번호가 없는 예전 페르소나는 비운 채 넘긴다. 채팅 서버가 기본 음성을 쓴다.
+        assertThat(sent.getPersonas().getFirst().getVoiceIndex()).isNull();
         // 나머지 셋은 면접관 값 그대로다.
         assertThat(sent.getPersonality()).isEqualTo(Type.FRIENDLY);
         assertThat(sent.getTone()).isEqualTo(InterviewTone.GENTLE);
