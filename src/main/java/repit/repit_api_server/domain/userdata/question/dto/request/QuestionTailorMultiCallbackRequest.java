@@ -52,6 +52,8 @@ public class QuestionTailorMultiCallbackRequest {
         private String question;
         // 이 질문으로 확인하려는 것. 신규 질문의 채점 기준은 여기서 받은 값뿐이다.
         private String intention;
+        // 본문의 TTS용 발음 문장. 구버전 분석 서버는 보내지 않는다.
+        private String spokenText;
         private String expectedAnswer;
         private List<String> basedOn;
     }

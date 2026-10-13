@@ -35,6 +35,11 @@ public class PersonaService {
         if (role == Role.TECH && request.getMajor() == null) {
             throw BusinessException.unprocessable("기술 면접관에게는 전공(major)이 필요합니다.");
         }
+        // DB CHECK와 같은 범위. 번호와 성별의 관계는 Web과 채팅 서버의 카탈로그가 맞추므로 보지 않는다.
+        Integer voiceIndex = request.getVoiceIndex();
+        if (voiceIndex != null && (voiceIndex < 1 || voiceIndex > 5)) {
+            throw BusinessException.unprocessable("면접관 음성 번호(voiceIndex)는 1~5여야 합니다.");
+        }
 
         PersonaEntity persona = PersonaEntity.builder()
                 .personaName(request.getPersonaName())
@@ -47,6 +52,7 @@ public class PersonaService {
                 .gender(request.getGender())
                 .imageUrl(blankToNull(request.getImageUrl()))
                 .description(blankToNull(request.getDescription()))
+                .voiceIndex(voiceIndex)
                 .build();
 
         PersonaEntity saved =  personaRepository.save(persona);

@@ -18,6 +18,10 @@ import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 질문 재작성이 끝난 뒤, DB에 모인 면접 데이터를 채팅 서버로 넘긴다.
@@ -47,7 +51,9 @@ public class ChatInterviewHandoffService {
         InterviewEntity interview = interviewRepository.findById(tailor.getInterviewId())
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
 
-        PersonaEntity persona = representativePersona(interview);
+        List<PersonaEntity> personas = interviewers(interview);
+        // 대표 면접관. 1:1은 한 명뿐이고, N:1은 진행 순서 맨 앞이다.
+        PersonaEntity persona = personas.getFirst();
 
         return chatServerClient.prepareInterview(ChatInterviewPrepareRequest.builder()
                 .sessionId(interview.getSessionId())
@@ -61,38 +67,59 @@ public class ChatInterviewHandoffService {
                 .tone(persona.getTone())
                 .major(persona.getMajor() == null ? FALLBACK_MAJOR : persona.getMajor())
                 .level(persona.getLevel())
-                .questions(toQuestions(tailor, defaultPersonaId(interview, persona)))
+                .questions(toQuestions(tailor, defaultPersonaId(interview, persona),
+                        personas.stream().map(PersonaEntity::getPersonaId).collect(Collectors.toSet())))
+                .personas(personas.stream().map(this::toPersona).toList())
                 .build());
     }
 
     /**
-     * 면접관 설정을 대표할 면접관 한 명.
+     * 면접관 전체. 1:1은 한 명, N:1은 진행 순서대로다.
      *
-     * <p>채팅 서버는 성향·어조·전공·난이도를 면접 하나에 한 벌만 받는다. 1:1은 면접관이
-     * 한 명뿐이라 그대로지만, N:1은 여럿 중 하나를 골라야 한다.
-     *
-     * <p>N:1은 진행 순서 맨 앞을 쓴다. 그 자리는 생성할 때부터 기술 면접관으로 고정돼 있어
-     * 전공이 반드시 있고, 면접도 그 면접관으로 시작한다 — {@code InterviewService.orderForMulti} 참고.
-     * 나머지 면접관의 성향과 어조는 이 계약에서 표현되지 않는다. 질문별로 나누려면 채팅 서버가
-     * 질문마다 설정을 받도록 먼저 넓혀야 한다.
+     * <p>맨 앞이 최상위 면접관 설정을 대표한다. 채팅 서버는 성향·어조·전공·난이도를 면접 하나에
+     * 한 벌만 받던 시절의 계약을 아직 읽으므로 그 값은 그대로 둔다. N:1의 맨 앞은 생성할 때부터
+     * 기술 면접관으로 고정돼 있어 전공이 반드시 있고, 면접도 그 면접관으로 시작한다 —
+     * {@code InterviewService.orderForMulti} 참고.
      */
-    private PersonaEntity representativePersona(InterviewEntity interview) {
-        Long personaId = interview.getMode() == InterviewMode.MULTI
-                ? firstMemberPersonaId(interview.getInterviewId())
-                : interview.getPersonaId();
-        if (personaId == null) {
+    private List<PersonaEntity> interviewers(InterviewEntity interview) {
+        if (interview.getMode() != InterviewMode.MULTI) {
+            if (interview.getPersonaId() == null) {
+                throw BusinessException.unprocessable("면접에 면접관이 지정되어 있지 않습니다.");
+            }
+            return List.of(personaRepository.findById(interview.getPersonaId())
+                    .orElseThrow(() -> BusinessException.notFound("페르소나가 없습니다")));
+        }
+
+        List<Long> personaIds = interviewPersonaRepository
+                .findAllByInterviewIdOrderByPersonaOrderAsc(interview.getInterviewId()).stream()
+                .map(InterviewPersonaEntity::getPersonaId)
+                .toList();
+        if (personaIds.isEmpty()) {
             throw BusinessException.unprocessable("면접에 면접관이 지정되어 있지 않습니다.");
         }
-        return personaRepository.findById(personaId)
-                .orElseThrow(() -> BusinessException.notFound("페르소나가 없습니다"));
+        // findAllById는 순서를 지키지 않는다. 진행 순서는 면접관 목록 쪽을 따른다.
+        Map<Long, PersonaEntity> byId = personaRepository.findAllById(personaIds).stream()
+                .collect(Collectors.toMap(PersonaEntity::getPersonaId, Function.identity()));
+        if (!byId.keySet().containsAll(personaIds)) {
+            throw BusinessException.unprocessable("면접관 정보가 일치하지 않습니다.");
+        }
+        return personaIds.stream().map(byId::get).toList();
     }
 
-    /** N:1 면접의 진행 순서 첫 면접관. 생성 시점에 반드시 한 명 이상 저장돼 있다. */
-    private Long firstMemberPersonaId(Long interviewId) {
-        return interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(interviewId).stream()
-                .findFirst()
-                .map(InterviewPersonaEntity::getPersonaId)
-                .orElse(null);
+    private ChatInterviewPrepareRequest.Persona toPersona(PersonaEntity persona) {
+        return ChatInterviewPrepareRequest.Persona.builder()
+                .personaId(persona.getPersonaId())
+                .personaName(persona.getPersonaName())
+                .role(persona.getRole())
+                // 대표 설정과 달리 대체값을 채우지 않는다. 비기술 면접관은 비어 있는 것이 맞다.
+                .major(persona.getMajor())
+                .type(persona.getType())
+                .tone(persona.getTone())
+                .level(persona.getLevel())
+                .career(persona.getCareer())
+                .gender(persona.getGender())
+                .voiceIndex(persona.getVoiceIndex())
+                .build();
     }
 
     /**
@@ -119,9 +146,11 @@ public class ChatInterviewHandoffService {
      * <p>채점 기준(intention)과 기대 답변, 근거도 함께 넘긴다. 채팅 서버는 이것들을 손대지 않고 들고
      * 있다가 면접 기록과 함께 돌려주고, 그것이 그대로 채점 기준이 된다. 여기서 비워 보내면 되찾을 길이 없다.
      *
-     * <p>id와 본문, 면접관이 비면 채팅 서버가 질문을 다룰 수 없으므로 넘기기 전에 멈춘다.
+     * <p>id와 본문, 면접관이 비면 채팅 서버가 질문을 다룰 수 없으므로 넘기기 전에 멈춘다. 면접관이
+     * personas에 없을 때도 채팅 서버가 같은 조건으로 반려하므로 여기서 먼저 막아 원인을 남긴다.
      */
-    private List<ChatInterviewPrepareRequest.Question> toQuestions(QuestionTailorEntity tailor, Long defaultPersonaId) {
+    private List<ChatInterviewPrepareRequest.Question> toQuestions(
+            QuestionTailorEntity tailor, Long defaultPersonaId, Set<Long> interviewerIds) {
         List<TailoredQuestionResponse> finalQuestions = tailor.getQuestions() == null
                 ? tailor.getSourceQuestions()
                 : tailor.getQuestions();
@@ -138,11 +167,16 @@ public class ChatInterviewHandoffService {
                     if (personaId == null) {
                         throw BusinessException.unprocessable("질문에 면접관이 지정되어 있지 않습니다. id=" + question.getId());
                     }
+                    if (!interviewerIds.contains(personaId)) {
+                        throw BusinessException.unprocessable(
+                                "질문의 면접관이 이 면접에 없습니다. id=" + question.getId() + ", personaId=" + personaId);
+                    }
                     return ChatInterviewPrepareRequest.Question.builder()
                             .id(question.getId().longValue())
                             .category(question.getCategory())
                             .question(question.getQuestion())
                             .intention(question.getIntention())
+                            .spokenText(question.getSpokenText())
                             .expectedAnswer(question.getExpectedAnswer())
                             .basedOn(question.getBasedOn())
                             .personaId(personaId)

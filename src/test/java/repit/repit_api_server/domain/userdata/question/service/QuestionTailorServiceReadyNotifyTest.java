@@ -105,7 +105,7 @@ class QuestionTailorServiceReadyNotifyTest {
     private QuestionTailorCallbackRequest succeeded() {
         return new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문"))),
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null))),
                 null);
     }
 

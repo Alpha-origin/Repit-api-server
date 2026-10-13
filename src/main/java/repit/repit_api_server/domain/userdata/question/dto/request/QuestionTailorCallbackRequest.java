@@ -40,6 +40,8 @@ public class QuestionTailorCallbackRequest {
     public static class Question {
         private Integer id;
         private String question;
+        // 본문의 TTS용 발음 문장. 구버전 분석 서버는 보내지 않는다.
+        private String spokenText;
     }
 
     @Getter

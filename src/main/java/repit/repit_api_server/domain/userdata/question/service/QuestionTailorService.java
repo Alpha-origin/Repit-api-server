@@ -43,6 +43,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -883,6 +884,8 @@ public class QuestionTailorService {
                     .intention(question.getIntention() != null
                             ? question.getIntention()
                             : sourceIntentions.get(question.getId()))
+                    // 원질문에는 발음 문장이 없어 intention처럼 되찾지 않는다.
+                    .spokenText(blankToNull(question.getSpokenText()))
                     .expectedAnswer(question.getExpectedAnswer())
                     .basedOn(question.getBasedOn())
                     .build());
@@ -957,15 +960,18 @@ public class QuestionTailorService {
         }
 
         Map<Integer, String> rewritten = new LinkedHashMap<>();
+        Map<Integer, String> rewrittenSpoken = new HashMap<>();
         List<QuestionTailorCallbackRequest.Question> questions =
                 result.getQuestions() == null ? List.of() : result.getQuestions();
         for (QuestionTailorCallbackRequest.Question question : questions) {
             if (question.getId() != null && question.getQuestion() != null && !question.getQuestion().isBlank()) {
                 rewritten.put(question.getId(), question.getQuestion());
+                rewrittenSpoken.put(question.getId(), blankToNull(question.getSpokenText()));
             }
         }
 
         // 재작성분과 원문이 한 면접에 섞이면 어조가 들쭉날쭉해진다. 하나라도 비면 전체를 원문으로 되돌린다.
+        // 발음 문장은 판정에 넣지 않는다. 비면 채팅 서버가 본문으로 합성하면 그만이다.
         boolean complete = source.stream().allMatch(question -> rewritten.containsKey(question.getId()));
         if (!complete) {
             log.warn("재작성 결과에 누락된 질문이 있어 전체를 원질문으로 되돌립니다. tailorId={}, 원본={}건, 재작성={}건",
@@ -983,6 +989,7 @@ public class QuestionTailorService {
                         .category(question.getCategory())
                         .question(rewritten.get(question.getId()))
                         .intention(question.getIntention())
+                        .spokenText(rewrittenSpoken.get(question.getId()))
                         .expectedAnswer(question.getExpectedAnswer())
                         .basedOn(question.getBasedOn())
                         .build())
