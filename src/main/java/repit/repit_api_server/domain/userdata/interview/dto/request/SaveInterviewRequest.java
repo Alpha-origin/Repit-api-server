@@ -75,6 +75,7 @@ public class SaveInterviewRequest {
         private Long questionId;
         private Integer responseTime;
         private String answerContent;
+        // 채팅 서버의 시각이라 UTC다. 시간대 없이 오므로 저장할 때 이 서버 시간대로 옮긴다.
         private LocalDateTime answerCreatedAt;
     }
 }

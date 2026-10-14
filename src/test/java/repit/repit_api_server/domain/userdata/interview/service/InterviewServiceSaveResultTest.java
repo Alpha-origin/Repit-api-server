@@ -28,6 +28,7 @@ import repit.repit_api_server.global.exception.BusinessException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -215,8 +216,21 @@ class InterviewServiceSaveResultTest {
         assertThat(answers).extracting(AnswerEntity::getQuestionId).containsExactly(901L, 902L);
         assertThat(answers).extracting(AnswerEntity::getUserId).containsOnly(7L);
         assertThat(answers.get(0).getContent()).isEqualTo("스레드가 I/O 대기에 묶였습니다.");
-        assertThat(answers.get(0).getCreatedAt())
-                .isEqualTo(LocalDateTime.parse("2026-08-18T01:01:30"));
+    }
+
+    @Test
+    void 채팅_서버의_UTC_답변_시각을_이_서버_시간대로_옮긴다() {
+        // CI는 UTC라 그대로 두면 옮기지 않아도 통과한다. 로컬처럼 KST에서 돌려 본다.
+        TimeZone original = TimeZone.getDefault();
+        TimeZone.setDefault(TimeZone.getTimeZone("Asia/Seoul"));
+        try {
+            service.saveInterview(request());
+
+            assertThat(savedAnswers().get(0).getCreatedAt())
+                    .isEqualTo(LocalDateTime.parse("2026-08-18T10:01:30"));
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

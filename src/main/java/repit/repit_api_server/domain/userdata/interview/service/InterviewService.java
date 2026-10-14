@@ -37,6 +37,8 @@ import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -433,6 +435,19 @@ public class InterviewService {
     }
 
     /**
+     * 채팅 서버가 찍은 시각을 이 서버의 시각으로 옮긴다.
+     *
+     * <p>채팅 서버는 UTC 컨테이너에서 시간대 없이 LocalDateTime.now()를 보낸다. 그대로 저장하면 이 서버가 UTC가
+     * 아닐 때(로컬 KST) 답변만 이 서버가 찍은 질문 시각보다 9시간 이르게 남는다.
+     */
+    // ponytail: 채팅 서버가 UTC라고 가정한다. 다른 시간대에서 돌리면 어긋나므로, 채팅 서버가 오프셋을 실어 보내면 그 값을 쓴다.
+    private LocalDateTime fromChatClock(LocalDateTime chatTime) {
+        return chatTime == null ? null : chatTime.atOffset(ZoneOffset.UTC)
+                .atZoneSameInstant(ZoneId.systemDefault())
+                .toLocalDateTime();
+    }
+
+    /**
      * 질문 의도. 채점은 이 값 하나를 기준으로 이뤄진다.
      *
      * <p>intention이 오면 그것을 쓴다. 원질문은 면접을 열 때 우리가 넘긴 값이 그대로 돌아온다.
@@ -474,7 +489,7 @@ public class InterviewService {
                     .userId(interview.getUserId())
                     .responseTime(answer.getResponseTime())
                     .content(answer.getAnswerContent())
-                    .createdAt(orNow(answer.getAnswerCreatedAt()))
+                    .createdAt(orNow(fromChatClock(answer.getAnswerCreatedAt())))
                     .build());
         }
 
