@@ -36,4 +36,25 @@ class CallbackSuccessRequestDeserializationTest {
             assertThat(request.getError().getMessage()).isEqualTo("private 저장소입니다.");
         });
     }
+
+    // 분석 서버 docs/api.md 「POST /profile」의 실패 예시. camelCase이고 원인 코드가 따로 온다.
+    private static final String FAILURE_CALLBACK_WITH_CODE = """
+            {
+              "jobId": "3f0a",
+              "status": "failed",
+              "error": { "statusCode": 422, "message": "근거가 부족합니다.", "code": "INSUFFICIENT_EVIDENCE" }
+            }
+            """;
+
+    @Test
+    void camelCase_실패_콜백의_상태_코드와_원인_코드를_읽는다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+
+            CallbackSuccessRequest request = objectMapper.readValue(FAILURE_CALLBACK_WITH_CODE, CallbackSuccessRequest.class);
+
+            assertThat(request.getError().getStatus_code()).isEqualTo(422);
+            assertThat(request.getError().getCode()).isEqualTo("INSUFFICIENT_EVIDENCE");
+        });
+    }
 }

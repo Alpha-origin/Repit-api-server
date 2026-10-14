@@ -12,7 +12,7 @@ import java.util.Map;
 public record VideoAnalysisResponse(Status status, Map<String, Object> result, boolean canRetry) {
 
     public enum Status {
-        /** 면접 화면 녹화가 없거나, 보관 기간이 지나 분석할 수 없다. */
+        /** 면접 화면 녹화가 없거나, 보관 기간이 지났거나, 영상 분석을 켜기 전에 녹화해 분석하지 않는다. */
         NONE,
         /** 영상은 있고 아직 요청 전이다. */
         WAITING,

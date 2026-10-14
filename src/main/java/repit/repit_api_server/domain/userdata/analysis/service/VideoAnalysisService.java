@@ -34,7 +34,9 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Locale;
@@ -119,6 +121,13 @@ public class VideoAnalysisService {
     @Value("${app.video-analysis.api-token:}")
     private String videoApiToken;
 
+    // 영상 분석을 켠 시각(오프셋을 포함한 ISO-8601). 이 시각까지 올라온 영상은 분석하지 않는다. 켜려면 반드시 있어야 한다.
+    @Value("${app.video-analysis.analyze-uploaded-after:}")
+    private String analyzeUploadedAfterSetting;
+
+    // 위 값을 저장된 시각과 같은 시간대로 옮긴 것. 꺼져 있으면 null이다.
+    private LocalDateTime analyzeUploadedAfter;
+
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
 
@@ -126,15 +135,18 @@ public class VideoAnalysisService {
     private String bucketName;
 
     /**
-     * 켰는데 서버 간 인증값이 없으면 뜨지 않는다.
+     * 켰는데 서버 간 인증값이나 분석 기준 시각이 없으면 뜨지 않는다.
      *
      * <p>영상 콜백은 어긋난 본문까지 원문으로 남기므로 인증 없이는 받지 않는다(CallbackPaths.ALWAYS_AUTHENTICATED).
      * 그 상태로 요청을 보내면 콜백은 모두 401로 튕기고 결과는 조회로만 늦게 들어오는데, 겉으로는 정상처럼 보인다.
      * 요청 인증값이 없으면 접수가 모두 401로 거절돼 닫힌다. 잘못된 설정을 배포 시점에 드러낸다 — 블루/그린 배포라
      * 새 서버가 뜨지 않으면 이전 서버가 그대로 남는다.
+     *
+     * <p>기준 시각이 비어 있을 때 "제한 없음"으로 읽으면 켜는 순간 그동안 쌓인 영상(업로드 89일 이내)이 모두 나간다.
+     * 켠 뒤 올라온 영상만 분석하기로 했으므로 값을 빠뜨린 배포를 막는다.
      */
     @PostConstruct
-    void requireAuthTokens() {
+    void requireSettings() {
         if (!enabled) {
             return;
         }
@@ -145,6 +157,18 @@ public class VideoAnalysisService {
         if (videoApiToken == null || videoApiToken.isBlank()) {
             throw new IllegalStateException("영상 분석(VIDEO_ANALYSIS_ENABLED)을 켜려면 VIDEO_ANALYSIS_API_TOKEN이 필요합니다. "
                     + "없으면 분석 서버가 영상 요청을 모두 401로 거절합니다.");
+        }
+        if (analyzeUploadedAfterSetting == null || analyzeUploadedAfterSetting.isBlank()) {
+            throw new IllegalStateException("영상 분석(VIDEO_ANALYSIS_ENABLED)을 켜려면 VIDEO_ANALYSIS_UPLOADED_AFTER가 필요합니다. "
+                    + "없으면 켜기 전에 올라온 영상까지 분석합니다.");
+        }
+        try {
+            analyzeUploadedAfter = OffsetDateTime.parse(analyzeUploadedAfterSetting.trim())
+                    .atZoneSameInstant(ZoneId.systemDefault())
+                    .toLocalDateTime();
+        } catch (DateTimeParseException e) {
+            throw new IllegalStateException("VIDEO_ANALYSIS_UPLOADED_AFTER는 오프셋을 포함한 ISO-8601 시각이어야 합니다. "
+                    + "예: 2026-10-20T09:00:00+09:00", e);
         }
     }
 
@@ -159,8 +183,12 @@ public class VideoAnalysisService {
             return;
         }
         LocalDateTime startedAt = now();
+        LocalDateTime uploadedAfter = startedAt.minus(ANALYZABLE_FOR);
+        if (analyzeUploadedAfter != null && analyzeUploadedAfter.isAfter(uploadedAfter)) {
+            uploadedAfter = analyzeUploadedAfter;
+        }
         for (InterviewRecordingEntity video : analysisRepository.findVideosToStart(
-                startedAt.minus(UPLOAD_GRACE), startedAt.minus(ANALYZABLE_FOR), Limit.of(BATCH_SIZE))) {
+                startedAt.minus(UPLOAD_GRACE), uploadedAfter, Limit.of(BATCH_SIZE))) {
             guarded("영상 분석 요청을 만들지 못했습니다.", video.getInterviewId(),
                     () -> open(video, newChainId(), VideoAnalysisRequestedBy.AUTO));
         }
@@ -184,7 +212,7 @@ public class VideoAnalysisService {
         List<VideoAnalysisEntity> analyses =
                 analysisRepository.findAllByRecordingIdOrderByAnalysisIdAsc(video.getRecordingId());
         if (analyses.isEmpty()) {
-            VideoAnalysisResponse.Status status = expired(video, now())
+            VideoAnalysisResponse.Status status = expired(video, now()) || uploadedBeforeEnabled(video)
                     ? VideoAnalysisResponse.Status.NONE
                     : VideoAnalysisResponse.Status.WAITING;
             return new VideoAnalysisResponse(status, null, false);
@@ -244,6 +272,9 @@ public class VideoAnalysisService {
     String retryBlockedReason(InterviewRecordingEntity video, List<VideoAnalysisEntity> analyses, LocalDateTime now) {
         if (expired(video, now)) {
             return "녹화한 지 90일이 지나 다시 분석할 수 없습니다.";
+        }
+        if (uploadedBeforeEnabled(video)) {
+            return "영상 분석을 시작하기 전에 녹화한 영상이라 분석할 수 없습니다.";
         }
         if (analyses.isEmpty()) {
             return "아직 분석을 시작하지 않았습니다.";
@@ -582,6 +613,11 @@ public class VideoAnalysisService {
 
     private static boolean expired(InterviewRecordingEntity video, LocalDateTime now) {
         return !now.isBefore(video.getCreatedAt().plus(ANALYZABLE_FOR));
+    }
+
+    /** 영상 분석을 켜기 전에 올라와 분석하지 않는 영상인지. 스윕이 고르는 기준(올라온 시각 &gt; 기준 시각)과 같다. */
+    private boolean uploadedBeforeEnabled(InterviewRecordingEntity video) {
+        return analyzeUploadedAfter != null && !video.getCreatedAt().isAfter(analyzeUploadedAfter);
     }
 
     private static Duration resendDelay(int sent) {

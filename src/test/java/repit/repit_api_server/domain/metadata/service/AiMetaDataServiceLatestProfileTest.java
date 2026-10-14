@@ -70,6 +70,33 @@ class AiMetaDataServiceLatestProfileTest {
                 .isEqualTo(ProfileStatusResponse.INTERNAL);
     }
 
+    private AnalysisDataEntity failed(int statusCode, String code, String message) {
+        AnalysisDataEntity data = failed(statusCode, message);
+        data.setErrorCode(code);
+        return data;
+    }
+
+    /** 분석 서버가 원인 코드를 보내면 문구가 아니라 코드로 고른다. 문구가 바뀌어도, 코드와 엇갈려도 코드가 맞다. */
+    @Test
+    void 원인_코드가_있으면_메시지보다_코드를_따른다() {
+        assertThat(latest(failed(422, "INSUFFICIENT_EVIDENCE", "카테고리 2종 미만입니다.")).getFailureReason())
+                .isEqualTo(ProfileStatusResponse.INSUFFICIENT_EVIDENCE);
+        assertThat(latest(failed(422, "INVALID_MATERIAL", "근거를 찾을 PDF를 열 수 없습니다.")).getFailureReason())
+                .isEqualTo(ProfileStatusResponse.INVALID_MATERIAL);
+        assertThat(latest(failed(403, "REPO_NOT_PUBLIC", "private")).getFailureReason())
+                .isEqualTo(ProfileStatusResponse.REPO_NOT_PUBLIC);
+        assertThat(latest(failed(500, "INTERNAL", "오류")).getFailureReason())
+                .isEqualTo(ProfileStatusResponse.INTERNAL);
+    }
+
+    @Test
+    void 모르는_원인_코드는_상태_코드로_고른다() {
+        assertThat(latest(failed(422, "SOMETHING_NEW", "근거가 부족합니다.")).getFailureReason())
+                .isEqualTo(ProfileStatusResponse.INSUFFICIENT_EVIDENCE);
+        assertThat(latest(failed(403, "SOMETHING_NEW", "?")).getFailureReason())
+                .isEqualTo(ProfileStatusResponse.REPO_NOT_PUBLIC);
+    }
+
     @Test
     void 분석_중이면_사유를_싣지_않는다() {
         ProfileStatusResponse response = latest(AnalysisDataEntity.builder()

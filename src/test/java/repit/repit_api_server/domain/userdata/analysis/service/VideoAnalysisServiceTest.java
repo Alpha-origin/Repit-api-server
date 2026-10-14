@@ -33,6 +33,8 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -91,6 +93,8 @@ class VideoAnalysisServiceTest {
         ReflectionTestUtils.setField(service, "enabled", true);
         ReflectionTestUtils.setField(service, "internalAuthToken", "secret");
         ReflectionTestUtils.setField(service, "videoApiToken", "video-secret");
+        // 설정 문자열만 둔다. 기준 시각이 필요한 테스트는 따로 정한다.
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfterSetting", "2026-10-20T09:00:00+09:00");
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
         ReflectionTestUtils.setField(service, "bucketName", "repit-bucket");
 
@@ -439,20 +443,80 @@ class VideoAnalysisServiceTest {
     void 켰는데_서버_간_인증값이_없으면_뜨지_않는다() {
         ReflectionTestUtils.setField(service, "internalAuthToken", " ");
 
-        assertThatThrownBy(service::requireAuthTokens).isInstanceOf(IllegalStateException.class)
+        assertThatThrownBy(service::requireSettings).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("INTERNAL_AUTH_TOKEN");
 
         ReflectionTestUtils.setField(service, "internalAuthToken", "secret");
         ReflectionTestUtils.setField(service, "videoApiToken", "");
-        assertThatThrownBy(service::requireAuthTokens).isInstanceOf(IllegalStateException.class)
+        assertThatThrownBy(service::requireSettings).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("VIDEO_ANALYSIS_API_TOKEN");
 
         ReflectionTestUtils.setField(service, "enabled", false);
-        service.requireAuthTokens();
+        service.requireSettings();
 
         ReflectionTestUtils.setField(service, "enabled", true);
         ReflectionTestUtils.setField(service, "videoApiToken", "video-secret");
-        service.requireAuthTokens();
+        service.requireSettings();
+    }
+
+    /** 비어 있을 때 "제한 없음"으로 읽으면 켜는 순간 그동안 쌓인 영상이 모두 나간다. */
+    @Test
+    void 켰는데_분석_기준_시각이_없거나_틀리면_뜨지_않는다() {
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfterSetting", " ");
+        assertThatThrownBy(service::requireSettings).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("VIDEO_ANALYSIS_UPLOADED_AFTER");
+
+        // 오프셋이 없으면 어느 시간대인지 모른다.
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfterSetting", "2026-10-20T09:00:00");
+        assertThatThrownBy(service::requireSettings).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("VIDEO_ANALYSIS_UPLOADED_AFTER");
+
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfterSetting", "2026-10-20T09:00:00+09:00");
+        service.requireSettings();
+        assertThat(ReflectionTestUtils.getField(service, "analyzeUploadedAfter")).isEqualTo(
+                OffsetDateTime.parse("2026-10-20T09:00:00+09:00").atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime());
+
+        ReflectionTestUtils.setField(service, "enabled", false);
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfterSetting", "");
+        service.requireSettings();
+    }
+
+    @Test
+    void 스윕은_분석을_켠_뒤에_올라온_영상만_고른다() {
+        LocalDateTime enabledAt = LocalDateTime.now().minusDays(1);
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfter", enabledAt);
+
+        service.sweep();
+
+        verify(analysisRepository).findVideosToStart(any(), eq(enabledAt), any());
+    }
+
+    @Test
+    void 분석을_켠_지_89일이_지나면_보관_기간으로_고른다() {
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfter", LocalDateTime.now().minusDays(100));
+
+        service.sweep();
+
+        ArgumentCaptor<LocalDateTime> uploadedAfter = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(analysisRepository).findVideosToStart(any(), uploadedAfter.capture(), any());
+        assertThat(uploadedAfter.getValue()).isAfter(LocalDateTime.now().minusDays(90));
+    }
+
+    /** 대기로 보이면 웹은 오지 않을 분석을 영영 기다린다. */
+    @Test
+    void 분석을_켜기_전에_올라온_영상은_NONE이고_재분석을_받지_않는다() {
+        // 영상은 하루 전에 올라왔다.
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfter", LocalDateTime.now().minusHours(1));
+
+        VideoAnalysisResponse response = service.get(USER_ID, INTERVIEW_ID);
+
+        assertThat(response.status()).isEqualTo(VideoAnalysisResponse.Status.NONE);
+        assertThat(response.canRetry()).isFalse();
+        assertThatThrownBy(() -> service.retry(USER_ID, INTERVIEW_ID))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT));
+
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfter", LocalDateTime.now().minusDays(2));
+        assertThat(service.get(USER_ID, INTERVIEW_ID).status()).isEqualTo(VideoAnalysisResponse.Status.WAITING);
     }
 
     @Test
