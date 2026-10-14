@@ -11,4 +11,4 @@ ALTER TABLE analysis_data
     ADD CONSTRAINT analysis_data_result_type_check CHECK (result_type IN ('PROFILE'));
 
 COMMENT ON COLUMN analysis_data.result_type IS
-    'PROFILE = /profile 결과({ profile, projectSummary }). 옛 /generate 결과(LEGACY_GENERATE)는 V30에서 지웠다.';
+    'PROFILE = /profile 결과({ profile, projectSummary }). 옛 /generate 결과(LEGACY_GENERATE)는 V31에서 지웠다.';
