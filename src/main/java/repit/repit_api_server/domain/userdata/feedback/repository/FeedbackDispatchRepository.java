@@ -71,6 +71,27 @@ public interface FeedbackDispatchRepository extends JpaRepository<FeedbackDispat
     int reopen(Long interviewId, FeedbackDispatchKind kind, LocalDateTime lastActivityAt, String reason);
 
     /**
+     * 사용자의 다시 요청을 받아 끝난(DONE·FAILED) 건을 기다리는 자리로 돌려놓는다. 바뀐 행이 있을 때만 받은 것이다.
+     *
+     * <p>한도와 "지금 요청 중이 아닌지"를 같은 문장에서 확인한다. 연달아 누른 요청이 둘 다 받아들여지거나 한도를
+     * 넘지 않는다.
+     *
+     * <p>{@link #reopen}과 달리 시도 횟수를 0으로 되돌리고 FAILED도 되돌린다. 자동 재시도를 다 쓰고 닫힌 건이라도
+     * 사람이 다시 요청했으면 처음처럼 시도한다. 마지막 활동 시각은 그대로 둔다 — 대개 유예 시간이 지나 있어 다음
+     * 스윕이 곧바로 집는다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update FeedbackDispatchEntity d set d.status = repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.WAITING, "
+            + "d.claimedAt = null, d.nextAttemptAt = null, d.attemptCount = 0, d.lastError = null, "
+            + "d.userRetryCount = d.userRetryCount + 1 "
+            + "where d.interviewId = :interviewId and d.kind = :kind "
+            + "and d.status in (repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.DONE, "
+            + "repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus.FAILED) "
+            + "and d.userRetryCount < :maxRetries")
+    int reopenForUserRetry(Long interviewId, FeedbackDispatchKind kind, int maxRetries);
+
+    /**
      * 차지한 채 오래 끝나지 않은 건을 WAITING으로 되돌린다.
      *
      * <p>차지한 뒤 요청을 보내기 전에 재배포나 프로세스 종료가 일어나면 그 건은 SENDING에 남는다.

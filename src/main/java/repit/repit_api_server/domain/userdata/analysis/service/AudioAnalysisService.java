@@ -24,6 +24,7 @@ import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackDispatchEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchKind;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackDispatchRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
@@ -66,6 +67,9 @@ import java.util.stream.Collectors;
  * 새 작업을 만들지 않고 기존 작업을 202로 돌려주므로, 응답을 받지 못한 요청은 <b>같은 요청 id로</b> 다시 보내야
  * 같은 답변이 두 번 분석되지 않는다. 반대로 분석 서버가 거절한 요청은 그 자리에서 닫아, 그 녹음이 새 요청
  * id로 다시 나가게 한다 — 서명이 만료된 주소는 새 주소와 새 요청 id로만 살릴 수 있다.
+ *
+ * <p>사용자는 면접당 {@value #MAX_USER_RETRIES}번 다시 요청할 수 있다({@link #retry}). 다시 보내는 것은 결과가 없거나
+ * 다시 하면 나아질 실패가 있는 답변뿐이다({@link #worthRetrying}).
  */
 @Service
 @RequiredArgsConstructor
@@ -78,6 +82,8 @@ public class AudioAnalysisService {
     static final int MAX_RECORDINGS_PER_REQUEST = 12;
     // 분석 서버가 받는 녹음 하나의 크기 상한. 넘는 것이 하나라도 실리면 요청 전체가 422다.
     static final long MAX_SOURCE_BYTES = 100_000_000L;
+    // 사용자가 다시 요청할 수 있는 횟수. 영상의 영상당 2회와 같다.
+    static final int MAX_USER_RETRIES = 2;
     private static final String TIMED_OUT = "음성 분석 결과를 제때 받지 못했습니다.";
     private static final String NOT_ACKNOWLEDGED = "음성 분석 접수를 확인하지 못해 새 요청으로 다시 맡깁니다.";
 
@@ -159,20 +165,132 @@ public class AudioAnalysisService {
      *   <li>결과는 녹음 id로 찾고, 여럿이면 요청 순서(analysis_id)로 가장 나중 것을 쓴다. 도착 순서로 고르면 늦게 온 옛
      *       결과가 새 결과를 가린다.</li>
      *   <li>결과 없는 녹음이 앞으로 요청될지는 음성 분석 대기 행으로 정한다({@link #toBeRequested}).</li>
+     *   <li>결과보다 나중 요청이 그 녹음을 다시 분석하는 중이면 진행 중으로 보인다({@link #reanalyzing}).</li>
      * </ul>
      */
     public AudioAnalysisResponse get(Long userId, Long interviewId) {
+        InterviewEntity interview = ownedInterview(userId, interviewId);
+        FeedbackDispatchEntity dispatch = audioDispatch(interviewId);
+        Status toBeRequested = toBeRequested(dispatch);
+        List<AudioAnalysisResponse.Answer> answers = answers(interviewId, toBeRequested);
+        if (answers.isEmpty()) {
+            // 음성이 아직 올라오는 중일 수 있다. 요청할 때가 지났는데도 없으면 받을 결과가 없다(텍스트 면접 등).
+            return new AudioAnalysisResponse(toBeRequested == Status.PENDING ? Status.PENDING : Status.UNAVAILABLE,
+                    List.of(), false);
+        }
+        return new AudioAnalysisResponse(overallStatus(answers), answers,
+                retryBlockedReason(interview, dispatch, answers) == null);
+    }
+
+    /**
+     * 사용자가 음성 분석을 다시 요청한다.
+     *
+     * <p>{@link #worthRetrying} 답변의 녹음만 새 요청 id로 요청 자리를 만들고, 음성 분석 대기 행을 기다리는 자리로
+     * 돌린다. 보내는 것은 대기 스윕이 한다 — 요청 경로가 작업 id 없는 요청을 그 요청 id로 보내므로 따로 보내는 길을
+     * 두지 않는다. 서명 URL도 그때 새로 만든다.
+     *
+     * <p>둘을 한 트랜잭션으로 묶는다. 대기 행만 돌면 횟수만 쓰고 아무것도 보내지 않고, 요청 자리만 남으면 아무도
+     * 보내지 않는다.
+     */
+    @Transactional
+    public AudioAnalysisResponse retry(Long userId, Long interviewId) {
+        InterviewEntity interview = ownedInterview(userId, interviewId);
+        FeedbackDispatchEntity dispatch = audioDispatch(interviewId);
+        List<AudioAnalysisResponse.Answer> answers = answers(interviewId, toBeRequested(dispatch));
+        String blocked = retryBlockedReason(interview, dispatch, answers);
+        if (blocked != null) {
+            throw BusinessException.conflict(blocked);
+        }
+        if (dispatchRepository.reopenForUserRetry(interviewId, FeedbackDispatchKind.AUDIO_ANALYSIS,
+                MAX_USER_RETRIES) == 0) {
+            // 연달아 누른 다른 요청이 먼저 받아들여졌다.
+            throw BusinessException.conflict("이미 분석 중입니다.");
+        }
+
+        List<Long> recordingIds = answers.stream()
+                .filter(AudioAnalysisService::worthRetrying)
+                .map(answer -> Long.valueOf(answer.recordingId()))
+                .toList();
+        for (int from = 0; from < recordingIds.size(); from += MAX_RECORDINGS_PER_REQUEST) {
+            analysisRepository.save(newRequest(interview,
+                    recordingIds.subList(from, Math.min(from + MAX_RECORDINGS_PER_REQUEST, recordingIds.size()))));
+        }
+        log.info("사용자가 음성 분석을 다시 요청했습니다. interviewId={}, recordings={}", interviewId, recordingIds);
+        return get(userId, interviewId);
+    }
+
+    /**
+     * 다시 요청을 받을 수 없는 이유. 받을 수 있으면 null.
+     *
+     * <p>정상 결과도 말더듬 검출이 없어 늘 PARTIAL이라, 상태만으로는 열지 않고 다시 보낼 답변이 있을 때만 연다.
+     */
+    String retryBlockedReason(InterviewEntity interview, FeedbackDispatchEntity dispatch,
+                              List<AudioAnalysisResponse.Answer> answers) {
+        if (dispatch == null) {
+            return "아직 분석을 시작하지 않았습니다.";
+        }
+        if (dispatch.getStatus() == FeedbackDispatchStatus.WAITING || dispatch.getStatus() == FeedbackDispatchStatus.SENDING
+                || answers.stream().anyMatch(answer -> answer.status() == Status.PENDING)) {
+            return "이미 분석 중입니다.";
+        }
+        if (interview.getSessionId() == null || interview.getSessionId().isBlank()) {
+            return "면접에 채팅 세션이 없어 음성 분석을 할 수 없습니다.";
+        }
+        if (answers.stream().noneMatch(AudioAnalysisService::worthRetrying)) {
+            return "다시 분석할 답변이 없습니다.";
+        }
+        if (dispatch.getUserRetryCount() >= MAX_USER_RETRIES) {
+            return "음성 분석은 면접당 " + MAX_USER_RETRIES + "번까지 다시 요청할 수 있습니다.";
+        }
+        return null;
+    }
+
+    /**
+     * 다시 보내면 결과가 나아질 수 있는 답변.
+     *
+     * <ul>
+     *   <li>결과가 없다(지표도 실패 사유도 없다) — 요청이 결과 없이 닫혔거나, 끝난 요청에 이 녹음의 결과만 빠졌거나,
+     *       요청을 마친 뒤 올라왔다.</li>
+     *   <li>파일·timing·fluency 중 실패한 곳을 분석 서버가 retryable=true로 알렸다 — 원본 다운로드 실패, 서명 만료,
+     *       외부 서비스 장애 등.</li>
+     * </ul>
+     * 라인의 partial(말더듬 검출 미제공, 무발화·한글 없음)과 retryable=false인 실패(전사할 말 없음, 파일 손상 등)는
+     * 같은 음성이면 같은 결과가 나오므로 넣지 않는다.
+     */
+    static boolean worthRetrying(AudioAnalysisResponse.Answer answer) {
+        if (answer.status() == Status.PENDING) {
+            return false;
+        }
+        if (answer.timing() == null && answer.fluency() == null && answer.error() == null) {
+            return true;
+        }
+        return (answer.error() != null && Boolean.TRUE.equals(answer.error().retryable()))
+                || retryableLine(answer.timing()) || retryableLine(answer.fluency());
+    }
+
+    private static boolean retryableLine(Map<String, Object> line) {
+        return line != null && Boolean.TRUE.equals(errorField(line.get("error"), "retryable", Boolean.class));
+    }
+
+    private InterviewEntity ownedInterview(Long userId, Long interviewId) {
         InterviewEntity interview = interviewRepository.findById(interviewId)
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
         if (!Objects.equals(userId, interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 볼 수 있습니다.");
         }
-        Status toBeRequested = toBeRequested(interviewId);
+        return interview;
+    }
+
+    private FeedbackDispatchEntity audioDispatch(Long interviewId) {
+        return dispatchRepository.findByInterviewIdAndKind(interviewId, FeedbackDispatchKind.AUDIO_ANALYSIS)
+                .orElse(null);
+    }
+
+    /** 녹음이 있는 답변마다 지금 보여 줄 상태와 지표. */
+    private List<AudioAnalysisResponse.Answer> answers(Long interviewId, Status toBeRequested) {
         Collection<AnswerRecording> loaded = analyzable(interviewId).values();
         if (loaded.isEmpty()) {
-            // 음성이 아직 올라오는 중일 수 있다. 요청할 때가 지났는데도 없으면 받을 결과가 없다(텍스트 면접 등).
-            return new AudioAnalysisResponse(toBeRequested == Status.PENDING ? Status.PENDING : Status.UNAVAILABLE,
-                    List.of());
+            return List.of();
         }
 
         // 요청 순서대로 덮어 쓰므로 녹음마다 가장 나중 요청·결과가 남는다.
@@ -194,16 +312,26 @@ public class AudioAnalysisService {
                     .forEach(result -> resultByRecording.put(result.getRecordingId(), result));
         }
 
-        List<AudioAnalysisResponse.Answer> answers = loaded.stream()
+        return loaded.stream()
                 .map(one -> {
                     Long recordingId = one.recording().getRecordingId();
                     AudioAnalysisResultEntity result = resultByRecording.get(recordingId);
-                    return result == null
-                            ? withoutResult(one, requestByRecording.get(recordingId), toBeRequested)
+                    AudioAnalysisEntity latestRequest = requestByRecording.get(recordingId);
+                    return result == null || reanalyzing(latestRequest, result, toBeRequested)
+                            ? withoutResult(one, latestRequest, toBeRequested)
                             : withResult(one, result, requestById.get(result.getAnalysisId()));
                 })
                 .toList();
-        return new AudioAnalysisResponse(overallStatus(answers), answers);
+    }
+
+    /**
+     * 결과를 낸 요청보다 나중 요청이 그 녹음을 다시 분석하는 중인지. 그동안은 앞선 결과 대신 진행 중으로 보여,
+     * 웹이 조회를 멈추지 않고 새 결과까지 받게 한다.
+     */
+    private static boolean reanalyzing(AudioAnalysisEntity latestRequest, AudioAnalysisResultEntity result,
+                                       Status toBeRequested) {
+        return latestRequest != null && latestRequest.getAnalysisId() > result.getAnalysisId()
+                && statusWithoutResult(latestRequest, toBeRequested) == Status.PENDING;
     }
 
     private AudioAnalysisResponse.Answer withResult(AnswerRecording loaded, AudioAnalysisResultEntity result,
@@ -222,15 +350,19 @@ public class AudioAnalysisService {
      */
     private static AudioAnalysisResponse.Answer withoutResult(AnswerRecording loaded, AudioAnalysisEntity latestRequest,
                                                               Status toBeRequested) {
-        Status status = latestRequest == null ? toBeRequested : switch (latestRequest.getStatus()) {
+        return new AudioAnalysisResponse.Answer(String.valueOf(loaded.questionId()), String.valueOf(loaded.answerId()),
+                String.valueOf(loaded.recording().getRecordingId()),
+                latestRequest == null ? null : latestRequest.getRequestId(),
+                statusWithoutResult(latestRequest, toBeRequested), null, null, null, null);
+    }
+
+    private static Status statusWithoutResult(AudioAnalysisEntity latestRequest, Status toBeRequested) {
+        return latestRequest == null ? toBeRequested : switch (latestRequest.getStatus()) {
             case PENDING -> Status.PENDING;
             case FAILED -> toBeRequested == Status.PENDING ? Status.PENDING : Status.FAILED;
             // 끝난 요청인데 이 녹음의 결과만 빠졌다. 다시 요청되지 않으므로 받을 결과가 없다.
             case READY, PARTIAL, UNAVAILABLE -> Status.UNAVAILABLE;
         };
-        return new AudioAnalysisResponse.Answer(String.valueOf(loaded.questionId()), String.valueOf(loaded.answerId()),
-                String.valueOf(loaded.recording().getRecordingId()),
-                latestRequest == null ? null : latestRequest.getRequestId(), status, null, null, null, null);
     }
 
     /**
@@ -238,20 +370,20 @@ public class AudioAnalysisService {
      *
      * <ul>
      *   <li>행이 없다 — 면접 기록이 아직 오지 않았다. 기록이 오면 행이 생기고 요청이 나간다.</li>
-     *   <li>WAITING·SENDING — 음성이 모이기를 기다리거나 요청하는 중이다.</li>
+     *   <li>WAITING·SENDING — 음성이 모이기를 기다리거나 요청하는 중이다(다시 요청을 받은 뒤 포함).</li>
      *   <li>DONE — 요청을 마쳤다. 그 뒤에 올라온 녹음은 이번 분석에 들지 않는다.</li>
      *   <li>FAILED — 요청을 포기했다.</li>
      * </ul>
      */
-    private Status toBeRequested(Long interviewId) {
-        return dispatchRepository.findByInterviewIdAndKind(interviewId, FeedbackDispatchKind.AUDIO_ANALYSIS)
-                .map(FeedbackDispatchEntity::getStatus)
-                .map(dispatch -> switch (dispatch) {
-                    case WAITING, SENDING -> Status.PENDING;
-                    case DONE -> Status.UNAVAILABLE;
-                    case FAILED -> Status.FAILED;
-                })
-                .orElse(Status.PENDING);
+    private static Status toBeRequested(FeedbackDispatchEntity dispatch) {
+        if (dispatch == null) {
+            return Status.PENDING;
+        }
+        return switch (dispatch.getStatus()) {
+            case WAITING, SENDING -> Status.PENDING;
+            case DONE -> Status.UNAVAILABLE;
+            case FAILED -> Status.FAILED;
+        };
     }
 
     /** 결과 행의 status(대문자로 저장). 모르는 값은 받을 수 있는 결과가 없는 것으로 본다 — 콜백 상태와 같은 규칙이다. */
@@ -340,12 +472,13 @@ public class AudioAnalysisService {
      *   <li>결과를 기다리다 확인할 때가 된 요청 — 작업을 직접 조회해 결과가 있으면 가져온다. 콜백 재전송이 모두
      *       실패해도 결과는 분석 서버에 남아 있다.</li>
      *   <li>포기 시간까지 어느 쪽도 되지 않은 요청 — 닫아서 그 녹음이 새 요청 id로 다시 나가게 한다.</li>
-     *   <li>닫힌(FAILED) 요청의 녹음은 아직 맡기지 않은 것으로 본다.</li>
+     *   <li>녹음을 실은 가장 나중 요청이 닫혔으면(FAILED) 아직 맡기지 않은 것으로 본다. 앞선 결과가 있어도
+     *       사용자가 다시 요청한 요청이 닫히면 그 녹음은 다시 나간다.</li>
      * </ul>
      */
     private Set<Long> settleEarlierRequests(InterviewEntity interview, Map<Long, AnswerRecording> analyzable,
                                             String callbackUrl) {
-        Set<Long> requested = new HashSet<>();
+        Map<Long, AudioAnalysisStatus> latestByRecording = new HashMap<>();
         for (AudioAnalysisEntity analysis : analysisRepository
                 .findAllByInterviewIdOrderByAnalysisIdAsc(interview.getInterviewId())) {
             if (analysis.getStatus() == AudioAnalysisStatus.PENDING) {
@@ -355,15 +488,19 @@ public class AudioAnalysisService {
                     recoverFromJob(analysis);
                 }
             }
-            if (analysis.getStatus() != AudioAnalysisStatus.FAILED && analysis.getRecordingIds() != null) {
-                requested.addAll(analysis.getRecordingIds());
+            for (Long recordingId : Objects.requireNonNullElse(analysis.getRecordingIds(), List.<Long>of())) {
+                latestByRecording.put(recordingId, analysis.getStatus());
             }
         }
-        return requested;
+        return latestByRecording.entrySet().stream()
+                .filter(latest -> latest.getValue() != AudioAnalysisStatus.FAILED)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
     }
 
     /**
-     * 접수를 확인하지 못한 요청을 같은 요청 id로 다시 보낸다.
+     * 접수를 확인하지 못한 요청을 같은 요청 id로 다시 보낸다. 사용자가 다시 요청해 아직 보내지 않은 요청도 여기서
+     * 처음 나간다.
      *
      * <p>포기 시간이 지나기 전에는 닫지 않는다. 202를 받지 못한 요청도 분석 서버는 받아 두었을 수 있어서,
      * 일찍 닫고 새 요청 id로 보내면 같은 답변이 두 번 분석된다. 같은 요청 id로 다시 보내는 것은 안전하다.
@@ -390,7 +527,7 @@ public class AudioAnalysisService {
             markFailed(analysis, NOT_ACKNOWLEDGED);
             return;
         }
-        log.info("접수를 확인하지 못한 음성 분석 요청을 같은 요청 id로 다시 보냅니다. interviewId={}, requestId={}",
+        log.info("접수를 확인하지 못한 음성 분석 요청을 그 요청 id로 보냅니다. interviewId={}, requestId={}",
                 interview.getInterviewId(), analysis.getRequestId());
         send(interview, analysis, chunk, callbackUrl, true);
     }
@@ -451,15 +588,24 @@ public class AudioAnalysisService {
 
     /** 새 요청 id로 접수 기록을 먼저 남기고 보낸다. 보낸 뒤에 남기면 응답을 못 받은 요청을 되짚을 수 없다. */
     private void sendAsNewRequest(InterviewEntity interview, List<AnswerRecording> chunk, String callbackUrl) {
-        AudioAnalysisEntity analysis = analysisRepository.save(AudioAnalysisEntity.builder()
+        AudioAnalysisEntity analysis = analysisRepository.save(newRequest(interview, recordingIds(chunk)));
+        send(interview, analysis, chunk, callbackUrl, true);
+    }
+
+    /** 새 요청 id로 만든, 아직 보내지 않은 요청. */
+    private static AudioAnalysisEntity newRequest(InterviewEntity interview, List<Long> recordingIds) {
+        return AudioAnalysisEntity.builder()
                 .interviewId(interview.getInterviewId())
                 .userId(interview.getUserId())
                 .sessionId(interview.getSessionId())
                 .requestId("audio-" + UUID.randomUUID())
                 .status(AudioAnalysisStatus.PENDING)
-                .recordingIds(chunk.stream().map(loaded -> loaded.recording().getRecordingId()).toList())
-                .build());
-        send(interview, analysis, chunk, callbackUrl, true);
+                .recordingIds(recordingIds)
+                .build();
+    }
+
+    private static List<Long> recordingIds(List<AnswerRecording> chunk) {
+        return chunk.stream().map(loaded -> loaded.recording().getRecordingId()).toList();
     }
 
     /**
@@ -497,14 +643,7 @@ public class AudioAnalysisService {
             if (status.value() == HttpStatus.CONFLICT.value() && mayUseNewRequestId) {
                 log.warn("같은 요청 id로 다른 내용을 보낸 것으로 거절당해 새 요청 id로 다시 보냅니다. requestId={}",
                         analysis.getRequestId(), e);
-                AudioAnalysisEntity retry = analysisRepository.save(AudioAnalysisEntity.builder()
-                        .interviewId(interview.getInterviewId())
-                        .userId(interview.getUserId())
-                        .sessionId(interview.getSessionId())
-                        .requestId("audio-" + UUID.randomUUID())
-                        .status(AudioAnalysisStatus.PENDING)
-                        .recordingIds(chunk.stream().map(loaded -> loaded.recording().getRecordingId()).toList())
-                        .build());
+                AudioAnalysisEntity retry = analysisRepository.save(newRequest(interview, recordingIds(chunk)));
                 send(interview, retry, chunk, callbackUrl, false);
                 return;
             }

@@ -760,6 +760,171 @@ class AudioAnalysisServiceTest {
                 new AudioAnalysisResponse.Error(null, "timeout", null));
     }
 
+    // ---- 다시 요청 ----
+
+    /** 정상 결과도 말더듬 검출이 없어 PARTIAL이다. 상태만 보고 열면 모든 면접이 다시 요청 대상이 된다. */
+    @Test
+    void 다시_보낼_답변은_결과가_없거나_분석_서버가_다시_하면_된다고_알린_실패가_있는_답변뿐이다() {
+        assertThat(AudioAnalysisService.worthRetrying(answer(Status.FAILED, null, null, null))).isTrue();
+        assertThat(AudioAnalysisService.worthRetrying(answer(Status.UNAVAILABLE, null, null, null))).isTrue();
+        assertThat(AudioAnalysisService.worthRetrying(answer(Status.PENDING, null, null, null))).isFalse();
+        assertThat(AudioAnalysisService.worthRetrying(answer(Status.PARTIAL, TIMING, FLUENCY, null))).isFalse();
+        // 전사할 말이 없다. 같은 음성이면 같은 결과다.
+        assertThat(AudioAnalysisService.worthRetrying(answer(Status.PARTIAL, TIMING,
+                failedLine("TRANSCRIPT_UNAVAILABLE_OR_EMPTY", false), null))).isFalse();
+        assertThat(AudioAnalysisService.worthRetrying(answer(Status.PARTIAL, TIMING,
+                failedLine("EXTERNAL_SERVICE_UNAVAILABLE", true), null))).isTrue();
+        // 원본을 받지 못해 두 라인이 막혔다. 라인 사유는 retryable=false여도 파일 사유가 retryable=true다.
+        assertThat(AudioAnalysisService.worthRetrying(answer(Status.UNAVAILABLE,
+                failedLine("REQUIRED_INPUT_FAILED", false), failedLine("REQUIRED_INPUT_FAILED", false),
+                new AudioAnalysisResponse.Error("SOURCE_DOWNLOAD_FAILED", "x", true)))).isTrue();
+    }
+
+    @Test
+    void 정상_결과만_있으면_다시_요청할_수_없고_다시_보낼_답변이_있으면_할_수_있다() {
+        answerRecordings(loaded(301L, 101L, 201L, null), loaded(302L, 102L, 202L, null));
+        AudioAnalysisEntity done = analysis("audio-1", AudioAnalysisStatus.PARTIAL, List.of(301L, 302L), LocalDateTime.now());
+        analyses.add(done);
+        dispatch(FeedbackDispatchStatus.DONE, 0);
+
+        results(resultRow(done, 1L, 301L, "PARTIAL", null), resultRow(done, 2L, 302L, "PARTIAL", null));
+        assertThat(service.get(7L, INTERVIEW_ID).canRetry()).isFalse();
+
+        results(resultRow(done, 1L, 301L, "PARTIAL", null), retryableFailureRow(done, 2L, 302L));
+        assertThat(service.get(7L, INTERVIEW_ID).canRetry()).isTrue();
+    }
+
+    @Test
+    void 다시_요청하면_다시_보낼_답변만_새_요청_자리로_만들고_대기_행을_돌린다() {
+        answerRecordings(loaded(301L, 101L, 201L, null), loaded(302L, 102L, 202L, null), loaded(303L, 103L, 203L, null));
+        AudioAnalysisEntity done = analysis("audio-1", AudioAnalysisStatus.PARTIAL, List.of(301L, 302L, 303L), LocalDateTime.now());
+        analyses.add(done);
+        // 301은 정상, 302는 일시 장애로 fluency가 실패했고, 303은 결과가 빠졌다.
+        results(resultRow(done, 1L, 301L, "PARTIAL", null), retryableFailureRow(done, 2L, 302L));
+        dispatch(FeedbackDispatchStatus.DONE, 0);
+        when(dispatchRepository.reopenForUserRetry(INTERVIEW_ID, FeedbackDispatchKind.AUDIO_ANALYSIS, 2)).thenReturn(1);
+
+        AudioAnalysisResponse response = service.retry(7L, INTERVIEW_ID);
+
+        assertThat(analyses).hasSize(2);
+        AudioAnalysisEntity again = analyses.getLast();
+        assertThat(again.getRecordingIds()).containsExactly(302L, 303L);
+        assertThat(again.getStatus()).isEqualTo(AudioAnalysisStatus.PENDING);
+        assertThat(again.getJobId()).isNull();
+        assertThat(again.getRequestId()).startsWith("audio-").isNotEqualTo("audio-1");
+        // 보내는 것은 대기 스윕이 한다.
+        verify(aiServerClient, never()).requestAudioAnalysis(any());
+        assertThat(response.status()).isEqualTo(Status.PENDING);
+        assertThat(response.answers()).extracting(Answer::status, Answer::requestId).containsExactly(
+                tuple(Status.PARTIAL, "audio-1"), tuple(Status.PENDING, again.getRequestId()),
+                tuple(Status.PENDING, again.getRequestId()));
+        assertThat(response.canRetry()).isFalse();
+    }
+
+    @Test
+    void 다시_요청을_받지_않으면_이유를_409로_알리고_아무것도_만들지_않는다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+        AudioAnalysisEntity done = analysis("audio-1", AudioAnalysisStatus.PARTIAL, List.of(301L), LocalDateTime.now());
+        analyses.add(done);
+        results(retryableFailureRow(done, 1L, 301L));
+
+        assertRetryBlocked("아직 분석을 시작하지 않았습니다.");
+        dispatch(FeedbackDispatchStatus.WAITING, 0);
+        assertRetryBlocked("이미 분석 중입니다.");
+        dispatch(FeedbackDispatchStatus.DONE, 2);
+        assertRetryBlocked("면접당 2번까지");
+        // 연달아 누른 다른 요청이 먼저 받아들여졌다.
+        dispatch(FeedbackDispatchStatus.DONE, 1);
+        assertRetryBlocked("이미 분석 중입니다.");
+        results(resultRow(done, 1L, 301L, "PARTIAL", null));
+        assertRetryBlocked("다시 분석할 답변이 없습니다.");
+
+        assertThat(analyses).hasSize(1);
+    }
+
+    /** 다시 요청한 요청이 받아들여지지 않고 닫혔다. 앞선 결과가 있다고 "이미 맡긴 녹음"으로 보면 다시 요청이 사라진다. */
+    @Test
+    void 다시_요청한_요청이_닫히면_앞선_결과가_있어도_그_녹음을_다시_보낸다() {
+        answerRecordings(loaded(301L, 101L, 201L, null), loaded(302L, 102L, 202L, null));
+        analyses.add(analysis("audio-1", AudioAnalysisStatus.PARTIAL, List.of(301L, 302L), LocalDateTime.now()));
+        analyses.add(analysis("audio-2", null, AudioAnalysisStatus.FAILED, List.of(302L), LocalDateTime.now()));
+
+        service.requestForFinishedInterview(INTERVIEW_ID);
+
+        List<AudioAnalysisRequest> sent = sentRequests();
+        assertThat(sent).hasSize(1);
+        assertThat(sent.getFirst().getRequestId()).isNotIn("audio-1", "audio-2");
+        assertThat(sent.getFirst().getRecordings()).extracting(AudioAnalysisRequest.Recording::getRecordingId)
+                .containsExactly("302");
+    }
+
+    @Test
+    void 다시_요청해_만든_요청은_그_요청_id로_처음_보낸다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+        analyses.add(analysis("audio-1", AudioAnalysisStatus.UNAVAILABLE, List.of(301L), LocalDateTime.now().minusDays(1)));
+        AudioAnalysisEntity again = analysis("audio-2", null, AudioAnalysisStatus.PENDING, List.of(301L), LocalDateTime.now());
+        analyses.add(again);
+
+        service.requestForFinishedInterview(INTERVIEW_ID);
+
+        assertThat(sentRequests()).extracting(AudioAnalysisRequest::getRequestId).containsExactly("audio-2");
+        assertThat(again.getJobId()).isEqualTo("job-audio-2");
+        assertThat(analyses).hasSize(2);
+    }
+
+    /** 다시 분석하는 동안 앞선 결과를 보여 주면 전체가 PENDING이 아니게 돼 웹이 조회를 멈추고 새 결과를 놓친다. */
+    @Test
+    void 다시_분석하는_동안은_PENDING이고_다시_요청이_닫히면_앞선_결과로_돌아간다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+        AudioAnalysisEntity first = analysis("audio-1", AudioAnalysisStatus.PARTIAL, List.of(301L), LocalDateTime.now());
+        analyses.add(first);
+        AudioAnalysisEntity again = analysis("audio-2", AudioAnalysisStatus.PENDING, List.of(301L), LocalDateTime.now());
+        analyses.add(again);
+        results(retryableFailureRow(first, 1L, 301L));
+        dispatch(FeedbackDispatchStatus.DONE, 1);
+
+        AudioAnalysisResponse during = service.get(7L, INTERVIEW_ID);
+        assertThat(during.status()).isEqualTo(Status.PENDING);
+        assertThat(during.answers().getFirst().requestId()).isEqualTo("audio-2");
+
+        again.setStatus(AudioAnalysisStatus.FAILED);
+        AudioAnalysisResponse closed = service.get(7L, INTERVIEW_ID);
+        assertThat(closed.answers()).extracting(Answer::status, Answer::requestId)
+                .containsExactly(tuple(Status.PARTIAL, "audio-1"));
+        assertThat(closed.canRetry()).isTrue();
+    }
+
+    private void assertRetryBlocked(String reason) {
+        assertThatThrownBy(() -> service.retry(7L, INTERVIEW_ID))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining(reason);
+    }
+
+    private static Answer answer(Status status, Map<String, Object> timing, Map<String, Object> fluency,
+                                 AudioAnalysisResponse.Error error) {
+        return new Answer("101", "201", "301", "audio-1", status, null, timing, fluency, error);
+    }
+
+    /** 분석 서버가 실패로 알린 라인. data 없이 {code, message, retryable}만 온다. */
+    private static Map<String, Object> failedLine(String code, boolean retryable) {
+        Map<String, Object> line = new LinkedHashMap<>();
+        line.put("status", "unavailable");
+        line.put("data", null);
+        line.put("error", Map.of("code", code, "message", "음성 분석의 일부 작업을 완료하지 못했습니다.", "retryable", retryable));
+        return line;
+    }
+
+    /** 일시 장애로 fluency만 실패한 결과 행. */
+    private static AudioAnalysisResultEntity retryableFailureRow(AudioAnalysisEntity analysis, long resultId,
+                                                                 long recordingId) {
+        return AudioAnalysisResultEntity.builder()
+                .resultId(resultId).analysisId(analysis.getAnalysisId()).recordingId(recordingId)
+                .questionId(101L).answerId(201L).status("PARTIAL").durationMs(120000L)
+                .timing(TIMING).fluency(failedLine("EXTERNAL_SERVICE_UNAVAILABLE", true))
+                .build();
+    }
+
     private static Status overall(Status... statuses) {
         return AudioAnalysisService.overallStatus(List.of(statuses).stream()
                 .map(status -> new Answer("1", "1", "1", null, status, null, null, null, null))
@@ -768,9 +933,14 @@ class AudioAnalysisServiceTest {
 
     /** 이 면접의 음성 분석 대기 행. 없으면 면접 기록이 아직 오지 않은 것이다. */
     private void dispatch(FeedbackDispatchStatus status) {
+        dispatch(status, 0);
+    }
+
+    private void dispatch(FeedbackDispatchStatus status, int userRetryCount) {
         when(dispatchRepository.findByInterviewIdAndKind(INTERVIEW_ID, FeedbackDispatchKind.AUDIO_ANALYSIS))
                 .thenReturn(Optional.of(FeedbackDispatchEntity.builder()
-                        .interviewId(INTERVIEW_ID).kind(FeedbackDispatchKind.AUDIO_ANALYSIS).status(status).build()));
+                        .interviewId(INTERVIEW_ID).kind(FeedbackDispatchKind.AUDIO_ANALYSIS).status(status)
+                        .userRetryCount(userRetryCount).build()));
     }
 
     private void results(AudioAnalysisResultEntity... rows) {

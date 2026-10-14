@@ -1,12 +1,14 @@
 package repit.repit_api_server.domain.userdata.analysis.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisCallbackRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisResponse;
@@ -32,5 +34,13 @@ public class AudioAnalysisController {
     public ApiResponse<AudioAnalysisResponse> get(@AuthenticationPrincipal AuthUser authUser,
                                                   @PathVariable Long interviewId) {
         return ApiResponse.success(audioAnalysisService.get(authUser.id(), interviewId));
+    }
+
+    /** 음성 분석을 다시 요청한다. 면접당 2번까지, 결과가 없거나 다시 하면 나아질 실패가 있는 답변만 다시 보낸다. */
+    @PostMapping("/api/interviews/{interviewId}/audio-analysis/retry")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ApiResponse<AudioAnalysisResponse> retry(@AuthenticationPrincipal AuthUser authUser,
+                                                    @PathVariable Long interviewId) {
+        return ApiResponse.success(audioAnalysisService.retry(authUser.id(), interviewId));
     }
 }

@@ -54,6 +54,11 @@ public class FeedbackDispatchEntity {
     @Column(columnDefinition = "TEXT")
     private String lastError;
 
+    // 사용자가 다시 요청한 횟수. 음성 분석 행만 쓴다. 조건부 갱신으로만 바꾼다.
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer userRetryCount = 0;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
