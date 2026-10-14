@@ -191,6 +191,23 @@ class VideoAnalysisPersistenceTest {
                 .doesNotContain(older.getRecordingId(), justUploaded.getRecordingId(), alreadyRequested.getRecordingId());
     }
 
+    /** 스윕은 분석을 켠 시각을 uploadedAfter로 넘긴다. 그 시각까지 올라온 영상은 고르지 않는다. */
+    @Test
+    void 분석을_켜기_전에_올라온_영상은_처음_요청할_영상으로_고르지_않는다() {
+        LocalDateTime enabledAt = LocalDateTime.now().minusHours(1);
+        InterviewRecordingEntity before = video(interview, enabledAt.minusMinutes(1));
+
+        InterviewEntity later = otherInterview();
+        InterviewRecordingEntity after = video(later, enabledAt.plusMinutes(1));
+
+        LocalDateTime now = LocalDateTime.now();
+        List<Long> picked = analysisRepository.findVideosToStart(now.minusMinutes(2), enabledAt, Limit.of(10_000)).stream()
+                .map(InterviewRecordingEntity::getRecordingId)
+                .toList();
+
+        assertThat(picked).contains(after.getRecordingId()).doesNotContain(before.getRecordingId());
+    }
+
     @Test
     void 자동_재분석은_최종_영상의_최신_요청을_묶음당_작업_5개까지만_잇는다() {
         InterviewRecordingEntity video = video(interview, LocalDateTime.now().minusHours(1));
