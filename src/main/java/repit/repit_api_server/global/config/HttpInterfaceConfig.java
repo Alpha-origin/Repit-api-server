@@ -46,8 +46,7 @@ public class HttpInterfaceConfig {
     public AuthServerApi authServerApi(RestClient.Builder restClientBuilder,
                                         @Value("${auth-server.base-url}") String authServerBaseUrl,
                                         @Value("${external-api.connect-timeout:3s}") String connectTimeout,
-                                        // 인증 서버도 따로 둔다. 자료 저장 응답이 5초를 넘기는 일이 있다.
-                                        @Value("${auth-server.read-timeout:10s}") String readTimeout) {
+                                        @Value("${external-api.read-timeout:5s}") String readTimeout) {
         return buildClient(restClientBuilder, AuthServerClient.SERVER_NAME, authServerBaseUrl, connectTimeout, readTimeout, AuthServerApi.class);
     }
 

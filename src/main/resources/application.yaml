@@ -68,10 +68,6 @@ spring:
 
 auth-server:
   base-url: ${AUTH_SERVER}
-  # 자료 저장(createMetaData)이 5초를 넘긴 일이 있다. 저장은 됐는데 여기서 끊겨 업로드가 실패로 나가고,
-  # 올린 S3 파일은 고아로 남고 분석도 시작되지 않았다. 사용자 확인(getUser)도 같은 값을 쓴다 -- 재시도
-  # 3회라 인증 서버가 멈추면 요청 하나가 최대 약 30초 붙잡힌다.
-  read-timeout: 10s
 
 ai-server:
   base-url: ${AI_SERVER}
