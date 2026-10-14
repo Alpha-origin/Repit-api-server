@@ -24,6 +24,10 @@ import repit.repit_api_server.domain.userdata.analysis.repository.AudioAnalysisR
 import repit.repit_api_server.domain.userdata.analysis.repository.AudioAnalysisResultRepository;
 import repit.repit_api_server.domain.userdata.analysis.service.AudioRecordingLoader.AnswerRecording;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
+import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackDispatchEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchKind;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackDispatchStatus;
+import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackDispatchRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
@@ -84,6 +88,8 @@ class AudioAnalysisServiceTest {
     @Mock
     private AnswerRepository answerRepository;
     @Mock
+    private FeedbackDispatchRepository dispatchRepository;
+    @Mock
     private AudioRecordingLoader recordingLoader;
     @Mock
     private AiServerClient aiServerClient;
@@ -96,7 +102,7 @@ class AudioAnalysisServiceTest {
     @BeforeEach
     void setUp() {
         service = new AudioAnalysisService(analysisRepository, resultRepository, interviewRepository,
-                questionRepository, answerRepository, recordingLoader, aiServerClient, JsonMapper.builder().build());
+                questionRepository, answerRepository, dispatchRepository, recordingLoader, aiServerClient, JsonMapper.builder().build());
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
         ReflectionTestUtils.setField(service, "pendingTimeout", Duration.ofMinutes(10));
         ReflectionTestUtils.setField(service, "giveUpAfter", Duration.ofHours(1));
@@ -580,25 +586,44 @@ class AudioAnalysisServiceTest {
     }
 
     @Test
-    void 답변_녹음이_없는_면접은_NONE이다() {
+    void 답변_녹음이_없으면_요청을_기다리는_동안은_PENDING_요청을_마친_뒤에는_UNAVAILABLE이다() {
         answerRecordings();
+        dispatch(FeedbackDispatchStatus.WAITING);
+        assertThat(service.get(7L, INTERVIEW_ID).status()).isEqualTo(Status.PENDING);
 
+        dispatch(FeedbackDispatchStatus.DONE);
         AudioAnalysisResponse response = service.get(7L, INTERVIEW_ID);
 
-        assertThat(response.status()).isEqualTo(Status.NONE);
+        assertThat(response.status()).isEqualTo(Status.UNAVAILABLE);
         assertThat(response.answers()).isEmpty();
     }
 
     @Test
-    void 요청_전에는_WAITING_요청_뒤_콜백_전에는_ANALYZING이다() {
+    void 요청_전에도_요청_뒤_콜백_전에도_PENDING이고_요청_id는_요청_뒤에_실린다() {
         answerRecordings(loaded(301L, 101L, 201L, null), loaded(302L, 102L, 202L, null));
-        assertThat(service.get(7L, INTERVIEW_ID).status()).isEqualTo(Status.WAITING);
+        AudioAnalysisResponse before = service.get(7L, INTERVIEW_ID);
+        assertThat(before.status()).isEqualTo(Status.PENDING);
+        assertThat(before.answers()).extracting(Answer::requestId).containsOnlyNulls();
 
         analyses.add(analysis("audio-1", AudioAnalysisStatus.PENDING, List.of(301L, 302L), LocalDateTime.now()));
         AudioAnalysisResponse response = service.get(7L, INTERVIEW_ID);
 
-        assertThat(response.status()).isEqualTo(Status.ANALYZING);
-        assertThat(response.answers()).extracting(Answer::status).containsExactly(Status.ANALYZING, Status.ANALYZING);
+        assertThat(response.status()).isEqualTo(Status.PENDING);
+        assertThat(response.answers()).extracting(Answer::status, Answer::requestId)
+                .containsExactly(tuple(Status.PENDING, "audio-1"), tuple(Status.PENDING, "audio-1"));
+    }
+
+    @Test
+    void 요청을_마친_뒤_올라온_녹음은_UNAVAILABLE_요청을_포기했으면_FAILED다() {
+        answerRecordings(loaded(301L, 101L, 201L, null));
+
+        dispatch(FeedbackDispatchStatus.DONE);
+        assertThat(service.get(7L, INTERVIEW_ID).answers().getFirst().status()).isEqualTo(Status.UNAVAILABLE);
+
+        dispatch(FeedbackDispatchStatus.FAILED);
+        AudioAnalysisResponse response = service.get(7L, INTERVIEW_ID);
+        assertThat(response.answers().getFirst().status()).isEqualTo(Status.FAILED);
+        assertThat(response.status()).isEqualTo(Status.FAILED);
     }
 
     @Test
@@ -625,10 +650,11 @@ class AudioAnalysisServiceTest {
     @Test
     void 전체_상태는_답변별_상태를_모아_정한다() {
         assertThat(overall(Status.READY, Status.READY)).isEqualTo(Status.READY);
+        assertThat(overall(Status.FAILED, Status.FAILED)).isEqualTo(Status.FAILED);
         assertThat(overall(Status.UNAVAILABLE, Status.FAILED)).isEqualTo(Status.UNAVAILABLE);
-        assertThat(overall(Status.WAITING, Status.WAITING)).isEqualTo(Status.WAITING);
-        assertThat(overall(Status.WAITING, Status.READY)).isEqualTo(Status.ANALYZING);
-        assertThat(overall(Status.ANALYZING, Status.FAILED)).isEqualTo(Status.ANALYZING);
+        assertThat(overall(Status.PENDING, Status.READY)).isEqualTo(Status.PENDING);
+        assertThat(overall(Status.PENDING, Status.FAILED)).isEqualTo(Status.PENDING);
+        assertThat(overall(Status.READY, Status.PARTIAL)).isEqualTo(Status.PARTIAL);
         assertThat(overall(Status.READY, Status.FAILED)).isEqualTo(Status.PARTIAL);
     }
 
@@ -665,17 +691,29 @@ class AudioAnalysisServiceTest {
         // 다시 맡긴 요청의 결과가 먼저 왔고, 실패로 닫았던 요청의 결과가 뒤늦게 왔다.
         results(resultRow(again, 1L, 301L, "READY", null), resultRow(failed, 2L, 301L, "UNAVAILABLE", null));
 
-        assertThat(service.get(7L, INTERVIEW_ID).answers().getFirst().status()).isEqualTo(Status.READY);
+        Answer answer = service.get(7L, INTERVIEW_ID).answers().getFirst();
+
+        assertThat(answer.status()).isEqualTo(Status.READY);
+        assertThat(answer.requestId()).isEqualTo("audio-2");
     }
 
     @Test
-    void 실패로_닫힌_요청에만_실린_녹음은_FAILED다() {
-        answerRecordings(loaded(301L, 101L, 201L, null));
-        analyses.add(analysis("audio-1", AudioAnalysisStatus.FAILED, List.of(301L), LocalDateTime.now()));
+    void 실패로_닫힌_요청에만_실린_녹음은_다시_요청되기를_기다리면_PENDING_아니면_FAILED다() {
+        answerRecordings(loaded(301L, 101L, 201L, null), loaded(302L, 102L, 202L, null));
+        AudioAnalysisEntity failed = analysis("audio-1", AudioAnalysisStatus.FAILED, List.of(301L), LocalDateTime.now());
+        analyses.add(failed);
+        AudioAnalysisEntity done = analysis("audio-2", AudioAnalysisStatus.UNAVAILABLE, List.of(302L), LocalDateTime.now());
+        analyses.add(done);
+        results(resultRow(done, 1L, 302L, "UNAVAILABLE", null));
 
+        dispatch(FeedbackDispatchStatus.WAITING);
+        assertThat(service.get(7L, INTERVIEW_ID).status()).isEqualTo(Status.PENDING);
+
+        dispatch(FeedbackDispatchStatus.DONE);
         AudioAnalysisResponse response = service.get(7L, INTERVIEW_ID);
 
-        assertThat(response.answers().getFirst().status()).isEqualTo(Status.FAILED);
+        assertThat(response.answers()).extracting(Answer::status, Answer::requestId)
+                .containsExactly(tuple(Status.FAILED, "audio-1"), tuple(Status.UNAVAILABLE, "audio-2"));
         assertThat(response.status()).isEqualTo(Status.UNAVAILABLE);
     }
 
@@ -704,7 +742,7 @@ class AudioAnalysisServiceTest {
         Answer answer = service.get(7L, INTERVIEW_ID).answers().getFirst();
 
         assertThat(answer.recordingId()).isEqualTo("305");
-        assertThat(answer.status()).isEqualTo(Status.WAITING);
+        assertThat(answer.status()).isEqualTo(Status.PENDING);
         assertThat(answer.timing()).isNull();
     }
 
@@ -724,8 +762,15 @@ class AudioAnalysisServiceTest {
 
     private static Status overall(Status... statuses) {
         return AudioAnalysisService.overallStatus(List.of(statuses).stream()
-                .map(status -> new Answer("1", "1", "1", status, null, null, null, null))
+                .map(status -> new Answer("1", "1", "1", null, status, null, null, null, null))
                 .toList());
+    }
+
+    /** 이 면접의 음성 분석 대기 행. 없으면 면접 기록이 아직 오지 않은 것이다. */
+    private void dispatch(FeedbackDispatchStatus status) {
+        when(dispatchRepository.findByInterviewIdAndKind(INTERVIEW_ID, FeedbackDispatchKind.AUDIO_ANALYSIS))
+                .thenReturn(Optional.of(FeedbackDispatchEntity.builder()
+                        .interviewId(INTERVIEW_ID).kind(FeedbackDispatchKind.AUDIO_ANALYSIS).status(status).build()));
     }
 
     private void results(AudioAnalysisResultEntity... rows) {

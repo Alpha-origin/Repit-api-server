@@ -96,6 +96,7 @@ class QuestionTailorServiceMultiCallbackTest {
                         .id(2)
                         .category("tech_choice")
                         .question("왜 Redis 를 썼나요?")
+                        .intention("캐시 계층을 고른 근거")
                         .expectedAnswer("캐시 계층 선택 근거와 대안 비교")
                         .build()))
                 .build();
@@ -108,7 +109,37 @@ class QuestionTailorServiceMultiCallbackTest {
 
     private QuestionTailorMultiCallbackRequest.Question question(int id, long personaId, String content) {
         return new QuestionTailorMultiCallbackRequest.Question(id, personaId, "tech_choice", content,
-                "확인할 것 " + id, "이 질문으로 확인할 것 " + id, List.of("order-api/CacheConfig.java"));
+                "확인할 것 " + id, null, "이 질문으로 확인할 것 " + id, List.of("order-api/CacheConfig.java"));
+    }
+
+    /** 발음 문장은 콜백 값뿐이다. 비거나 공백이면 채팅 서버가 본문으로 합성하도록 비워 둔다. */
+    @Test
+    void 발음_문장은_콜백_값을_남기고_없으면_비운다() {
+        service.handleMultiCallback(new QuestionTailorMultiCallbackRequest("job-1", "3", "succeeded",
+                new QuestionTailorMultiCallbackRequest.Result(List.of(
+                        new QuestionTailorMultiCallbackRequest.Question(2, 11L, "tech_choice", "왜 Redis 를 썼나요?",
+                                "확인할 것 2", "왜 레디스를 썼나요?", "기대 2", List.of()),
+                        new QuestionTailorMultiCallbackRequest.Question(6, 12L, "hr", "갈등이 있었다면?",
+                                "확인할 것 6", "  ", "기대 6", List.of()),
+                        question(7, 13L, "왜 지원했나요?"))),
+                null));
+
+        assertThat(lastSaved().getQuestions()).extracting(TailoredQuestionResponse::getSpokenText)
+                .containsExactly("왜 레디스를 썼나요?", null, null);
+    }
+
+    /** 채점 기준은 원질문에서 되찾지만, 원질문에 없는 발음 문장은 되찾을 것이 없다. 서로 엮이지 않는다. */
+    @Test
+    void 발음_문장은_채점_기준_되찾기와_따로_논다() {
+        service.handleMultiCallback(new QuestionTailorMultiCallbackRequest("job-1", "3", "succeeded",
+                new QuestionTailorMultiCallbackRequest.Result(List.of(
+                        new QuestionTailorMultiCallbackRequest.Question(2, 11L, "tech_choice", "다시 쓴 Redis 질문",
+                                null, "다시 쓴 레디스 질문", "기대 2", List.of()))),
+                null));
+
+        TailoredQuestionResponse saved = lastSaved().getQuestions().getFirst();
+        assertThat(saved.getIntention()).isEqualTo("캐시 계층을 고른 근거");
+        assertThat(saved.getSpokenText()).isEqualTo("다시 쓴 레디스 질문");
     }
 
     @Test
@@ -168,7 +199,7 @@ class QuestionTailorServiceMultiCallbackTest {
     void 쓸_수_있는_질문이_하나도_없으면_실패로_닫는다() {
         service.handleMultiCallback(new QuestionTailorMultiCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorMultiCallbackRequest.Result(List.of(
-                        new QuestionTailorMultiCallbackRequest.Question(6, 12L, "hr", "  ", "의도", "의도", List.of()))),
+                        new QuestionTailorMultiCallbackRequest.Question(6, 12L, "hr", "  ", "의도", null, "의도", List.of()))),
                 null));
 
         assertThat(lastSaved().getStatus()).isEqualTo(TailorStatus.FAILED);

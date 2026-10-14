@@ -61,7 +61,7 @@ class AudioAnalysisControllerTest {
     @Test
     void 면접의_음성_분석을_답변별로_내려준다() throws Exception {
         when(audioAnalysisService.get(7L, 42L)).thenReturn(new AudioAnalysisResponse(Status.PARTIAL, List.of(
-                new AudioAnalysisResponse.Answer("1203", "2207", "301", Status.PARTIAL, 120000L,
+                new AudioAnalysisResponse.Answer("1203", "2207", "301", "audio-1", Status.PARTIAL, 120000L,
                         Map.of("status", "ready"), Map.of("status", "partial"), null))));
 
         mockMvc.perform(get("/api/interviews/42/audio-analysis"))
@@ -69,6 +69,7 @@ class AudioAnalysisControllerTest {
                 .andExpect(jsonPath("$.data.status").value("PARTIAL"))
                 .andExpect(jsonPath("$.data.answers[0].questionId").value("1203"))
                 .andExpect(jsonPath("$.data.answers[0].recordingId").value("301"))
+                .andExpect(jsonPath("$.data.answers[0].requestId").value("audio-1"))
                 .andExpect(jsonPath("$.data.answers[0].status").value("PARTIAL"))
                 .andExpect(jsonPath("$.data.answers[0].timing.status").value("ready"));
     }

@@ -113,8 +113,8 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문"),
-                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문"))),
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
+                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
                 null));
 
         QuestionTailorEntity saved = lastSaved();
@@ -127,6 +127,9 @@ class QuestionTailorServiceCallbackTest {
                 .containsOnly("선택 근거와 대안 비교");
         assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getCategory)
                 .containsOnly("tech_choice");
+        // 구버전 분석 서버는 발음 문장을 보내지 않는다. 비어도 재작성본은 그대로 쓴다.
+        assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getSpokenText)
+                .containsOnlyNulls();
         // 원질문도 함께 남아야 채팅 서버가 재작성 전후를 대조할 수 있다.
         assertThat(saved.getSourceQuestions()).extracting(TailoredQuestionResponse::getQuestion)
                 .containsExactly("왜 Redis 를 썼나요?", "왜 WebFlux 를 썼나요?");
@@ -139,8 +142,8 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문"),
-                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문"))),
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
+                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
                 null));
 
         verify(chatInterviewHandoffService).deliver(tailor);
@@ -156,8 +159,8 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문"),
-                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문"))),
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
+                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
                 null));
 
         QuestionTailorEntity saved = lastSaved();
@@ -175,8 +178,8 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문"),
-                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문"))),
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
+                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
                 null));
 
         verify(chatInterviewHandoffService, never()).deliver(any());
@@ -189,7 +192,7 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문"))),
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", "다시 쓴 레디스 질문"))),
                 null));
 
         QuestionTailorEntity saved = lastSaved();
@@ -197,6 +200,47 @@ class QuestionTailorServiceCallbackTest {
         assertThat(saved.getTailored()).isFalse();
         assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getQuestion)
                 .containsExactly("왜 Redis 를 썼나요?", "왜 WebFlux 를 썼나요?");
+        // 재작성본의 발음 문장은 원질문 본문과 맞지 않는다. 함께 버린다.
+        assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getSpokenText)
+                .containsOnlyNulls();
+    }
+
+    /** 발음 문장은 판정 기준이 아니다. 일부만 와도 재작성본을 버리지 않고, 공백뿐인 값은 없는 것으로 본다. */
+    @Test
+    void 발음_문장은_온_것만_남기고_비어도_재작성본을_쓴다() {
+        QuestionTailorEntity tailor = pendingTailor();
+        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(tailor));
+
+        service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
+                new QuestionTailorCallbackRequest.Result(true, List.of(
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", "다시 쓴 레디스 질문"),
+                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", "  "))),
+                null));
+
+        QuestionTailorEntity saved = lastSaved();
+        assertThat(saved.getTailored()).isTrue();
+        assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getQuestion)
+                .containsExactly("다시 쓴 Redis 질문", "다시 쓴 WebFlux 질문");
+        assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getSpokenText)
+                .containsExactly("다시 쓴 레디스 질문", null);
+    }
+
+    /** 분석 서버가 원질문으로 폴백하면 원질문을 그대로 쓴다. 원질문에는 발음 문장이 없다. */
+    @Test
+    void 분석_서버가_원질문으로_폴백하면_발음_문장은_비어_있다() {
+        QuestionTailorEntity tailor = pendingTailor();
+        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(tailor));
+
+        service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
+                new QuestionTailorCallbackRequest.Result(false, List.of(
+                        new QuestionTailorCallbackRequest.Question(1, "왜 Redis 를 썼나요?", "왜 레디스를 썼나요?"),
+                        new QuestionTailorCallbackRequest.Question(2, "왜 WebFlux 를 썼나요?", "왜 웹플럭스를 썼나요?"))),
+                null));
+
+        QuestionTailorEntity saved = lastSaved();
+        assertThat(saved.getTailored()).isFalse();
+        assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getSpokenText)
+                .containsOnlyNulls();
     }
 
     @Test
@@ -206,8 +250,8 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(false, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "왜 Redis 를 썼나요?"),
-                        new QuestionTailorCallbackRequest.Question(2, "왜 WebFlux 를 썼나요?"))),
+                        new QuestionTailorCallbackRequest.Question(1, "왜 Redis 를 썼나요?", null),
+                        new QuestionTailorCallbackRequest.Question(2, "왜 WebFlux 를 썼나요?", null))),
                 null));
 
         QuestionTailorEntity saved = lastSaved();
@@ -270,8 +314,8 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문"),
-                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문"))),
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
+                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
                 null));
 
         verify(chatInterviewHandoffService, never()).deliver(any());
@@ -288,8 +332,8 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문"),
-                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문"))),
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
+                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
                 null));
 
         InOrder order = inOrder(questionTailorRepository, chatInterviewHandoffService);
@@ -306,8 +350,8 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
-                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문"),
-                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문"))),
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
+                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
                 null));
 
         verify(questionTailorRepository, never()).claimChatDelivery(anyLong());

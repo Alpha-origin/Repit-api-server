@@ -3,6 +3,8 @@ package repit.repit_api_server.domain.userdata.persona.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -120,6 +122,40 @@ class PersonaServiceCreateTest {
     void 어조를_안_보내면_422다() {
         PersonaRequest request = request(Role.CEO, null);
         request.setTone(null);
+
+        assertThatThrownBy(() -> service.createPersona(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
+
+        verify(personaRepository, never()).save(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 5})
+    void 요청한_음성_번호가_그대로_저장된다(int voiceIndex) {
+        PersonaRequest request = request(Role.HR, null);
+        request.setVoiceIndex(voiceIndex);
+
+        assertThat(service.createPersona(request).getVoiceIndex()).isEqualTo(voiceIndex);
+        verify(personaRepository).save(saved.capture());
+        assertThat(saved.getValue().getVoiceIndex()).isEqualTo(voiceIndex);
+    }
+
+    /** 음성 번호는 선택이다. 비우면 채팅 서버가 기본 음성을 쓴다. */
+    @Test
+    void 음성_번호_없이도_저장된다() {
+        service.createPersona(request(Role.HR, null));
+
+        verify(personaRepository).save(saved.capture());
+        assertThat(saved.getValue().getVoiceIndex()).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 6})
+    void 음성_번호가_범위_밖이면_422다(int voiceIndex) {
+        PersonaRequest request = request(Role.HR, null);
+        request.setVoiceIndex(voiceIndex);
 
         assertThatThrownBy(() -> service.createPersona(request))
                 .isInstanceOf(BusinessException.class)

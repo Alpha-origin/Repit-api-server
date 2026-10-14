@@ -3,9 +3,11 @@ package repit.repit_api_server.domain.userdata.interview.dto.request;
 import org.junit.jupiter.api.Test;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.JsonNode;
@@ -38,9 +40,22 @@ class ChatInterviewPrepareRequestSerializationTest {
                         .id(1L)
                         .category("tech_choice")
                         .question("왜 Redis 를 썼나요?")
+                        .spokenText("왜 레디스를 썼나요?")
                         .expectedAnswer("선택 근거와 대안 비교")
                         .basedOn(List.of("order-api/src/cache.py"))
                         .personaId(9L)
+                        .build()))
+                .personas(List.of(ChatInterviewPrepareRequest.Persona.builder()
+                        .personaId(9L)
+                        .personaName("압박 면접관")
+                        .role(Role.TECH)
+                        .major(Major.BACKEND)
+                        .type(Type.METICULOUS)
+                        .tone(InterviewTone.PRESSURING)
+                        .level(Level.HARD)
+                        .career(10)
+                        .gender(Gender.FEMALE)
+                        .voiceIndex(3)
                         .build()))
                 .build();
 
@@ -48,7 +63,7 @@ class ChatInterviewPrepareRequestSerializationTest {
 
         assertThat(json.propertyNames()).containsExactlyInAnyOrder(
                 "sessionId", "interviewId", "userId", "status", "mode",
-                "personality", "tone", "major", "level", "questions");
+                "personality", "tone", "major", "level", "questions", "personas");
         assertThat(json.get("status").asString()).isEqualTo("IN_PROGRESS");
         // 면접 방식은 이름 그대로 나가야 채팅 서버가 읽는다.
         assertThat(json.get("mode").asString()).isEqualTo("SOLO");
@@ -60,7 +75,7 @@ class ChatInterviewPrepareRequestSerializationTest {
 
         JsonNode question = json.get("questions").get(0);
         assertThat(question.propertyNames()).containsExactlyInAnyOrder(
-                "id", "category", "question", "intention", "expectedAnswer", "basedOn", "personaId");
+                "id", "category", "question", "intention", "spokenText", "expectedAnswer", "basedOn", "personaId");
         assertThat(question.get("id").asLong()).isEqualTo(1L);
         assertThat(question.get("category").asString()).isEqualTo("tech_choice");
         assertThat(question.get("question").asString()).isEqualTo("왜 Redis 를 썼나요?");
@@ -68,6 +83,23 @@ class ChatInterviewPrepareRequestSerializationTest {
         assertThat(question.get("expectedAnswer").asString()).isEqualTo("선택 근거와 대안 비교");
         assertThat(question.get("basedOn").get(0).asString()).isEqualTo("order-api/src/cache.py");
         assertThat(question.get("personaId").asLong()).isEqualTo(9L);
+        // 채팅 서버가 질문 음성을 합성할 문장이다.
+        assertThat(question.get("spokenText").asString()).isEqualTo("왜 레디스를 썼나요?");
+
+        // 면접관별 설정. enum은 상수명 그대로 나가야 채팅 서버의 enum과 맞물린다.
+        JsonNode persona = json.get("personas").get(0);
+        assertThat(persona.propertyNames()).containsExactlyInAnyOrder(
+                "personaId", "personaName", "role", "major", "type", "tone", "level", "career", "gender", "voiceIndex");
+        assertThat(persona.get("personaId").asLong()).isEqualTo(9L);
+        assertThat(persona.get("personaName").asString()).isEqualTo("압박 면접관");
+        assertThat(persona.get("role").asString()).isEqualTo("TECH");
+        assertThat(persona.get("major").asString()).isEqualTo("BACKEND");
+        assertThat(persona.get("type").asString()).isEqualTo("METICULOUS");
+        assertThat(persona.get("tone").asString()).isEqualTo("PRESSURING");
+        assertThat(persona.get("level").asString()).isEqualTo("HARD");
+        assertThat(persona.get("career").asInt()).isEqualTo(10);
+        assertThat(persona.get("gender").asString()).isEqualTo("FEMALE");
+        assertThat(persona.get("voiceIndex").asInt()).isEqualTo(3);
     }
 
     @Test

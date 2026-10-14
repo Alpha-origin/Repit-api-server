@@ -42,4 +42,7 @@ public class PersonaRequest {
 
     private String description;
 
+    // 선택. 음성 카탈로그 번호 1~5. 비우면 채팅 서버가 기본 음성을 쓴다.
+    private Integer voiceIndex;
+
 }

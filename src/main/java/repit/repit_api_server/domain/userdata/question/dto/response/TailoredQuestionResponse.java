@@ -26,6 +26,8 @@ public class TailoredQuestionResponse {
     private String question;
     // 이 질문으로 확인하려는 것. 채점 기준이라 재작성해도 바뀌지 않는다.
     private String intention;
+    // TTS용 발음 문장. 없으면 채팅 서버가 question으로 합성한다. 브라우저 응답에는 싣지 않는다.
+    private String spokenText;
     // 모범답안. 꼬리질문 생성과 참고용이다.
     private String expectedAnswer;
     private List<String> basedOn;
