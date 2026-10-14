@@ -4,25 +4,20 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
-import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisJobResponse;
-import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
-import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
-import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorAcceptedResponse;
-import repit.repit_api_server.global.common.ApiResponse;
 
 import java.util.Map;
 import java.util.function.Supplier;
@@ -40,25 +35,7 @@ public class AiServerClient {
     @Value("${app.video-analysis.api-token:}")
     private String videoApiToken;
 
-    public MetaDataResponse sendMetaData(String authorization, MetaDataRequest request) {
-        return executor.execute(SERVER_NAME,
-                () -> aiServerApi.createMetaData(authorization, request),
-                this::resolveMessage, false);
-    }
 
-    public QuestionResponse createQuestion() {
-        ApiResponse<QuestionResponse> response = executor.execute(SERVER_NAME,
-                aiServerApi::createQuestion,
-                this::resolveMessage, true);
-
-        return response == null ? null : response.getData();
-    }
-
-    public GenerateResponse generateMock(GenerateRequest request) {
-        return executor.execute(SERVER_NAME,
-                () -> aiServerApi.generateMock(request),
-                this::resolveMessage, false);
-    }
 
     public GenerateResponse requestProfile(ProfileRequest request) {
         return executor.execute(SERVER_NAME,

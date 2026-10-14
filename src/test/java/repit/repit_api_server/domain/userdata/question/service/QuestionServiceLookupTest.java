@@ -15,7 +15,6 @@ import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepo
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
-import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 
 import java.time.LocalDateTime;
@@ -41,8 +40,6 @@ class QuestionServiceLookupTest {
     @Mock
     private QuestionRepository questionRepository;
     @Mock
-    private AiServerClient aiServerClient;
-    @Mock
     private InterviewRepository interviewRepository;
 
     /** 인증을 마친 요청의 주인. 확인은 시큐리티 필터가 끝냈고, 서비스는 id만 받는다. */
@@ -53,7 +50,7 @@ class QuestionServiceLookupTest {
 
     @BeforeEach
     void setUp() {
-        service = new QuestionService(questionRepository, aiServerClient, interviewRepository);
+        service = new QuestionService(questionRepository, interviewRepository);
 
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview()));
     }

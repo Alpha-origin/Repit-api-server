@@ -8,6 +8,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
+import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisStatus;
@@ -51,7 +52,7 @@ class AiMetaDataServiceSaveResultTest {
                 .jobId("job-1")
                 .status("succeeded")
                 .result(Map.of("project_summary", "요약"))
-                .build());
+                .build(), AnalysisResultType.PROFILE);
 
         assertThat(saved.getJobId()).isEqualTo("job-1");
         assertThat(saved.getStatus()).isEqualTo("succeeded");
@@ -65,7 +66,7 @@ class AiMetaDataServiceSaveResultTest {
         CallbackSuccessResponse saved = service.saveResult(CallbackSuccessRequest.builder()
                 .status("succeeded")
                 .result(Map.of("project_summary", "요약"))
-                .build());
+                .build(), AnalysisResultType.PROFILE);
 
         assertThat(saved).isNull();
         verify(analysisDataRepository, never()).save(any());
@@ -79,7 +80,7 @@ class AiMetaDataServiceSaveResultTest {
         CallbackSuccessResponse saved = service.saveResult(CallbackSuccessRequest.builder()
                 .jobId("job-2")
                 .status("succeeded")
-                .build());
+                .build(), AnalysisResultType.PROFILE);
 
         assertThat(saved.getStatus()).isEqualTo("failed");
         assertThat(saved.getResult()).isNull();
@@ -98,7 +99,7 @@ class AiMetaDataServiceSaveResultTest {
                 .jobId("job-3")
                 .status("failed")
                 .error(CallbackSuccessRequest.Error.builder().status_code(500).message("늦은 실패").build())
-                .build());
+                .build(), AnalysisResultType.PROFILE);
 
         assertThat(saved.getStatus()).isEqualTo("succeeded");
         assertThat(saved.getResult()).isEqualTo(Map.of("project_summary", "요약"));
@@ -113,7 +114,7 @@ class AiMetaDataServiceSaveResultTest {
                 .jobId("job-4")
                 .status("failed")
                 .error(CallbackSuccessRequest.Error.builder().status_code(422).message("분석 불가").build())
-                .build());
+                .build(), AnalysisResultType.PROFILE);
 
         assertThat(saved.getStatus()).isEqualTo("failed");
         assertThat(saved.getError().getStatus_code()).isEqualTo(422);

@@ -134,14 +134,14 @@ class QuestionTailorServiceRequestTest {
                         "expected_answer", "원인 추적 과정", "based_on", List.of()));
     }
 
-    /** 저장된 실제 모양 그대로다 — 키는 전부 snake_case, core_features 원소에 based_on 이 붙는다. */
+    /** /profile이 저장하는 모양 그대로다 — 키는 camelCase, coreFeatures 원소에 basedOn 이 붙는다. */
     private Map<String, Object> projectSummary() {
         return Map.of(
                 "overview", "주문 처리를 맡는 백엔드",
                 "repositories", List.of(Map.of("repo", "order-api", "role", "api_server", "description", "주문 API")),
-                "core_features", List.of(Map.of("name", "주문 생성", "description", "결제 승인 후 주문을 만든다",
-                        "based_on", List.of("order-api/OrderService.java"))),
-                "tech_stack", List.of("Spring", "Redis"));
+                "coreFeatures", List.of(Map.of("name", "주문 생성", "description", "결제 승인 후 주문을 만든다",
+                        "basedOn", List.of("order-api/OrderService.java"))),
+                "techStack", List.of("Spring", "Redis"));
     }
 
     private PersonaEntity persona(long id, Role role) {

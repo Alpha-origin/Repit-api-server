@@ -8,12 +8,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import repit.repit_api_server.domain.metadata.dto.request.CallbackSuccessRequest;
-import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.CallbackSuccessResponse;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.dto.response.ProfileStatusResponse;
-import repit.repit_api_server.domain.metadata.dto.response.ResultResponse;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.service.AiMetaDataService;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
@@ -27,7 +25,6 @@ import repit.repit_api_server.domain.userdata.question.service.QuestionPoolServi
 import repit.repit_api_server.domain.userdata.question.service.QuestionTailorService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import repit.repit_api_server.global.auth.AuthUser;
-import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.common.ApiResponse;
 
 import java.io.IOException;
@@ -51,7 +48,6 @@ public class AiMetaDataController {
     private final QuestionTailorService questionTailorService;
     private final QuestionPoolService questionPoolService;
 
-    private final AiServerClient aiServerClient;
     private final AnalysisLaunchService analysisLaunchService;
 
     /**
@@ -133,19 +129,6 @@ public class AiMetaDataController {
         }
     }
 
-    @PostMapping("/sendMetaData")
-    public ResponseEntity<MetaDataResponse> sendMetaData(@AuthenticationPrincipal AuthUser authUser) {
-        // 인증 서버와 분석 서버 모두 사용자 토큰을 그대로 요구하는 자리다. 확인은 필터가 이미
-        // 마쳤고, 여기서는 그때 확인한 토큰을 다시 실어 보내기만 한다.
-        MetaDataResponse forRequest = metaService.getMetaData(authUser.token());
-        MetaDataRequest request = MetaDataRequest.builder()
-                .gitUrls(forRequest.getGitUrls())
-                .fileUrl(forRequest.getFileUrl())
-                .build();
-
-        MetaDataResponse response = aiServerClient.sendMetaData(authUser.token(), request);
-        return ResponseEntity.ok(response);
-    }
 
     // 이미 올려둔 자료로 분석만 다시 요청한다. 자료를 올리는 길과 같은 접수를 거친다.
     @PostMapping("/generate")
@@ -156,42 +139,12 @@ public class AiMetaDataController {
         return ResponseEntity.ok(analysisLaunchService.launch(authUser.id(), authUser.user().getMajor(), forRequest));
     }
 
-    @PostMapping("/generate-mock")
-    public ResponseEntity<GenerateResponse> generateMock(
-            @AuthenticationPrincipal AuthUser authUser
-    ) {
-        MetaDataResponse forRequest = metaService.getMetaData(authUser.token());
-        return ResponseEntity.ok(analysisLaunchService.launchMock(authUser.id(), forRequest));
-    }
-
     /**
-     * 분석 서버가 결과를 보내오는 콜백.
+     * 분석 서버가 종합 데이터(/profile) 결과를 보내오는 콜백.
      *
      * <p>흘려보내는 것은 요청이 아니라 저장된 결과다. 저장은 요청을 여러 갈래로 걸러내므로
      * — 결과 없는 성공 콜백은 실패로, 이미 성공한 작업에 온 실패 콜백은 무시로 — 요청을 그대로
-     * 내보내면 DB에 없는 완료가 구독으로 새어나간다. 클라이언트는 성공을 받아들고 결과를
-     * 조회하다 빈손이 된다.
-     *
-     * <p>저장이 끝난 뒤에야 전송한다. {@code saveResult}가 돌아왔다는 것은 커밋까지 끝났다는
-     * 뜻이라, 구독이 받은 완료는 곧바로 조회해도 DB에 있다.
-     */
-    @PostMapping("/callback")
-    public ApiResponse<CallbackSuccessResponse> callback(
-            @RequestBody CallbackSuccessRequest request
-            ) {
-        CallbackSuccessResponse saved = aiMetaDataService.saveResult(request);
-        if (saved == null) {
-            // 어느 작업의 결과인지 알 수 없어 저장하지 못했다. 흘려보낼 구독도 찾을 수 없다.
-            return ApiResponse.success(null);
-        }
-
-        sseNotifier.sendAnalysisResult(saved.getJobId(), saved.getStatus(), saved);
-
-        return ApiResponse.success(saved);
-    }
-
-    /**
-     * 분석 서버가 종합 데이터(/profile) 결과를 보내오는 콜백. 옛 /generate 콜백과 경로를 나눠 결과가 섞이지 않게 한다.
+     * 내보내면 DB에 없는 완료가 구독으로 새어나간다.
      *
      * <p>성공이면 이전 자료로 만든 질문 사이클을 버리고 새 사이클 1을 두 모드 모두 요청한 뒤에 알린다.
      * 알림을 받은 웹이 곧바로 면접을 시작해도 기다릴 사이클이 이미 있다.
@@ -242,14 +195,4 @@ public class AiMetaDataController {
         return ApiResponse.success(aiMetaDataService.getLatestProfile(authUser.id()));
     }
 
-    // 분석 결과 조회. 면접 질문은 재작성이 끝나는 시점에 채팅 서버로 직접 넘어간다.
-    @GetMapping
-    public ApiResponse<ResultResponse> getResult(
-            @AuthenticationPrincipal AuthUser authUser,
-            @RequestParam String jobId
-    ) {
-        // 소유자 확인은 조회와 같은 트랜잭션에서 한다. 따로 부르면 같은 행을 두 번 읽으며
-        // result jsonb를 두 번 풀어낸다.
-        return ApiResponse.success(aiMetaDataService.getResultForOwner(jobId, authUser.id()));
-    }
 }

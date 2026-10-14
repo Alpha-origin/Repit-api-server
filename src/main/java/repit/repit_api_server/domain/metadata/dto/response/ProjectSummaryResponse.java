@@ -1,6 +1,5 @@
 package repit.repit_api_server.domain.metadata.dto.response;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -9,14 +8,10 @@ import lombok.Setter;
 import java.util.List;
 
 /**
- * 종합 데이터(/profile) 결과의 projectSummary. 옛 /generate 결과에서는 project_summary였다.
+ * 종합 데이터(/profile) 결과의 projectSummary.
  *
  * <p>N:1 질문 구성은 이 값을 근거로 비개발 면접관의 질문을 새로 만든다. 분석 서버는 저장소가 없어
  * 여기 없는 값은 어디서도 구하지 못하므로, 넘기기 전에 이 형태로 한 번 읽어 확인한다.
- *
- * <p>옛 /generate 와이어 포맷은 snake_case였고 /questions/tailor/multi 는 camelCase로 받는다.
- * 어느 쪽으로 저장돼 있든 읽히도록 두 표기를 모두 받아둔다 — 한쪽만 맞춰두면 이름이 어긋난 날
- * 필드가 조용히 비고, 질문은 근거 없이 생성된다.
  */
 @Getter
 @Setter
@@ -25,9 +20,7 @@ import java.util.List;
 public class ProjectSummaryResponse {
     private String overview;
     private List<Repository> repositories;
-    @JsonAlias({"core_features", "coreFeatures"})
     private List<CoreFeature> coreFeatures;
-    @JsonAlias({"tech_stack", "techStack"})
     private List<String> techStack;
 
     @Getter
@@ -48,7 +41,6 @@ public class ProjectSummaryResponse {
     public static class CoreFeature {
         private String name;
         private String description;
-        @JsonAlias({"based_on", "basedOn"})
-        private List<String> basedOn;
+            private List<String> basedOn;
     }
 }

@@ -145,7 +145,7 @@ class AuthTokenAuthenticationFilterTest {
      */
     @Test
     void 콜백_경로는_인증_서버에_묻지_않는다() throws Exception {
-        MockHttpServletRequest request = request("/api/v1/ai/callback");
+        MockHttpServletRequest request = request("/api/v1/ai/profile/callback");
         request.addHeader(HttpHeaders.AUTHORIZATION, TOKEN);
 
         MockHttpServletResponse response = new MockHttpServletResponse();

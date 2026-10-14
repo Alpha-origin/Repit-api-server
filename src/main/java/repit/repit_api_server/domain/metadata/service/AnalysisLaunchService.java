@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
@@ -37,8 +36,6 @@ public class AnalysisLaunchService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisLaunchService.class);
 
-    private static final String CALLBACK_PATH = "/api/v1/ai/callback";
-    // 옛 /generate 결과와 섞이지 않게 경로를 나눈다.
     private static final String PROFILE_CALLBACK_PATH = "/api/v1/ai/profile/callback";
 
     private final AiServerClient aiServerClient;
@@ -69,7 +66,7 @@ public class AnalysisLaunchService {
      * 쓸 수 있는 종합 데이터가 없는 사용자면 저장된 자료로 요청한다. 면접 준비는 이 분석과 질문 사이클을 기다렸다가
      * 이어간다. 두 경우다.
      * <ul>
-     *   <li>한 번도 요청한 적이 없다 — 예전 /generate 분석만 있는 사용자를 옮기는 길이다.</li>
+     *   <li>한 번도 요청한 적이 없다 — 종합 데이터가 없는 기존 사용자를 옮기는 길이다.</li>
      *   <li>가장 나중에 요청한 것이 끝났는데, 분석 서버가 그것으로는 더 이상 질문 사이클을 만들 수 없다고 했다(422).
      *       분석 서버가 종합 데이터 형태를 바꾸면 기존 사용자가 모두 여기로 온다.</li>
      * </ul>
@@ -105,16 +102,6 @@ public class AnalysisLaunchService {
         return analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(userId, AnalysisResultType.PROFILE)
                 .map(latest -> latest.getResult() != null && questionPoolService.needsReanalysis(latest.getJobId()))
                 .orElse(true);
-    }
-
-    // 옛 /generate-mock. 분석 서버가 /generate를 걷어낼 때 함께 지운다.
-    public GenerateResponse launchMock(Long userId, MetaDataResponse metaData) {
-        GenerateRequest request = GenerateRequest.builder()
-                .portfolio_url(metaData.getFileUrl())
-                .github_urls(metaData.getGitUrls())
-                .callback_url(callbackBaseUrl + CALLBACK_PATH)
-                .build();
-        return launch(userId, AnalysisResultType.LEGACY_GENERATE, () -> aiServerClient.generateMock(request));
     }
 
     private GenerateResponse launch(Long userId, AnalysisResultType resultType, Supplier<GenerateResponse> call) {

@@ -5,41 +5,26 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.service.annotation.GetExchange;
 import org.springframework.web.service.annotation.PostExchange;
-import repit.repit_api_server.domain.metadata.dto.request.GenerateRequest;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.request.AudioAnalysisRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.AudioAnalysisJobResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisJobResponse;
-import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
-import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorRequest;
-import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionTailorAcceptedResponse;
-import repit.repit_api_server.global.common.ApiResponse;
 
 import java.util.Map;
 
 public interface AiServerApi {
 
     String INTERNAL_TOKEN = "X-Internal-Token";
-
-    @PostExchange("/api/v1/ai/createMetaData")
-    MetaDataResponse createMetaData(@RequestHeader("Authorization") String authorization,
-                                    @RequestBody MetaDataRequest request);
-
-    @GetExchange("/api/v1/ai/createQuestion")
-    ApiResponse<QuestionResponse> createQuestion();
-
-    @PostExchange("/generate-mock")
-    GenerateResponse generateMock(@RequestBody GenerateRequest request);
 
     // 자료를 한 번 분석해 종합 데이터를 만든다. 202 접수 후 결과는 callbackUrl로 온다.
     @PostExchange("/profile")

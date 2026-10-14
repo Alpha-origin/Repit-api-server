@@ -7,7 +7,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /**
- * /generate와 /profile 콜백. 성공/실패가 같은 경로로 들어오고 status로 갈린다.
+ * /profile 콜백. 성공/실패가 같은 경로로 들어오고 status로 갈린다.
  * 실패면 result가 없고 error에 사유가 실린다. 두 계약의 표기가 달라 두 표기를 모두 받는다.
  */
 @Getter

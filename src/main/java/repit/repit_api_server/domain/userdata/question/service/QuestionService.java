@@ -7,32 +7,16 @@ import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepo
 import repit.repit_api_server.domain.userdata.question.dto.response.QuestionResponse;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
-import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class QuestionService {
     private final QuestionRepository questionRepository;
-    private final AiServerClient aiServerClient;
     private final InterviewRepository interviewRepository;
 
-    public QuestionResponse createQuestion() {
-        QuestionResponse response = aiServerClient.createQuestion();
-        QuestionEntity question = QuestionEntity.builder()
-                .interviewId(response.getInterviewId())
-                .parentId(response.getQuestionId())
-                .type(response.getType())
-                .intention(response.getIntention())
-                .content(response.getContent())
-                .createdAt(LocalDateTime.now())
-                .build();
-        questionRepository.save(question);
-        return response;
-    }
 
     /**
      * 질문 하나를 읽는다. 본인 면접의 질문만 내려준다.
