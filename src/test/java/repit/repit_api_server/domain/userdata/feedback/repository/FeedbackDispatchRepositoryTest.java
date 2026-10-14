@@ -147,6 +147,38 @@ class FeedbackDispatchRepositoryTest {
                 .isEqualTo(FeedbackDispatchStatus.FAILED);
     }
 
+    /** 사용자의 음성 분석 다시 요청. 요청 중에 받거나 한도를 넘으면 같은 면접이 겹쳐 분석된다. */
+    @Test
+    void 다시_요청은_끝난_건만_한도까지_받고_시도_횟수를_처음으로_되돌린다() {
+        FeedbackDispatchEntity saved = repository.save(waiting(
+                ThreadLocalRandom.current().nextLong(1_000_000_000L, Long.MAX_VALUE), FeedbackDispatchKind.AUDIO_ANALYSIS, NOW));
+        Long dispatchId = saved.getDispatchId();
+        Long interviewId = saved.getInterviewId();
+        repository.claim(dispatchId, NOW);
+        repository.markDone(dispatchId, NOW);
+
+        assertThat(repository.reopenForUserRetry(interviewId, FeedbackDispatchKind.AUDIO_ANALYSIS, 2)).isEqualTo(1);
+        FeedbackDispatchEntity reopened = repository.findById(dispatchId).orElseThrow();
+        assertThat(reopened.getStatus()).isEqualTo(FeedbackDispatchStatus.WAITING);
+        assertThat(reopened.getAttemptCount()).isZero();
+        assertThat(reopened.getClaimedAt()).isNull();
+        assertThat(reopened.getUserRetryCount()).isEqualTo(1);
+        // 이미 기다리는 중이라 연달아 누른 요청은 받지 않는다.
+        assertThat(repository.reopenForUserRetry(interviewId, FeedbackDispatchKind.AUDIO_ANALYSIS, 2)).isZero();
+
+        // 자동 재시도를 다 쓰고 닫힌 건도 받는다.
+        repository.claim(dispatchId, NOW);
+        repository.markFailed(dispatchId, NOW, "시도 한도");
+        assertThat(repository.reopenForUserRetry(interviewId, FeedbackDispatchKind.AUDIO_ANALYSIS, 2)).isEqualTo(1);
+
+        repository.claim(dispatchId, NOW);
+        repository.markDone(dispatchId, NOW);
+        assertThat(repository.reopenForUserRetry(interviewId, FeedbackDispatchKind.AUDIO_ANALYSIS, 2)).isZero();
+        FeedbackDispatchEntity exhausted = repository.findById(dispatchId).orElseThrow();
+        assertThat(exhausted.getStatus()).isEqualTo(FeedbackDispatchStatus.DONE);
+        assertThat(exhausted.getUserRetryCount()).isEqualTo(2);
+    }
+
     /** 한 면접에 채점과 음성 분석이 따로 한 행씩 있다. 한쪽을 건드려도 다른 쪽은 그대로다. */
     @Test
     void 같은_면접의_채점과_음성_분석은_따로_기다린다() {

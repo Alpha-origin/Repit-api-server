@@ -62,7 +62,7 @@ class AudioAnalysisControllerTest {
     void 면접의_음성_분석을_답변별로_내려준다() throws Exception {
         when(audioAnalysisService.get(7L, 42L)).thenReturn(new AudioAnalysisResponse(Status.PARTIAL, List.of(
                 new AudioAnalysisResponse.Answer("1203", "2207", "301", "audio-1", Status.PARTIAL, 120000L,
-                        Map.of("status", "ready"), Map.of("status", "partial"), null))));
+                        Map.of("status", "ready"), Map.of("status", "partial"), null)), true));
 
         mockMvc.perform(get("/api/interviews/42/audio-analysis"))
                 .andExpect(status().isOk())
@@ -71,7 +71,18 @@ class AudioAnalysisControllerTest {
                 .andExpect(jsonPath("$.data.answers[0].recordingId").value("301"))
                 .andExpect(jsonPath("$.data.answers[0].requestId").value("audio-1"))
                 .andExpect(jsonPath("$.data.answers[0].status").value("PARTIAL"))
-                .andExpect(jsonPath("$.data.answers[0].timing.status").value("ready"));
+                .andExpect(jsonPath("$.data.answers[0].timing.status").value("ready"))
+                .andExpect(jsonPath("$.data.canRetry").value(true));
+    }
+
+    @Test
+    void 음성_분석을_다시_요청하면_202로_받는다() throws Exception {
+        when(audioAnalysisService.retry(7L, 42L)).thenReturn(new AudioAnalysisResponse(Status.PENDING, List.of(), false));
+
+        mockMvc.perform(post("/api/interviews/42/audio-analysis/retry"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.data.status").value("PENDING"))
+                .andExpect(jsonPath("$.data.canRetry").value(false));
     }
 
     @Test
