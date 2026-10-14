@@ -35,6 +35,17 @@ public interface QuestionCycleRepository extends JpaRepository<QuestionCycleEnti
 
     Optional<QuestionCycleEntity> findByProfileJobIdAndModeAndCycleNo(String profileJobId, InterviewMode mode, Integer cycleNo);
 
+    /**
+     * 이 종합 데이터·모드의 사이클 만들기를 트랜잭션이 끝날 때까지 잠근다. 같은 사이클을 두 요청이 동시에 처음
+     * 만들면 잠글 행이 아직 없어 둘 다 "없음"을 보고 저장하고, 늦은 쪽이 유니크 제약에 걸린다.
+     *
+     * <p>두 정수 키 잠금이라 {@code AnalysisDataRepository.lockProfileLaunch}(bigint 키)와 키가 겹치지 않는다.
+     * hashtext가 겹치면 다른 사이클이 잠깐 기다릴 뿐 결과는 같다.
+     */
+    @Query(value = "select 1 from (select pg_advisory_xact_lock(hashtext(:profileJobId), hashtext(:mode))) locked",
+            nativeQuery = true)
+    Integer lockCycleCreation(@Param("profileJobId") String profileJobId, @Param("mode") String mode);
+
     /** 이 종합 데이터의 사이클이 이 코드로 실패한 적이 있는지. */
     boolean existsByProfileJobIdAndErrorStatusCode(String profileJobId, Integer errorStatusCode);
 

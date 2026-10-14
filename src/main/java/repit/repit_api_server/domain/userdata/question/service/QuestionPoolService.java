@@ -232,11 +232,12 @@ public class QuestionPoolService {
             return null;
         }
         LocalDateTime now = LocalDateTime.now();
+        // 같은 사이클을 동시에 처음 만드는 요청이 줄을 선다. 늦은 쪽은 앞의 커밋을 기다렸다가 만들어진 행을 본다.
+        questionCycleRepository.lockCycleCreation(profile.getJobId(), mode.name());
         QuestionCycleEntity cycle = questionCycleRepository
                 .findByProfileJobIdAndModeAndCycleNo(profile.getJobId(), mode, cycleNo)
                 .orElse(null);
         if (cycle == null) {
-            // ponytail: 같은 사이클을 두 요청이 동시에 처음 만들면 유니크 제약에 한쪽이 500으로 끝난다. 다시 누르면 열린다.
             return questionCycleRepository.save(QuestionCycleEntity.builder()
                     .userId(profile.getUserId())
                     .profileJobId(profile.getJobId())
