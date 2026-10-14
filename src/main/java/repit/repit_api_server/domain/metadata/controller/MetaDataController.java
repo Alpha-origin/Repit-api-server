@@ -43,12 +43,14 @@ public class MetaDataController {
     }
 
 
+    // 자료를 한 번도 올리지 않은 사용자는 인증 서버가 두 값을 null로 준다. 없는 것이지 오류가 아니다.
     @GetMapping("/isGit")
     public ResponseEntity<Boolean> isGit(
             @AuthenticationPrincipal AuthUser authUser
     ) {
         MetaDataResponse metaData = metaService.getMetaData(authUser.token());
-        return ResponseEntity.ok(!metaData.getGitUrls().isEmpty());
+        return ResponseEntity.ok(metaData != null && metaData.getGitUrls() != null
+                && !metaData.getGitUrls().isEmpty());
     }
 
     @GetMapping("/isPortfolio")
@@ -56,6 +58,7 @@ public class MetaDataController {
             @AuthenticationPrincipal AuthUser authUser
     ) {
         MetaDataResponse metaData = metaService.getMetaData(authUser.token());
-        return ResponseEntity.ok(!metaData.getFileUrl().isEmpty());
+        return ResponseEntity.ok(metaData != null && metaData.getFileUrl() != null
+                && !metaData.getFileUrl().isBlank());
     }
 }
