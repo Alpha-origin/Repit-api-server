@@ -109,6 +109,7 @@ public interface AnalysisDataRepository extends JpaRepository<AnalysisDataEntity
                    a.result = null,
                    a.errorStatusCode = null,
                    a.errorMessage = null,
+                   a.errorCode = null,
                    a.completedAt = null,
                    a.createdAt = :requestedAt
              where a.jobId = :jobId

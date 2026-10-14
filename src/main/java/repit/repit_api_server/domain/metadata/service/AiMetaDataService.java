@@ -102,6 +102,7 @@ public class AiMetaDataService {
             data.setResult(request.getResult());
             data.setErrorStatusCode(null);
             data.setErrorMessage(null);
+            data.setErrorCode(null);
             data.setCompletedAt(LocalDateTime.now());
             return toResponse(analysisDataRepository.save(data));
         }
@@ -120,6 +121,7 @@ public class AiMetaDataService {
         if (request.getError() != null) {
             data.setErrorStatusCode(request.getError().getStatus_code());
             data.setErrorMessage(request.getError().getMessage());
+            data.setErrorCode(request.getError().getCode());
         }
         data.setCompletedAt(LocalDateTime.now());
         return toResponse(analysisDataRepository.save(data));
@@ -214,12 +216,13 @@ public class AiMetaDataService {
     }
 
     private CallbackSuccessRequest.Error toError(AnalysisDataEntity data) {
-        if (data.getErrorStatusCode() == null && data.getErrorMessage() == null) {
+        if (data.getErrorStatusCode() == null && data.getErrorMessage() == null && data.getErrorCode() == null) {
             return null;
         }
         return CallbackSuccessRequest.Error.builder()
                 .status_code(data.getErrorStatusCode())
                 .message(data.getErrorMessage())
+                .code(data.getErrorCode())
                 .build();
     }
 
@@ -227,7 +230,7 @@ public class AiMetaDataService {
         if (error == null) {
             return null;
         }
-        return error.getStatus_code() + " " + error.getMessage();
+        return error.getStatus_code() + " " + error.getCode() + " " + error.getMessage();
     }
 
     private String statusName(AnalysisStatus status) {
@@ -272,7 +275,7 @@ public class AiMetaDataService {
                 .errorStatusCode(data.getErrorStatusCode())
                 .errorMessage(errorMessage)
                 .failureReason(ProfileStatusResponse.FAILED.equals(status)
-                        ? ProfileStatusResponse.reasonOf(data.getErrorStatusCode(), errorMessage)
+                        ? ProfileStatusResponse.reasonOf(data.getErrorStatusCode(), data.getErrorCode(), errorMessage)
                         : null)
                 .completedAt(data.getCompletedAt())
                 .projectSummary(ProfileStatusResponse.COMPLETED.equals(status) && data.getResult() instanceof Map<?, ?> result

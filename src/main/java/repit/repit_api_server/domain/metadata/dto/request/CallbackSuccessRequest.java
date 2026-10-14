@@ -36,5 +36,7 @@ public class CallbackSuccessRequest {
         @JsonAlias("statusCode")
         private Integer status_code;
         private String message;
+        // 원인 코드. REPO_NOT_PUBLIC / INVALID_MATERIAL / INSUFFICIENT_EVIDENCE / INTERNAL. 분기는 message가 아니라 이것으로 한다.
+        private String code;
     }
 }

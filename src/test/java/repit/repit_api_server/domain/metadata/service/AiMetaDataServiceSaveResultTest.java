@@ -120,4 +120,26 @@ class AiMetaDataServiceSaveResultTest {
         assertThat(saved.getError().getStatus_code()).isEqualTo(422);
         assertThat(saved.getError().getMessage()).isEqualTo("분석 불가");
     }
+
+    @Test
+    void 실패의_원인_코드를_남기고_같은_작업이_성공하면_비운다() {
+        AnalysisDataEntity row = AnalysisDataEntity.builder().jobId("job-5").status(AnalysisStatus.PENDING).build();
+        when(analysisDataRepository.findById("job-5")).thenReturn(Optional.of(row));
+
+        service.saveResult(CallbackSuccessRequest.builder()
+                .jobId("job-5")
+                .status("failed")
+                .error(CallbackSuccessRequest.Error.builder()
+                        .status_code(422).code("INSUFFICIENT_EVIDENCE").message("근거 부족").build())
+                .build(), AnalysisResultType.PROFILE);
+        assertThat(row.getErrorCode()).isEqualTo("INSUFFICIENT_EVIDENCE");
+
+        service.saveResult(CallbackSuccessRequest.builder()
+                .jobId("job-5")
+                .status("succeeded")
+                .result(Map.of("profile", Map.of()))
+                .build(), AnalysisResultType.PROFILE);
+        assertThat(row.getErrorCode()).isNull();
+        assertThat(row.getErrorStatusCode()).isNull();
+    }
 }
