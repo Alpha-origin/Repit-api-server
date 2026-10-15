@@ -23,7 +23,7 @@ import java.util.List;
 @Table(name = "question_tailor")
 @Getter
 @Setter
-@Builder
+@Builder(toBuilder = true)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 public class QuestionTailorEntity {

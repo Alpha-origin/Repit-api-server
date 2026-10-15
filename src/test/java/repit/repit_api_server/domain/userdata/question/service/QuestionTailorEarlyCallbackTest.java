@@ -6,6 +6,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
+import tools.jackson.databind.ObjectMapper;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
@@ -46,6 +50,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * 분석 서버가 접수 응답보다 결과 콜백을 먼저 보내는 경우(P-2). 실제 DB에 대고 본다.
@@ -307,6 +313,54 @@ class QuestionTailorEarlyCallbackTest {
         assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
         assertThat(saved.getQuestions()).hasSize(5);
         assertThat(saved.getChatDelivered()).isTrue();
+        verify(chatInterviewHandoffService).deliver(any());
+    }
+
+    // ---- HTTP 콜백(open-in-view) ----
+
+    @Autowired
+    private WebApplicationContext webApplicationContext;
+
+    /**
+     * 실제 콜백은 HTTP로 온다. open-in-view가 켜져 있어 요청 동안 조회한 준비 건이 관리 상태로 남는다. 그 엔티티를 고친 뒤
+     * 조건부 확정을 부르면 쿼리 전에 변경이 먼저 flush돼, 확정이 0건으로 끝나고 채팅 서버 전달이 빠진다.
+     */
+    private void postCallback(String query, String jobId) throws Exception {
+        QuestionTailorCallbackRequest callback = new QuestionTailorCallbackRequest(jobId, String.valueOf(interviewId),
+                "succeeded", new QuestionTailorCallbackRequest.Result(true,
+                List.of(new QuestionTailorCallbackRequest.Question(1, "다시 쓴 질문 1", null))), null);
+        MockMvcBuilders.webAppContextSetup(webApplicationContext).build()
+                .perform(post("/api/questions/tailor/callback" + query)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(new ObjectMapper().writeValueAsString(callback)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void HTTP_콜백이_tailorId로_결과를_확정하고_넘긴다() throws Exception {
+        QuestionTailorEntity row = pendingRow();
+
+        postCallback("?tailorId=" + row.getTailorId(), "job-http");
+
+        QuestionTailorEntity saved = questionTailorRepository.findById(row.getTailorId()).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
+        assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getQuestion).containsExactly("다시 쓴 질문 1");
+        assertThat(saved.getChatDelivered()).isTrue();
+        verify(chatInterviewHandoffService).deliver(any());
+    }
+
+    /** 배포 전에 나간 요청의 콜백. jobId로 찾은 엔티티도 요청 동안 관리 상태로 남는다. */
+    @Test
+    void 배포_전_HTTP_콜백도_jobId로_결과를_확정하고_넘긴다() throws Exception {
+        QuestionTailorEntity row = pendingRow();
+        row.setJobId("job-http-legacy-" + interviewId);
+        questionTailorRepository.save(row);
+
+        postCallback("", "job-http-legacy-" + interviewId);
+
+        QuestionTailorEntity saved = questionTailorRepository.findById(row.getTailorId()).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
+        assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getQuestion).containsExactly("다시 쓴 질문 1");
         verify(chatInterviewHandoffService).deliver(any());
     }
 }

@@ -694,6 +694,9 @@ public class QuestionTailorService {
         if (alreadySettled(tailor)) {
             return;
         }
+        // 결과는 복사본에 계산한다. 조회한 엔티티는 open-in-view로 요청 내내 관리 상태라, 그것을 고치면 조건부 확정이
+        // 쿼리 전에 변경을 먼저 flush해 PENDING 조건이 어긋나고 확정이 0건으로 끝난다 — 그 flush는 조건 없이 쓰기도 한다.
+        tailor = tailor.toBuilder().build();
 
         if (tailor.getJobId() == null) {
             tailor.setJobId(request.getJobId());
@@ -886,6 +889,9 @@ public class QuestionTailorService {
         if (alreadySettled(tailor)) {
             return;
         }
+        // 결과는 복사본에 계산한다. 조회한 엔티티는 open-in-view로 요청 내내 관리 상태라, 그것을 고치면 조건부 확정이
+        // 쿼리 전에 변경을 먼저 flush해 PENDING 조건이 어긋나고 확정이 0건으로 끝난다 — 그 flush는 조건 없이 쓰기도 한다.
+        tailor = tailor.toBuilder().build();
 
         if (tailor.getJobId() == null) {
             tailor.setJobId(request.getJobId());

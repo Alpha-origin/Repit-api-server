@@ -150,8 +150,9 @@ class QuestionTailorServiceCallbackTest {
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
                 null), null);
 
-        verify(chatInterviewHandoffService).deliver(tailor);
-        assertThat(lastSaved().getChatDelivered()).isTrue();
+        QuestionTailorEntity settled = lastSaved();
+        verify(chatInterviewHandoffService).deliver(settled);
+        assertThat(settled.getChatDelivered()).isTrue();
     }
 
     @Test
@@ -278,7 +279,7 @@ class QuestionTailorServiceCallbackTest {
         assertThat(saved.getErrorStatusCode()).isEqualTo(422);
         assertThat(saved.getQuestions()).hasSize(2);
         // 재작성이 실패해도 원질문으로 면접은 열려야 한다.
-        verify(chatInterviewHandoffService).deliver(tailor);
+        verify(chatInterviewHandoffService).deliver(saved);
     }
 
     /**
@@ -354,9 +355,10 @@ class QuestionTailorServiceCallbackTest {
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
                 null), null);
 
+        QuestionTailorEntity settled = lastSaved();
         InOrder order = inOrder(questionTailorRepository, chatInterviewHandoffService);
         order.verify(questionTailorRepository).claimChatDelivery(1L);
-        order.verify(chatInterviewHandoffService).deliver(tailor);
+        order.verify(chatInterviewHandoffService).deliver(settled);
     }
 
     /** 이미 넘긴 건은 DB까지 가지 않고 걸러낸다. 콜백 재전송마다 갱신이 나갈 이유가 없다. */
