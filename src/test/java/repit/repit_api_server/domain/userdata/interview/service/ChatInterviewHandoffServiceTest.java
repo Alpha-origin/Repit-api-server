@@ -1,5 +1,9 @@
 package repit.repit_api_server.domain.userdata.interview.service;
 
+import repit.repit_api_server.domain.company.dto.ChatCompany;
+import repit.repit_api_server.domain.company.dto.CompanySnapshot;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -453,5 +457,32 @@ class ChatInterviewHandoffServiceTest {
                 .isInstanceOf(BusinessException.class);
 
         verify(chatServerClient, never()).prepareInterview(any());
+    }
+
+    /** 채팅 서버는 실시간 경로라 기업 요약 두 칸만 받는다. 정보 목록·신호는 보내지 않는다. */
+    @Test
+    void 기업을_고른_면접은_준비_요청에_기업_요약만_싣는다() {
+        InterviewEntity interview = interview(1L);
+        interview.setCompanySnapshot(new CompanySnapshot("3", "샘플커머스", "CONSUMER",
+                List.of(new CompanySnapshot.Fact("23", "TALENT", "오너십", "문제를 스스로 정의하고 결과까지 책임진다",
+                        List.of("끝까지 해결한 경험을 설명함"), List.of())),
+                "샘플커머스는 가상의 기업이다."));
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview));
+
+        service.deliver(tailor(true));
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        assertThat(sentRequest.getValue().getCompany())
+                .isEqualTo(new ChatCompany("샘플커머스", "샘플커머스는 가상의 기업이다."));
+        JsonNode company = JsonMapper.shared().valueToTree(sentRequest.getValue()).get("company");
+        assertThat(company.propertyNames()).containsExactlyInAnyOrder("displayName", "interviewerBrief");
+    }
+
+    @Test
+    void 기업이_없으면_준비_요청에_company_키가_없다() {
+        service.deliver(tailor(true));
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        assertThat(JsonMapper.shared().valueToTree(sentRequest.getValue()).has("company")).isFalse();
     }
 }

@@ -114,7 +114,7 @@ class FeedbackServiceMultiCallbackTest {
                 List.of("p99 지연을 근거로 든 점"), List.of("무효화 전략 미언급"), "부작용까지는 못 짚었습니다.", null);
 
         return new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
-                new FeedbackCallbackRequest.Result(overall, List.of(tech, hr, ceo), List.of(item)), null);
+                new FeedbackCallbackRequest.Result(overall, List.of(tech, hr, ceo), List.of(item), null), null);
     }
 
     @Test
@@ -256,7 +256,7 @@ class FeedbackServiceMultiCallbackTest {
                 null, "사실과 대응을 나눠 말한다.", List.of(), List.of(), "답하지 않았습니다.", null);
         FeedbackCallbackRequest withStray = new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(request.getResult().getOverall(),
-                        request.getResult().getPersonas(), List.of(stray)),
+                        request.getResult().getPersonas(), List.of(stray), null),
                 null);
 
         service.handleCallback(withStray);
@@ -293,7 +293,7 @@ class FeedbackServiceMultiCallbackTest {
         FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
                 72, 80, 61, "요약", List.of(), List.of(), List.of(), 1, 1, null);
         return new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
-                new FeedbackCallbackRequest.Result(overall, personas, items), null);
+                new FeedbackCallbackRequest.Result(overall, personas, items, null), null);
     }
 
     private FeedbackCallbackRequest.Item item(String questionId, Long personaId) {
@@ -364,7 +364,7 @@ class FeedbackServiceMultiCallbackTest {
                 150, -3, 61, "요약", List.of(), List.of(), List.of(), 1, 1, null);
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(persona(11L, 120)),
-                        List.of(item("2", 11L))), null));
+                        List.of(item("2", 11L)), null), null));
 
         ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
         verify(feedbackRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
@@ -423,7 +423,7 @@ class FeedbackServiceMultiCallbackTest {
                 "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores));
 
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
-                new FeedbackCallbackRequest.Result(overall, List.of(tech), List.of(item)), null));
+                new FeedbackCallbackRequest.Result(overall, List.of(tech), List.of(item), null), null));
 
         ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
         verify(feedbackRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
@@ -478,7 +478,7 @@ class FeedbackServiceMultiCallbackTest {
                 "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores));
 
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
-                new FeedbackCallbackRequest.Result(overall, List.of(persona(11L, 78)), List.of(item)), null));
+                new FeedbackCallbackRequest.Result(overall, List.of(persona(11L, 78)), List.of(item), null), null));
 
         ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
         verify(feedbackRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());

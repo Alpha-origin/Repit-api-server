@@ -1,9 +1,11 @@
 package repit.repit_api_server.domain.userdata.feedback.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 
 import java.time.OffsetDateTime;
@@ -23,6 +25,10 @@ public class FeedbackSoloRequest {
     private String callbackUrl;
     private List<Question> questions;
     private List<Answer> answers;
+    // 면접을 만들 때 고른 기업. 채점 요청이 아니라 기업 관점 코멘트(companyFit)를 만드는 데만 쓴다.
+    // 고르지 않은 면접은 키 자체를 보내지 않는다 — null도 보내지 않는다.
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private CompanySnapshot company;
 
     @Getter
     @Builder

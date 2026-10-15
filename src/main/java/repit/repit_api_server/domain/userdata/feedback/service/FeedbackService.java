@@ -261,6 +261,7 @@ public class FeedbackService {
                 .userId(String.valueOf(interview.getUserId()))
                 .personaType(enumName(persona == null ? null : persona.getType()))
                 .personaTone(enumName(persona == null ? null : persona.getTone()))
+                .company(interview.getCompanySnapshot())
                 .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
                 .questions(transcript.questions().stream()
                         .map(question -> toQuestion(question, transcript.questionIds()))
@@ -300,6 +301,7 @@ public class FeedbackService {
                                 .tone(enumName(persona.getTone()))
                                 .build())
                         .toList())
+                .company(interview.getCompanySnapshot())
                 .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
                 .questions(transcript.questions().stream()
                         .map(question -> toMultiQuestion(question, transcript.questionIds(), personaByQuestion))
@@ -597,6 +599,8 @@ public class FeedbackService {
             feedback.setQuestionCount(counts.questionCountOr(overall.getQuestionCount(),
                     "면접 전체 문항 수", interviewId));
         }
+        // 기업 관점 코멘트. 읽지 못해도 피드백은 그대로 저장한다.
+        feedback.setCompanyFit(CompanyFitReader.read(result.getCompanyFit(), interviewId));
         feedback.setStatus(FeedbackStatus.SUCCEEDED);
         feedback.setErrorStatusCode(null);
         feedback.setErrorMessage(null);

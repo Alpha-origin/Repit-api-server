@@ -148,6 +148,13 @@ app:
     waiting-timeout: 3m
     # 시간이 지난 준비 건을 훑는 간격. 폴링하지 않는 클라이언트에게도 이 주기로 실패가 나간다.
     sweep-interval: 30s
+  company:
+    # 기업 데이터 패키지(JSON) 위치. Spring 리소스 패턴. 비우면 가져오지 않고, 공개 기업은 기존 DB 그대로다.
+    # 기업 기능의 배포 스위치이기도 하다. 공개 기업이 없으면 면접에 기업을 고를 수 없어 분석·채팅 서버로 company가
+    # 나가지 않는다. 분석·채팅 서버는 모르는 필드를 조용히 버리므로, 두 서버가 company를 받도록 배포된 뒤에 채운다.
+    # 개발·스테이징: classpath:company-data/sample/*.json
+    # 운영: 실제 데이터가 준비되면 classpath:company-data/prod/*.json
+    data-location: ${COMPANY_DATA_LOCATION:}
   question-pool:
     # 이 시간이 지나도록 콜백이 오지 않은 사이클 생성 요청은 잃어버린 것으로 보고, 면접을 시작할 때 다시 요청한다.
     generating-timeout: 5m

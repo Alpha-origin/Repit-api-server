@@ -1,9 +1,11 @@
 package repit.repit_api_server.domain.userdata.interview.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import repit.repit_api_server.domain.company.dto.ChatCompany;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
@@ -76,6 +78,9 @@ public class ChatInterviewPrepareRequest {
      * 면접관별 음성과 억양을 고른다. 대표 설정은 이 필드를 모르는 채팅 서버를 위해 그대로 둔다.
      */
     private List<Persona> personas;
+    // 면접을 만들 때 고른 기업의 요약. 꼬리질문이 이것으로 기업을 반영한다. 고르지 않은 면접은 키 자체를 보내지 않는다.
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private ChatCompany company;
 
     /**
      * 면접 질문 한 건.

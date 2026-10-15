@@ -73,7 +73,7 @@ class InterviewServiceMultiCreateTest {
     void setUp() {
         service = new InterviewService(interviewRepository, questionRepository, chatServerClient,
                 answerRepository, personaRepository, questionTailorService,
-                interviewPersonaRepository, null);
+                interviewPersonaRepository, null, null);
 
 
         when(interviewRepository.save(any(InterviewEntity.class))).thenAnswer(invocation -> {
@@ -103,7 +103,7 @@ class InterviewServiceMultiCreateTest {
                 persona(13L, Role.CEO), persona(11L, Role.TECH), persona(12L, Role.HR)));
 
         InterviewResponse response = service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(13L, 11L, 12L)));
+                new CreateInterviewRequest(null, null, List.of(13L, 11L, 12L), null));
 
         assertThat(response.getMode()).isEqualTo(InterviewMode.MULTI);
         // 면접관이 여럿이라 단일 personaId는 비워 둔다.
@@ -126,7 +126,7 @@ class InterviewServiceMultiCreateTest {
                 persona(11L, Role.TECH), persona(12L, Role.HR)));
 
         InterviewResponse response = service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(11L, 12L)));
+                new CreateInterviewRequest(null, null, List.of(11L, 12L), null));
 
         assertThat(response.getMode()).isEqualTo(InterviewMode.MULTI);
         assertThat(response.getPersonaIds()).containsExactly(11L, 12L);
@@ -140,7 +140,7 @@ class InterviewServiceMultiCreateTest {
                 persona(11L, Role.TECH)));
 
         InterviewResponse response = service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(12L, 13L, 15L, 11L)));
+                new CreateInterviewRequest(null, null, List.of(12L, 13L, 15L, 11L), null));
 
         assertThat(response.getMode()).isEqualTo(InterviewMode.MULTI);
         // 기술 면접관만 맨 앞으로 올라오고 나머지는 고른 순서 그대로다.
@@ -169,7 +169,7 @@ class InterviewServiceMultiCreateTest {
                 persona(15L, Role.PM), persona(16L, Role.DESIGN)));
 
         assertThatThrownBy(() -> service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(11L, 12L, 13L, 15L, 16L))))
+                new CreateInterviewRequest(null, null, List.of(11L, 12L, 13L, 15L, 16L), null)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("1명 이상 3명 이하")
                 .extracting(e -> ((BusinessException) e).getStatus())
@@ -185,7 +185,7 @@ class InterviewServiceMultiCreateTest {
                 persona(12L, Role.HR), persona(13L, Role.CEO)));
 
         assertThatThrownBy(() -> service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(12L, 13L))))
+                new CreateInterviewRequest(null, null, List.of(12L, 13L), null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
@@ -198,7 +198,7 @@ class InterviewServiceMultiCreateTest {
         when(personaRepository.findAllById(List.of(11L))).thenReturn(List.of(persona(11L, Role.TECH)));
 
         assertThatThrownBy(() -> service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(11L))))
+                new CreateInterviewRequest(null, null, List.of(11L), null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
@@ -210,7 +210,7 @@ class InterviewServiceMultiCreateTest {
                 persona(11L, Role.TECH), persona(14L, Role.TECH), persona(12L, Role.HR)));
 
         assertThatThrownBy(() -> service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(11L, 14L, 12L))))
+                new CreateInterviewRequest(null, null, List.of(11L, 14L, 12L), null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
@@ -219,7 +219,7 @@ class InterviewServiceMultiCreateTest {
     @Test
     void 같은_면접관을_두_번_지정하면_422다() {
         assertThatThrownBy(() -> service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(11L, 11L, 12L))))
+                new CreateInterviewRequest(null, null, List.of(11L, 11L, 12L), null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
@@ -233,7 +233,7 @@ class InterviewServiceMultiCreateTest {
                 persona(11L, Role.TECH), persona(12L, Role.HR)));
 
         assertThatThrownBy(() -> service.createInterview(USER_ID,
-                new CreateInterviewRequest(null, null, List.of(11L, 12L, 99L))))
+                new CreateInterviewRequest(null, null, List.of(11L, 12L, 99L), null)))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.NOT_FOUND);
