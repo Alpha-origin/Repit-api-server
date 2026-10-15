@@ -656,10 +656,13 @@ public class QuestionTailorService {
         } catch (RuntimeException e) {
             log.error("질문 사이클을 받았지만 면접 준비를 이어가지 못했습니다. tailorId={}, interviewId={}",
                     tailor.getTailorId(), tailor.getInterviewId(), e);
-            failWithoutFallback(tailor, "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.");
-            QuestionTailorEntity saved = questionTailorRepository.save(tailor);
-            notifyPreparationFailed(saved, FailureStage.QUESTION_GENERATION);
-            return saved;
+            // 접수 응답만 늦게 실패했고 콜백은 먼저 와서 결과가 확정됐을 수 있다. 아직 기다리는 건만 실패로 닫는다 —
+            // 엔티티를 통째로 실패로 저장하면 이미 채팅 서버로 넘긴 질문까지 지운다.
+            if (!closeWaiting(tailor, "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.")) {
+                return questionTailorRepository.findById(tailor.getTailorId()).orElse(tailor);
+            }
+            notifyPreparationFailed(tailor, FailureStage.QUESTION_GENERATION);
+            return tailor;
         }
     }
 
