@@ -22,7 +22,7 @@ public class PersonaRequest {
     // 필수. TECH / HR / CEO.
     private Role role;
 
-    // 기술 면접관에게만 필요하다. 인사팀·CEO는 비워 보낸다.
+    // 읽지 않는다. 기술 면접관 전공은 로그인 사용자의 직무로 정한다(구버전 Web 호환용으로만 남김).
     private Major major;
 
     private Type type;
