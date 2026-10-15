@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.metadata.dto.response.ProjectSummaryResponse;
 import repit.repit_api_server.domain.userdata.interview.MultiInterviewPanel;
@@ -68,6 +69,8 @@ public class QuestionTailorService {
     private static final String CALLBACK_PATH = "/api/questions/tailor/callback";
     private static final String MULTI_CALLBACK_PATH = "/api/questions/tailor/multi/callback";
     private static final String STATUS_SUCCEEDED = "succeeded";
+    // 콜백 주소에 싣는 준비 건 id. 컨트롤러가 이 이름으로 읽는다.
+    public static final String TAILOR_ID_PARAM = "tailorId";
 
     // 기술 외 면접관 한 명이 맡을 문항 수. 분석 서버 기본값과 같다. 면접관이 늘면 이만큼씩 늘어난다.
     private static final int OTHER_QUESTION_COUNT = 2;
@@ -176,21 +179,50 @@ public class QuestionTailorService {
             return waitForCycle(interview, tailor);
         }
 
-        String major = userMajor != null ? userMajor : drawn.major();
-        QuestionTailorAcceptedResponse accepted = interview.getMode() == InterviewMode.MULTI
-                ? requestMultiTailor(interview, major, drawn)
-                : requestSoloTailor(interview, major, drawn);
-
-        tailor.setJobId(accepted == null ? null : accepted.getJobId());
+        // 콜백이 접수 응답보다 먼저 올 수 있다. 분석 서버를 부르기 전에 이 건을 저장하고, 콜백 주소에 그 id를 실어
+        // 보낸다 — 콜백은 접수 응답의 jobId 없이도 이 건을 찾는다. 이 메서드는 트랜잭션 밖에서 불려 저장이 곧바로
+        // 커밋되므로, 분석 서버가 부르기 전에 다른 트랜잭션의 콜백 처리에서도 보인다.
+        tailor.setJobId(null);
         tailor.setStatus(TailorStatus.PENDING);
         // N:1이면 기술 면접관에게 넘긴 원질문만 남는다. 나머지 면접관 몫은 아직 존재하지 않는다.
         // 재작성이 실패해 원질문으로 되돌아가도 문항 수는 세트 그대로다.
         tailor.setSourceQuestions(drawn.questions());
-        return questionTailorRepository.save(tailor);
+        tailor = questionTailorRepository.save(tailor);
+
+        String major = userMajor != null ? userMajor : drawn.major();
+        QuestionTailorAcceptedResponse accepted;
+        try {
+            accepted = interview.getMode() == InterviewMode.MULTI
+                    ? requestMultiTailor(interview, major, drawn, tailor.getTailorId())
+                    : requestSoloTailor(interview, major, drawn, tailor.getTailorId());
+        } catch (RuntimeException e) {
+            // 접수되지 않은 새 건은 남기지 않는다. 남기면 면접을 다시 시작해도 이 건에 막혀 제한 시간까지 기다린다.
+            // 그사이 콜백이 와서 결과가 들어갔으면 지우지 않는다. 사이클을 기다리던 건은 부르는 쪽이 실패로 닫는다.
+            if (target == null) {
+                questionTailorRepository.discardUnaccepted(tailor.getTailorId());
+            }
+            throw e;
+        }
+
+        // 접수 응답은 jobId만 채운다. 엔티티를 통째로 저장하면 먼저 도착한 콜백의 결과를 PENDING으로 되돌린다.
+        String jobId = accepted == null ? null : accepted.getJobId();
+        if (jobId != null) {
+            questionTailorRepository.recordJobId(tailor.getTailorId(), jobId);
+            tailor.setJobId(jobId);
+        }
+        return tailor;
+    }
+
+    /** 콜백이 접수 응답보다 먼저 와도 이 건을 찾도록 id를 주소에 싣는다. 주소에 이미 붙은 쿼리는 그대로 둔다. */
+    static String withTailorId(String callbackUrl, Long tailorId) {
+        return UriComponentsBuilder.fromUriString(callbackUrl)
+                .queryParam(TAILOR_ID_PARAM, tailorId)
+                .build()
+                .toUriString();
     }
 
     private QuestionTailorAcceptedResponse requestSoloTailor(InterviewEntity interview, String major,
-                                                             QuestionPoolService.DrawnSet drawn) {
+                                                             QuestionPoolService.DrawnSet drawn, Long tailorId) {
         QuestionTailorRequest.Profile profile = resolveProfile(major, interview.getPersonaId());
 
         return aiServerClient.tailorQuestions(QuestionTailorRequest.builder()
@@ -199,7 +231,7 @@ public class QuestionTailorService {
                 .profile(profile)
                 .questions(drawn.questions().stream().map(this::toRequestQuestion).toList())
                 .company(interview.getCompanySnapshot())
-                .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
+                .callbackUrl(withTailorId(callbackBaseUrl + CALLBACK_PATH, tailorId))
                 .build());
     }
 
@@ -234,7 +266,7 @@ public class QuestionTailorService {
      * {@link MultiInterviewPanel}에 있다.
      */
     private QuestionTailorAcceptedResponse requestMultiTailor(InterviewEntity interview, String major,
-                                                              QuestionPoolService.DrawnSet drawn) {
+                                                              QuestionPoolService.DrawnSet drawn, Long tailorId) {
         List<PersonaEntity> members = orderedPersonas(interview.getInterviewId());
         PersonaEntity tech = members.getFirst();
         List<PersonaEntity> others = members.subList(1, members.size());
@@ -255,7 +287,7 @@ public class QuestionTailorService {
                 .questions(techQuestions.stream().map(this::toMultiRequestQuestion).toList())
                 .projectSummary(toRequestProjectSummary(drawn))
                 .company(interview.getCompanySnapshot())
-                .callbackUrl(callbackBaseUrl + MULTI_CALLBACK_PATH)
+                .callbackUrl(withTailorId(callbackBaseUrl + MULTI_CALLBACK_PATH, tailorId))
                 .build());
     }
 
@@ -626,10 +658,13 @@ public class QuestionTailorService {
         } catch (RuntimeException e) {
             log.error("질문 사이클을 받았지만 면접 준비를 이어가지 못했습니다. tailorId={}, interviewId={}",
                     tailor.getTailorId(), tailor.getInterviewId(), e);
-            failWithoutFallback(tailor, "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.");
-            QuestionTailorEntity saved = questionTailorRepository.save(tailor);
-            notifyPreparationFailed(saved, FailureStage.QUESTION_GENERATION);
-            return saved;
+            // 접수 응답만 늦게 실패했고 콜백은 먼저 와서 결과가 확정됐을 수 있다. 아직 기다리는 건만 실패로 닫는다 —
+            // 엔티티를 통째로 실패로 저장하면 이미 채팅 서버로 넘긴 질문까지 지운다.
+            if (!closeWaiting(tailor, "질문을 준비하지 못했습니다. 잠시 후 다시 시도해주세요.")) {
+                return questionTailorRepository.findById(tailor.getTailorId()).orElse(tailor);
+            }
+            notifyPreparationFailed(tailor, FailureStage.QUESTION_GENERATION);
+            return tailor;
         }
     }
 
@@ -651,13 +686,19 @@ public class QuestionTailorService {
      * <p>저장과 채팅 서버 호출을 한 트랜잭션으로 묶지 않는다. 외부 호출이 늦어져도 재작성 결과는
      * 이미 DB에 남아 있어야 조회와 재전달이 가능하다.
      */
-    public void handleCallback(QuestionTailorCallbackRequest request) {
-        QuestionTailorEntity tailor = findTarget(request);
+    public void handleCallback(QuestionTailorCallbackRequest request, Long tailorId) {
+        QuestionTailorEntity tailor = findTarget(tailorId, request.getJobId(), request.getInterviewId(), InterviewMode.SOLO);
         if (tailor == null) {
-            log.warn("알 수 없는 질문 재작성 콜백을 받았습니다. jobId={}, interviewId={}",
-                    request.getJobId(), request.getInterviewId());
+            log.warn("알 수 없는 질문 재작성 콜백을 받았습니다. tailorId={}, jobId={}, interviewId={}",
+                    tailorId, request.getJobId(), request.getInterviewId());
             return;
         }
+        if (alreadySettled(tailor)) {
+            return;
+        }
+        // 결과는 복사본에 계산한다. 조회한 엔티티는 open-in-view로 요청 내내 관리 상태라, 그것을 고치면 조건부 확정이
+        // 쿼리 전에 변경을 먼저 flush해 PENDING 조건이 어긋나고 확정이 0건으로 끝난다 — 그 flush는 조건 없이 쓰기도 한다.
+        tailor = tailor.toBuilder().build();
 
         if (tailor.getJobId() == null) {
             tailor.setJobId(request.getJobId());
@@ -669,8 +710,22 @@ public class QuestionTailorService {
             applyFailure(tailor, request.getError());
         }
 
-        questionTailorRepository.save(tailor);
+        if (!settle(tailor)) {
+            return;
+        }
         completePreparation(tailor);
+    }
+
+    /**
+     * 콜백 결과를 확정한다. 아직 PENDING일 때만 상태와 결과를 한 문장으로 고친다 — 차지하지 못했으면 그사이 실패 처리가
+     * 먼저 확정한 것이라 아무것도 쓰지 않는다. 채팅 서버 전달은 확정이 커밋된 뒤에 부르는 쪽이 한다.
+     */
+    private boolean settle(QuestionTailorEntity tailor) {
+        if (questionTailorRepository.settleCallback(tailor) == 1) {
+            return true;
+        }
+        log.info("그사이 다른 처리가 질문 준비를 먼저 확정해 콜백 결과를 반영하지 않습니다. tailorId={}", tailor.getTailorId());
+        return false;
     }
 
     /**
@@ -826,13 +881,19 @@ public class QuestionTailorService {
      * 실패하면 면접에 쓸 질문이 남지 않는다. 그 경우 채팅 서버로 넘기지 않고 실패로 남긴다 —
      * 반쪽짜리로 넘기면 기술 질문 {@link QuestionPoolService#setSize}개짜리 면접이 N:1인 척 열린다.
      */
-    public void handleMultiCallback(QuestionTailorMultiCallbackRequest request) {
-        QuestionTailorEntity tailor = findMultiTarget(request);
+    public void handleMultiCallback(QuestionTailorMultiCallbackRequest request, Long tailorId) {
+        QuestionTailorEntity tailor = findTarget(tailorId, request.getJobId(), request.getInterviewId(), InterviewMode.MULTI);
         if (tailor == null) {
-            log.warn("알 수 없는 N:1 질문 구성 콜백을 받았습니다. jobId={}, interviewId={}",
-                    request.getJobId(), request.getInterviewId());
+            log.warn("알 수 없는 N:1 질문 구성 콜백을 받았습니다. tailorId={}, jobId={}, interviewId={}",
+                    tailorId, request.getJobId(), request.getInterviewId());
             return;
         }
+        if (alreadySettled(tailor)) {
+            return;
+        }
+        // 결과는 복사본에 계산한다. 조회한 엔티티는 open-in-view로 요청 내내 관리 상태라, 그것을 고치면 조건부 확정이
+        // 쿼리 전에 변경을 먼저 flush해 PENDING 조건이 어긋나고 확정이 0건으로 끝난다 — 그 flush는 조건 없이 쓰기도 한다.
+        tailor = tailor.toBuilder().build();
 
         if (tailor.getJobId() == null) {
             tailor.setJobId(request.getJobId());
@@ -848,7 +909,9 @@ public class QuestionTailorService {
                     : error.getMessage());
         }
 
-        questionTailorRepository.save(tailor);
+        if (!settle(tailor)) {
+            return;
+        }
         completePreparation(tailor);
     }
 
@@ -895,33 +958,52 @@ public class QuestionTailorService {
         tailor.setQuestions(prepared);
     }
 
-    private QuestionTailorEntity findMultiTarget(QuestionTailorMultiCallbackRequest request) {
-        if (request.getJobId() != null) {
-            QuestionTailorEntity byJobId = questionTailorRepository.findByJobId(request.getJobId()).orElse(null);
-            if (byJobId != null) {
-                return byJobId;
-            }
+    /**
+     * 콜백이 가리키는 준비 건. 콜백 주소에 실어 보낸 tailorId로 찾는다 — 접수 응답이 늦어 jobId가 아직 없어도 찾는다.
+     *
+     * <p>tailorId가 없으면 콜백 주소에 그 값이 없던 시절(배포 전)에 나간 요청이다. 그 건을 확실히 짚는 것은 jobId뿐이라
+     * jobId로만 찾는다. 면접으로 찾으면 같은 면접의 새 시도(아직 jobId가 없는 건)에 이전 요청의 결과가 들어간다.
+     *
+     * <p>어느 쪽으로 찾았든 함께 온 면접·jobId·방식이 그 건과 어긋나면 다른 요청의 결과다. 잇지 않는다. tailorId가
+     * 있는데 맞지 않으면 다른 건으로 우회하지도 않는다 — 우회하면 다른 시도의 결과가 이 면접에 들어간다.
+     */
+    private QuestionTailorEntity findTarget(Long tailorId, String jobId, String interviewIdValue, InterviewMode mode) {
+        QuestionTailorEntity tailor;
+        if (tailorId != null) {
+            tailor = questionTailorRepository.findById(tailorId).orElse(null);
+        } else {
+            tailor = jobId == null ? null : questionTailorRepository.findByJobId(jobId).orElse(null);
         }
-        Long interviewId = parseInterviewId(request.getInterviewId());
-        if (interviewId == null) {
+        if (tailor == null) {
             return null;
         }
-        return questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId).orElse(null);
+        // 세션이 아직 없는 시점이라 면접은 interviewId로 가리킨다.
+        Long interviewId = parseInterviewId(interviewIdValue);
+        boolean otherInterview = interviewId != null && !interviewId.equals(tailor.getInterviewId());
+        boolean otherJob = jobId != null && tailor.getJobId() != null && !jobId.equals(tailor.getJobId());
+        if (otherInterview || otherJob || tailor.getMode() != mode) {
+            log.warn("콜백의 식별자가 준비 건과 맞지 않아 반영하지 않습니다. tailorId={}, jobId={}(저장 {}), "
+                            + "interviewId={}(저장 {}), 방식={}(저장 {})",
+                    tailorId, jobId, tailor.getJobId(), interviewIdValue, tailor.getInterviewId(), mode, tailor.getMode());
+            return null;
+        }
+        return tailor;
     }
 
-    private QuestionTailorEntity findTarget(QuestionTailorCallbackRequest request) {
-        if (request.getJobId() != null) {
-            QuestionTailorEntity byJobId = questionTailorRepository.findByJobId(request.getJobId()).orElse(null);
-            if (byJobId != null) {
-                return byJobId;
-            }
+    /**
+     * 이미 확정된 건이면 콜백 결과를 반영하지 않는다. 재전송이거나, 시간 초과로 원질문 폴백·실패가 먼저 확정된 경우다.
+     *
+     * <p>확정된 질문은 채팅 서버가 이미 그것으로 면접을 열었을 수 있어 바꾸지 않는다. 넘기지 못한 채 남은 건이면
+     * 전달만 다시 해본다.
+     */
+    private boolean alreadySettled(QuestionTailorEntity tailor) {
+        if (tailor.getStatus() == TailorStatus.PENDING) {
+            return false;
         }
-        // 세션이 아직 없는 시점이라 매칭 키는 interviewId다.
-        Long interviewId = parseInterviewId(request.getInterviewId());
-        if (interviewId == null) {
-            return null;
-        }
-        return questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId).orElse(null);
+        log.info("이미 확정된 질문 준비라 콜백 결과를 반영하지 않습니다. tailorId={}, status={}",
+                tailor.getTailorId(), tailor.getStatus());
+        completePreparation(tailor);
+        return true;
     }
 
     private Long parseInterviewId(String interviewId) {

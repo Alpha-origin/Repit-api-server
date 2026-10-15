@@ -76,6 +76,8 @@ class QuestionTailorServiceReadyNotifyTest {
                 new ObjectMapper());
 
         when(questionTailorRepository.claimChatDelivery(anyLong())).thenReturn(1);
+        // 콜백 결과는 아직 PENDING일 때만 확정된다. 다른 처리가 먼저 확정한 경우는 따로 검증한다.
+        when(questionTailorRepository.settleCallback(any())).thenReturn(1);
         when(questionTailorRepository.save(any(QuestionTailorEntity.class)))
                 .thenAnswer(call -> call.getArgument(0));
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()
@@ -114,7 +116,7 @@ class QuestionTailorServiceReadyNotifyTest {
         QuestionTailorEntity tailor = pendingTailor();
         when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(tailor));
 
-        service.handleCallback(succeeded());
+        service.handleCallback(succeeded(), null);
 
         ArgumentCaptor<InterviewReadyResponse> sent = ArgumentCaptor.forClass(InterviewReadyResponse.class);
         // 웹이 구독한 열쇠는 면접 id가 아니라 분석 jobId다.
@@ -133,7 +135,7 @@ class QuestionTailorServiceReadyNotifyTest {
         when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(tailor));
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "failed", null,
-                new QuestionTailorCallbackRequest.Error(502, "질문 재작성에 실패했습니다.")));
+                new QuestionTailorCallbackRequest.Error(502, "질문 재작성에 실패했습니다.")), null);
 
         ArgumentCaptor<InterviewReadyResponse> sent = ArgumentCaptor.forClass(InterviewReadyResponse.class);
         verify(sseNotifier).sendFinal(eq("analysis-1"), eq(SseNotifier.INTERVIEW_READY), sent.capture());
@@ -150,7 +152,7 @@ class QuestionTailorServiceReadyNotifyTest {
         doThrow(new ExternalApiException("채팅 서버에 오류가 발생했습니다.", null, null))
                 .when(chatInterviewHandoffService).deliver(any());
 
-        service.handleCallback(succeeded());
+        service.handleCallback(succeeded(), null);
 
         verify(sseNotifier).sendFinal(eq("analysis-1"),
                 eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), any(InterviewReadyResponse.class));
