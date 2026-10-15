@@ -60,6 +60,10 @@ class RequiredSettingsCheck {
         if (!scheme.equals("https")) {
             throw invalid(host, "운영에서는 https 주소여야 합니다");
         }
+        // 분석 서버는 기본 포트가 아닌 콜백 주소를 422로 거부한다(CallbackUrls.require와 같은 제한).
+        if (uri.getPort() != -1 && uri.getPort() != 443) {
+            throw invalid(host, "운영에서는 포트를 생략하거나 443이어야 합니다");
+        }
         if (host.contains("ngrok") || isLoopback(host)) {
             throw invalid(host, "운영에서는 ngrok이나 localhost 같은 개발용 주소를 쓸 수 없습니다");
         }

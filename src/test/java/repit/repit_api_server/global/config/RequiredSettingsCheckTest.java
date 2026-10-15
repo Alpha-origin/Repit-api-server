@@ -46,15 +46,18 @@ class RequiredSettingsCheckTest {
     }
 
     @Test
-    void 운영에서는_https가_아니거나_개발용_주소면_받지_않는다() {
+    void 운영에서는_https_기본_포트가_아니거나_개발용_주소면_받지_않는다() {
         for (String url : List.of("https://wildcat-startle-rope.ngrok-free.dev", "https://abc.ngrok.io",
                 "https://localhost", "https://api.localhost", "https://127.0.0.1", "https://[::1]",
-                "http://api.repit.example")) {
+                "http://api.repit.example", "https://api.repit.example:8443")) {
             assertThatThrownBy(() -> RequiredSettingsCheck.verifyCallbackBaseUrl(url, true)).as(url)
                     .isInstanceOf(IllegalStateException.class);
         }
-        assertThatCode(() -> RequiredSettingsCheck.verifyCallbackBaseUrl("https://api.repit.example", true))
-                .doesNotThrowAnyException();
+        // 분석 서버는 포트를 생략했거나 443인 주소만 받는다.
+        for (String url : List.of("https://api.repit.example", "https://api.repit.example:443")) {
+            assertThatCode(() -> RequiredSettingsCheck.verifyCallbackBaseUrl(url, true)).as(url)
+                    .doesNotThrowAnyException();
+        }
     }
 
     @Test
