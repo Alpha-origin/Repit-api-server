@@ -78,6 +78,8 @@ class QuestionTailorServiceMultiCallbackTest {
                 new ObjectMapper());
 
         when(questionTailorRepository.claimChatDelivery(anyLong())).thenReturn(1);
+        // 콜백 결과는 아직 PENDING일 때만 확정된다. 다른 처리가 먼저 확정한 경우는 따로 검증한다.
+        when(questionTailorRepository.settleCallback(any())).thenReturn(1);
         when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(pendingMultiTailor()));
     }
 
@@ -102,8 +104,9 @@ class QuestionTailorServiceMultiCallbackTest {
                 .build();
     }
 
+    /** 콜백 결과는 settleCallback으로 확정한다. 넘긴 엔티티가 최종본이고, 채팅 서버 전달 기록도 같은 객체에 남는다. */
     private QuestionTailorEntity lastSaved() {
-        verify(questionTailorRepository, atLeastOnce()).save(savedTailor.capture());
+        verify(questionTailorRepository, atLeastOnce()).settleCallback(savedTailor.capture());
         return savedTailor.getValue();
     }
 

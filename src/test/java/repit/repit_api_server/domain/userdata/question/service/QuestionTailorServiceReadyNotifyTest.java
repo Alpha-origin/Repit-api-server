@@ -76,6 +76,8 @@ class QuestionTailorServiceReadyNotifyTest {
                 new ObjectMapper());
 
         when(questionTailorRepository.claimChatDelivery(anyLong())).thenReturn(1);
+        // 콜백 결과는 아직 PENDING일 때만 확정된다. 다른 처리가 먼저 확정한 경우는 따로 검증한다.
+        when(questionTailorRepository.settleCallback(any())).thenReturn(1);
         when(questionTailorRepository.save(any(QuestionTailorEntity.class)))
                 .thenAnswer(call -> call.getArgument(0));
         when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()

@@ -74,6 +74,8 @@ class QuestionTailorServiceCallbackTest {
 
         // 넘길 권리를 차지한 상태를 기본으로 둔다. 차지하지 못하는 경우는 따로 검증한다.
         when(questionTailorRepository.claimChatDelivery(anyLong())).thenReturn(1);
+        // 콜백 결과는 아직 PENDING일 때만 확정된다. 다른 처리가 먼저 확정한 경우는 따로 검증한다.
+        when(questionTailorRepository.settleCallback(any())).thenReturn(1);
     }
 
     private QuestionTailorEntity pendingTailor() {
@@ -102,8 +104,9 @@ class QuestionTailorServiceCallbackTest {
     }
 
     /** 콜백 처리는 결과 저장과 채팅 서버 전달 기록으로 두 번 저장한다. 마지막 상태가 최종본이다. */
+    /** 콜백 결과는 settleCallback으로 확정한다. 넘긴 엔티티가 최종본이고, 채팅 서버 전달 기록도 같은 객체에 남는다. */
     private QuestionTailorEntity lastSaved() {
-        verify(questionTailorRepository, atLeastOnce()).save(savedTailor.capture());
+        verify(questionTailorRepository, atLeastOnce()).settleCallback(savedTailor.capture());
         return savedTailor.getValue();
     }
 
@@ -291,7 +294,7 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(rewritten("job-old", "3"), null);
 
-        verify(questionTailorRepository, never()).save(any());
+        verify(questionTailorRepository, never()).settleCallback(any());
         verify(questionTailorRepository, never()).findTopByInterviewIdOrderByCreatedAtDesc(any());
     }
 
@@ -312,7 +315,7 @@ class QuestionTailorServiceCallbackTest {
         service.handleCallback(new QuestionTailorCallbackRequest("job-9", "99", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of()), null), null);
 
-        verify(questionTailorRepository, never()).save(any());
+        verify(questionTailorRepository, never()).settleCallback(any());
         verify(chatInterviewHandoffService, never()).deliver(any());
     }
 
@@ -406,7 +409,7 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(rewritten("job-1", "3"), 9L);
 
-        verify(questionTailorRepository, never()).save(any());
+        verify(questionTailorRepository, never()).settleCallback(any());
         verify(chatInterviewHandoffService, never()).deliver(any());
     }
 
@@ -422,7 +425,7 @@ class QuestionTailorServiceCallbackTest {
         when(questionTailorRepository.findById(2L)).thenReturn(Optional.of(multi));
         service.handleCallback(rewritten("job-1", "3"), 2L);
 
-        verify(questionTailorRepository, never()).save(any());
+        verify(questionTailorRepository, never()).settleCallback(any());
     }
 
     /** 재전송이거나 시간 초과로 먼저 확정된 건이다. 채팅 서버가 이미 그 질문으로 열었을 수 있어 바꾸지 않는다. */
@@ -437,7 +440,7 @@ class QuestionTailorServiceCallbackTest {
 
         service.handleCallback(rewritten("job-1", "3"), 1L);
 
-        verify(questionTailorRepository, never()).save(any());
+        verify(questionTailorRepository, never()).settleCallback(any());
         assertThat(tailor.getQuestions()).extracting(TailoredQuestionResponse::getQuestion)
                 .containsExactly("왜 Redis 를 썼나요?", "왜 WebFlux 를 썼나요?");
         verify(chatInterviewHandoffService, never()).deliver(any());
@@ -454,7 +457,19 @@ class QuestionTailorServiceCallbackTest {
         when(questionTailorRepository.findByJobId("job-2")).thenReturn(Optional.of(multi));
         service.handleCallback(rewritten("job-2", "3"), null);
 
+        verify(questionTailorRepository, never()).settleCallback(any());
+    }
+
+    /** 그사이 시간 초과나 이어가기 실패가 먼저 확정했다. 콜백은 아무것도 쓰지 않고 넘기지도 않는다. */
+    @Test
+    void 다른_처리가_먼저_확정했으면_콜백은_결과를_쓰지_않는다() {
+        when(questionTailorRepository.findById(1L)).thenReturn(Optional.of(pendingTailor()));
+        when(questionTailorRepository.settleCallback(any())).thenReturn(0);
+
+        service.handleCallback(rewritten("job-1", "3"), 1L);
+
         verify(questionTailorRepository, never()).save(any());
+        verify(chatInterviewHandoffService, never()).deliver(any());
     }
 
     @Test

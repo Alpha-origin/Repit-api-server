@@ -121,4 +121,27 @@ public interface QuestionTailorRepository extends JpaRepository<QuestionTailorEn
                and t.status = repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus.PENDING
             """)
     int discardUnaccepted(@Param("tailorId") Long tailorId);
+
+    /**
+     * 콜백 결과를 확정한다. 아직 PENDING일 때만 상태와 결과를 한 문장으로 함께 고치고 1을 돌려받는다.
+     *
+     * <p>상태를 읽은 뒤 따로 저장하면, 그사이 실패 처리(시간 초과, 사이클 대기에서 이어가기 실패)가 claimExpiration으로
+     * 먼저 확정한 건을 콜백이 덮거나, 반대로 실패 처리가 들고 있던 낡은 엔티티로 콜백 결과를 덮는다. 둘 다 조건부 갱신이라
+     * 한쪽만 이긴다. jobId는 비어 있을 때만 채운다 — 접수 응답이 먼저 남긴 값을 지우지 않는다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update QuestionTailorEntity t
+               set t.status = :#{#tailor.status},
+                   t.tailored = :#{#tailor.tailored},
+                   t.questions = :#{#tailor.questions},
+                   t.errorStatusCode = :#{#tailor.errorStatusCode},
+                   t.errorMessage = :#{#tailor.errorMessage},
+                   t.jobId = coalesce(t.jobId, :#{#tailor.jobId}),
+                   t.updatedAt = local datetime
+             where t.tailorId = :#{#tailor.tailorId}
+               and t.status = repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus.PENDING
+            """)
+    int settleCallback(@Param("tailor") QuestionTailorEntity tailor);
 }

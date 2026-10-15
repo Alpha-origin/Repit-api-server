@@ -11,12 +11,14 @@ import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaE
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
+import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleCallbackRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorCallbackRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiCallbackRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiRequest;
@@ -31,6 +33,7 @@ import repit.repit_api_server.global.response.UserResponse;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
@@ -68,9 +71,13 @@ class QuestionTailorEarlyCallbackTest {
     private PersonaRepository personaRepository;
     @MockitoBean
     private InterviewPersonaRepository interviewPersonaRepository;
+    @MockitoBean
+    private InterviewRepository interviewRepository;
 
-    // 다른 테스트나 로컬 데이터와 겹치지 않는 면접 id. question_tailor는 면접을 외래 키로 묶지 않는다.
+    // 다른 테스트나 로컬 데이터와 겹치지 않는 면접·사용자 id. question_tailor는 둘 다 외래 키로 묶지 않는다.
+    // 사용자도 따로 둔다 — 사이클 콜백은 사용자의 기다리는 준비를 모두 이어간다.
     private final long interviewId = 900_000_000L + ThreadLocalRandom.current().nextInt(1_000_000);
+    private final long userId = 900_000_000L + ThreadLocalRandom.current().nextInt(1_000_000);
 
     @AfterEach
     void cleanUp() {
@@ -82,7 +89,7 @@ class QuestionTailorEarlyCallbackTest {
     private InterviewEntity interview(InterviewMode mode) {
         return InterviewEntity.builder()
                 .interviewId(interviewId)
-                .userId(7L)
+                .userId(userId)
                 .mode(mode)
                 .sessionId(UUID.randomUUID().toString())
                 .status(Status.IN_PROGRESS)
@@ -91,7 +98,7 @@ class QuestionTailorEarlyCallbackTest {
 
     private UserResponse user() {
         UserResponse user = mock(UserResponse.class);
-        when(user.getId()).thenReturn(7L);
+        when(user.getId()).thenReturn(userId);
         when(user.getMajor()).thenReturn("BACKEND");
         return user;
     }
@@ -109,8 +116,9 @@ class QuestionTailorEarlyCallbackTest {
                 .toList();
         Map<String, Object> projectSummary = Map.of("overview", "주문 처리를 맡는 백엔드",
                 "repositories", List.of(), "coreFeatures", List.of(), "techStack", List.of("Spring"));
-        when(questionPoolService.takeSet(eq(7L), eq(mode), eq(interviewId)))
-                .thenReturn(new QuestionPoolService.DrawnSet("analysis-1", questions, projectSummary, null));
+        when(questionPoolService.takeSet(eq(userId), eq(mode), eq(interviewId)))
+                // 이어가기 경로에는 사용자 정보가 없어 종합 데이터에 실었던 전공을 쓴다.
+                .thenReturn(new QuestionPoolService.DrawnSet("analysis-1", questions, projectSummary, "BACKEND"));
     }
 
     private static Long tailorIdOf(String callbackUrl) {
@@ -209,5 +217,96 @@ class QuestionTailorEarlyCallbackTest {
                 .isInstanceOf(IllegalStateException.class);
 
         assertThat(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId)).isEmpty();
+    }
+
+    // ---- 콜백과 실패 처리가 같은 건을 두고 겹칠 때 ----
+
+    private QuestionTailorEntity pendingRow() {
+        return questionTailorRepository.save(QuestionTailorEntity.builder()
+                .interviewId(interviewId)
+                .userId(userId)
+                .mode(InterviewMode.SOLO)
+                .status(TailorStatus.PENDING)
+                .chatDelivered(false)
+                .sourceQuestions(List.of(TailoredQuestionResponse.builder().id(1).question("원질문 1").build()))
+                .build());
+    }
+
+    /** 콜백이 읽어 둔 결과. 이 건이 PENDING일 때 계산했다. */
+    private static QuestionTailorEntity succeeded(QuestionTailorEntity read) {
+        read.setStatus(TailorStatus.SUCCEEDED);
+        read.setTailored(true);
+        read.setJobId("job-cross");
+        read.setQuestions(List.of(TailoredQuestionResponse.builder().id(1).question("다시 쓴 질문 1").build()));
+        return read;
+    }
+
+    /** 콜백이 PENDING을 읽은 뒤 실패 처리가 먼저 차지했다. 콜백은 아무것도 쓰지 못하고 실패 처리가 확정한다. */
+    @Test
+    void 실패_처리가_먼저_차지하면_콜백은_결과를_쓰지_못한다() {
+        QuestionTailorEntity read = pendingRow();
+
+        assertThat(questionTailorRepository.claimExpiration(read.getTailorId())).isEqualTo(1);
+        assertThat(questionTailorRepository.settleCallback(succeeded(read))).isZero();
+
+        QuestionTailorEntity saved = questionTailorRepository.findById(read.getTailorId()).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(TailorStatus.FAILED);
+        assertThat(saved.getQuestions()).isNull();
+    }
+
+    /** 콜백이 먼저 확정했다. 실패 처리는 차지하지 못해 낡은 엔티티로 결과를 덮지 않는다. */
+    @Test
+    void 콜백이_먼저_확정하면_실패_처리는_차지하지_못한다() {
+        QuestionTailorEntity read = pendingRow();
+
+        assertThat(questionTailorRepository.settleCallback(succeeded(read))).isEqualTo(1);
+        assertThat(questionTailorRepository.claimExpiration(read.getTailorId())).isZero();
+
+        QuestionTailorEntity saved = questionTailorRepository.findById(read.getTailorId()).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
+        assertThat(saved.getJobId()).isEqualTo("job-cross");
+        assertThat(saved.getQuestions()).extracting(TailoredQuestionResponse::getQuestion).containsExactly("다시 쓴 질문 1");
+    }
+
+    /**
+     * 사이클 대기에서 이어가다 콜백이 먼저 와서 결과를 확정·전달하고, 접수 요청은 뒤늦게 실패한 경우.
+     * 실패 처리가 결과를 FAILED·질문 없음으로 덮으면 이미 채팅 서버로 넘긴 질문이 DB에서 사라진다.
+     */
+    @Test
+    void 이어가다_콜백이_먼저_확정한_뒤_요청이_실패해도_결과가_남는다() {
+        QuestionTailorEntity waiting = questionTailorRepository.save(QuestionTailorEntity.builder()
+                .interviewId(interviewId)
+                .userId(userId)
+                .mode(InterviewMode.SOLO)
+                .analysisJobId("analysis-1")
+                .status(TailorStatus.WAITING)
+                .chatDelivered(false)
+                .build());
+
+        givenSet(InterviewMode.SOLO);
+        when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
+                .thenReturn(new QuestionPoolService.CycleOutcome(5L, userId, InterviewMode.SOLO, true, false));
+        when(interviewRepository.findById(interviewId)).thenReturn(Optional.of(interview(InterviewMode.SOLO)));
+        when(aiServerClient.tailorQuestions(any())).thenAnswer(call -> {
+            QuestionTailorRequest request = call.getArgument(0);
+            QuestionTailorCallbackRequest callback = new QuestionTailorCallbackRequest("job-resume",
+                    String.valueOf(interviewId), "succeeded",
+                    new QuestionTailorCallbackRequest.Result(true, IntStream.rangeClosed(1, 5)
+                            .mapToObj(id -> new QuestionTailorCallbackRequest.Question(id, "다시 쓴 질문 " + id, null))
+                            .toList()),
+                    null);
+            CompletableFuture.runAsync(() -> service.handleCallback(callback, tailorIdOf(request.getCallbackUrl())))
+                    .join();
+            throw new IllegalStateException("접수 응답 읽기 시간 초과");
+        });
+
+        service.handleCycleCallback(
+                QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("succeeded").build(), 5L, 1);
+
+        QuestionTailorEntity saved = questionTailorRepository.findById(waiting.getTailorId()).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
+        assertThat(saved.getQuestions()).hasSize(5);
+        assertThat(saved.getChatDelivered()).isTrue();
+        verify(chatInterviewHandoffService).deliver(any());
     }
 }

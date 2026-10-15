@@ -705,8 +705,22 @@ public class QuestionTailorService {
             applyFailure(tailor, request.getError());
         }
 
-        questionTailorRepository.save(tailor);
+        if (!settle(tailor)) {
+            return;
+        }
         completePreparation(tailor);
+    }
+
+    /**
+     * 콜백 결과를 확정한다. 아직 PENDING일 때만 상태와 결과를 한 문장으로 고친다 — 차지하지 못했으면 그사이 실패 처리가
+     * 먼저 확정한 것이라 아무것도 쓰지 않는다. 채팅 서버 전달은 확정이 커밋된 뒤에 부르는 쪽이 한다.
+     */
+    private boolean settle(QuestionTailorEntity tailor) {
+        if (questionTailorRepository.settleCallback(tailor) == 1) {
+            return true;
+        }
+        log.info("그사이 다른 처리가 질문 준비를 먼저 확정해 콜백 결과를 반영하지 않습니다. tailorId={}", tailor.getTailorId());
+        return false;
     }
 
     /**
@@ -887,7 +901,9 @@ public class QuestionTailorService {
                     : error.getMessage());
         }
 
-        questionTailorRepository.save(tailor);
+        if (!settle(tailor)) {
+            return;
+        }
         completePreparation(tailor);
     }
 
