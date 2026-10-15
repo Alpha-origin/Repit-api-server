@@ -20,6 +20,7 @@ import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHan
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.persona.support.UserJobMajors;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionCycleCallbackRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorCallbackRequest;
 import repit.repit_api_server.domain.userdata.question.dto.request.QuestionTailorMultiCallbackRequest;
@@ -67,8 +68,6 @@ public class QuestionTailorService {
     private static final String CALLBACK_PATH = "/api/questions/tailor/callback";
     private static final String MULTI_CALLBACK_PATH = "/api/questions/tailor/multi/callback";
     private static final String STATUS_SUCCEEDED = "succeeded";
-    // 인증 서버의 전공 값 앞에 붙는 접두사. 떼면 면접관 전공(Major)과 같은 형식이 된다.
-    private static final String AUTH_MAJOR_PREFIX = "MAJOR_";
 
     // 기술 외 면접관 한 명이 맡을 문항 수. 분석 서버 기본값과 같다. 면접관이 늘면 이만큼씩 늘어난다.
     private static final int OTHER_QUESTION_COUNT = 2;
@@ -245,7 +244,7 @@ public class QuestionTailorService {
         return aiServerClient.tailorQuestionsMulti(QuestionTailorMultiRequest.builder()
                 .interviewId(String.valueOf(interview.getInterviewId()))
                 .userId(String.valueOf(interview.getUserId()))
-                .jobRole(resolveJobRole(major, tech))
+                .jobRole(resolveJobRole(major))
                 // persona.career는 면접관 설정이지 지원자 경력이 아니다. 지원자 경력은 아직 수집하지 않는다.
                 .experienceLevel(null)
                 .techPersona(toRequestPersona(tech, techQuestions.size()))
@@ -403,25 +402,14 @@ public class QuestionTailorService {
     }
 
     /**
-     * 재작성 개인화 축. 면접 설정에서 고른 면접관의 전공이 먼저고, 없으면 사용자 전공을 쓴다.
+     * 재작성 개인화 축. 사용자 직무만 본다.
      *
-     * <p>사용자 전공은 회원가입 때 고정값으로 들어간 것이라 사용자가 고른 적이 없다. 이것을 먼저
-     * 보면 면접 설정에서 프론트엔드를 골라도 질문은 백엔드 기준으로 다시 쓰인다.
+     * <p>면접관 전공은 사용자 직무에서 나온 값이라 따로 볼 이유가 없다. 예전에는 면접관 전공을
+     * 먼저 봐서, 면접 설정에서 고른 면접관에 따라 질문이 다른 직무 기준으로 다시 쓰였다.
+     * 면접관 전공으로 좁히지 않고 직무 원문을 보낸다(WEB_PUBLISHER 등).
      */
-    private String resolveJobRole(String userMajor, PersonaEntity persona) {
-        if (persona != null && persona.getMajor() != null) {
-            return persona.getMajor().name();
-        }
-        return normalizeMajor(userMajor);
-    }
-
-    /** 인증 서버는 MAJOR_BACKEND 형식으로 내려준다. 면접관 전공과 같은 BACKEND 형식으로 맞춘다. */
-    private String normalizeMajor(String major) {
-        String value = blankToNull(major);
-        if (value == null) {
-            return null;
-        }
-        return value.startsWith(AUTH_MAJOR_PREFIX) ? value.substring(AUTH_MAJOR_PREFIX.length()) : value;
+    private String resolveJobRole(String userMajor) {
+        return UserJobMajors.normalize(userMajor);
     }
 
     private QuestionTailorRequest.Question toRequestQuestion(TailoredQuestionResponse question) {
@@ -442,7 +430,7 @@ public class QuestionTailorService {
     private QuestionTailorRequest.Profile resolveProfile(String userMajor, Long personaId) {
         PersonaEntity persona = personaRepository.findById(personaId).orElse(null);
 
-        String jobRole = resolveJobRole(userMajor, persona);
+        String jobRole = resolveJobRole(userMajor);
         String personaType = persona == null ? null : enumName(persona.getType());
         String personaTone = persona == null ? null : enumName(persona.getTone());
 

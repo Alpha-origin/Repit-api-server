@@ -222,12 +222,9 @@ class QuestionTailorServiceRequestTest {
         assertThat(sent.getValue().getProfile().getPersonaTone()).isEqualTo("PRESSURING");
     }
 
-    /**
-     * 사용자 전공은 회원가입 때 고정값으로 들어간 것이라 사용자가 고른 적이 없다.
-     * 이것이 먼저면 면접 설정에서 프론트엔드를 골라도 질문은 백엔드 기준으로 다시 쓰인다.
-     */
+    /** 면접관 전공이 먼저면 고른 면접관에 따라 질문이 다른 직무 기준으로 다시 쓰인다. */
     @Test
-    void 일대일은_면접관_전공이_사용자_전공보다_먼저다() {
+    void 일대일은_면접관_전공과_관계없이_사용자_직무를_쓴다() {
         when(user.getMajor()).thenReturn("MAJOR_BACKEND");
         when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(11L, Role.TECH, Major.FRONTEND)));
 
@@ -235,7 +232,20 @@ class QuestionTailorServiceRequestTest {
 
         ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
         verify(aiServerClient).tailorQuestions(sent.capture());
-        assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("FRONTEND");
+        assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("BACKEND");
+    }
+
+    /** 면접관 전공(BACKEND/FRONTEND)으로 좁히지 않는다. 분석 서버 job_role은 자유 문자열이다. */
+    @Test
+    void 사용자_직무가_웹퍼블리셔면_원문_그대로_보낸다() {
+        when(user.getMajor()).thenReturn("WEB_PUBLISHER");
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(11L, Role.TECH, Major.FRONTEND)));
+
+        service.requestTailor(interview(InterviewMode.SOLO), user);
+
+        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(sent.capture());
+        assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("WEB_PUBLISHER");
     }
 
     /** 인증 서버는 MAJOR_ 접두사를 붙여 내려준다. 떼지 않으면 분석 서버가 모르는 직군이 넘어간다. */
@@ -266,7 +276,7 @@ class QuestionTailorServiceRequestTest {
     }
 
     @Test
-    void N대1은_기술_면접관_전공이_사용자_전공보다_먼저다() {
+    void N대1은_기술_면접관_전공과_관계없이_사용자_직무를_쓴다() {
         when(user.getMajor()).thenReturn("MAJOR_BACKEND");
         givenMembers(11L, 12L);
         when(personaRepository.findAllById(List.of(11L, 12L)))
@@ -277,7 +287,7 @@ class QuestionTailorServiceRequestTest {
         ArgumentCaptor<QuestionTailorMultiRequest> sent =
                 ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
         verify(aiServerClient).tailorQuestionsMulti(sent.capture());
-        assertThat(sent.getValue().getJobRole()).isEqualTo("FRONTEND");
+        assertThat(sent.getValue().getJobRole()).isEqualTo("BACKEND");
     }
 
     @Test

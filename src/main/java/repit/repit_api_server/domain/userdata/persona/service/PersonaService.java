@@ -7,6 +7,7 @@ import repit.repit_api_server.domain.userdata.persona.dto.response.PersonaRespon
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.persona.support.UserJobMajors;
 import repit.repit_api_server.global.exception.BusinessException;
 
 import java.util.List;
@@ -17,7 +18,10 @@ public class PersonaService {
 
     private final PersonaRepository personaRepository;
 
-    public PersonaResponse createPersona(PersonaRequest request) {
+    /**
+     * @param userMajor 로그인 사용자의 직무. 기술 면접관 전공은 요청값이 아니라 이 값으로 정한다.
+     */
+    public PersonaResponse createPersona(PersonaRequest request, String userMajor) {
         // 직책과 난이도에는 기본값을 두지 않는다. 조용히 채워 넣으면 인사·CEO 면접관이
         // 기술 면접관으로 저장되고, 저장된 뒤에는 무엇이 요청값이고 무엇이 기본값인지 구분할 방법이 없다.
         if (request.getRole() == null) {
@@ -31,10 +35,6 @@ public class PersonaService {
             throw BusinessException.unprocessable("면접관 어조(tone)를 지정해주세요.");
         }
         Role role = request.getRole();
-        // 전공은 기술 면접관에게만 있는 값이다. DB CHECK와 같은 규칙을 여기서 먼저 걸러 메시지를 남긴다.
-        if (role == Role.TECH && request.getMajor() == null) {
-            throw BusinessException.unprocessable("기술 면접관에게는 전공(major)이 필요합니다.");
-        }
         // DB CHECK와 같은 범위. 번호와 성별의 관계는 Web과 채팅 서버의 카탈로그가 맞추므로 보지 않는다.
         Integer voiceIndex = request.getVoiceIndex();
         if (voiceIndex != null && (voiceIndex < 1 || voiceIndex > 5)) {
@@ -47,7 +47,7 @@ public class PersonaService {
                 .type(request.getType())
                 .tone(request.getTone())
                 .level(request.getLevel())
-                .major(role == Role.TECH ? request.getMajor() : null)
+                .major(role == Role.TECH ? UserJobMajors.toPersonaMajor(userMajor) : null)
                 .career(request.getCareer())
                 .gender(request.getGender())
                 .imageUrl(blankToNull(request.getImageUrl()))

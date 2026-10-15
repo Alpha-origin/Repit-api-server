@@ -2,7 +2,9 @@ package repit.repit_api_server.domain.userdata.persona.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.common.ApiResponse;
 import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest;
 import repit.repit_api_server.domain.userdata.persona.dto.response.PersonaResponse;
@@ -20,8 +22,9 @@ public class PersonaController {
     @PostMapping("/save")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<PersonaResponse> savePersona(
+            @AuthenticationPrincipal AuthUser authUser,
             @RequestBody PersonaRequest request) {
-        return ApiResponse.created(personaService.createPersona(request));
+        return ApiResponse.created(personaService.createPersona(request, authUser.user().getMajor()));
     }
 
     @GetMapping("/getById")
