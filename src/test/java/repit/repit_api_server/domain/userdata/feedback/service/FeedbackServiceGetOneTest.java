@@ -7,6 +7,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackResponse;
@@ -28,6 +29,7 @@ import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
+import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.response.UserResponse;
 
 import java.time.Duration;
@@ -36,8 +38,12 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -184,6 +190,62 @@ class FeedbackServiceGetOneTest {
         assertThat(response.getStyle()).isNull();
         assertThat(response.getLevel()).isNull();
         assertThat(response.getTotalScore()).isEqualTo(80);
+    }
+
+    @Test
+    void FAILED_조회는_상태와_오류를_그대로_돌려주고_재접수하지_않는다() {
+        FeedbackEntity failed = feedback();
+        failed.setStatus(FeedbackStatus.FAILED);
+        failed.setErrorMessage("분석 서버에서 채점에 실패했습니다.");
+        when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(100L)).thenReturn(Optional.of(failed));
+
+        FeedbackResponse response = service.getFeedback(USER_ID, 100L);
+
+        assertThat(response.getStatus()).isEqualTo(FeedbackStatus.FAILED);
+        assertThat(response.getErrorMessage()).isEqualTo("분석 서버에서 채점에 실패했습니다.");
+        verify(feedbackRepository, never()).save(any());
+        verifyNoInteractions(aiServerClient);
+    }
+
+    @Test
+    void 시간을_넘긴_PENDING_조회는_FAILED로_정리하지만_재접수하지_않는다() {
+        FeedbackEntity expired = feedback();
+        expired.setStatus(FeedbackStatus.PENDING);
+        ReflectionTestUtils.setField(expired, "createdAt", LocalDateTime.now().minusMinutes(6));
+        when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(100L)).thenReturn(Optional.of(expired));
+
+        FeedbackResponse response = service.getFeedback(USER_ID, 100L);
+
+        assertThat(response.getStatus()).isEqualTo(FeedbackStatus.FAILED);
+        assertThat(response.getErrorMessage()).isEqualTo("피드백 생성 결과를 제때 받지 못했습니다. 다시 시도해주세요.");
+        verify(feedbackRepository).save(expired);
+        verifyNoInteractions(aiServerClient);
+    }
+
+    @Test
+    void 피드백이_없으면_404로_알린다() {
+        when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(100L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getFeedback(USER_ID, 100L))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+
+        verify(feedbackRepository, never()).save(any());
+        verifyNoInteractions(aiServerClient);
+    }
+
+    @Test
+    void 다른_사용자의_피드백은_만료_처리_전에_조회부터_거절한다() {
+        FeedbackEntity expired = feedback();
+        expired.setStatus(FeedbackStatus.PENDING);
+        ReflectionTestUtils.setField(expired, "createdAt", LocalDateTime.now().minusMinutes(6));
+        when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(100L)).thenReturn(Optional.of(expired));
+
+        assertThatThrownBy(() -> service.getFeedback(8L, 100L))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+
+        assertThat(expired.getStatus()).isEqualTo(FeedbackStatus.PENDING);
+        verify(feedbackRepository, never()).save(any());
+        verifyNoInteractions(aiServerClient);
     }
 
     private UserResponse user(Long id) {
