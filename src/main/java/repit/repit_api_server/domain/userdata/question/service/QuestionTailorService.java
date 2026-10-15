@@ -934,21 +934,24 @@ public class QuestionTailorService {
     /**
      * 콜백이 가리키는 준비 건. 콜백 주소에 실어 보낸 tailorId로 찾는다 — 접수 응답이 늦어 jobId가 아직 없어도 찾는다.
      *
-     * <p>함께 온 면접·jobId·방식이 그 건과 어긋나면 다른 요청의 결과다. 잇지 않는다. tailorId가 있는데 맞지 않으면
-     * 다른 건으로 우회하지도 않는다 — 우회하면 다른 시도의 결과가 이 면접에 들어간다.
+     * <p>tailorId가 없으면 콜백 주소에 그 값이 없던 시절(배포 전)에 나간 요청이다. 그 건을 확실히 짚는 것은 jobId뿐이라
+     * jobId로만 찾는다. 면접으로 찾으면 같은 면접의 새 시도(아직 jobId가 없는 건)에 이전 요청의 결과가 들어간다.
+     *
+     * <p>어느 쪽으로 찾았든 함께 온 면접·jobId·방식이 그 건과 어긋나면 다른 요청의 결과다. 잇지 않는다. tailorId가
+     * 있는데 맞지 않으면 다른 건으로 우회하지도 않는다 — 우회하면 다른 시도의 결과가 이 면접에 들어간다.
      */
     private QuestionTailorEntity findTarget(Long tailorId, String jobId, String interviewIdValue, InterviewMode mode) {
-        if (tailorId == null) {
-            // 콜백 주소에 tailorId가 없던 시절(배포 전)에 나간 요청의 콜백이다. 그 건을 확실히 짚는 것은 jobId뿐이라
-            // jobId로만 잇는다. 면접으로 찾으면 같은 면접의 새 시도(아직 jobId가 없는 건)에 이전 요청의 결과가 들어간다.
-            return jobId == null ? null : questionTailorRepository.findByJobId(jobId).orElse(null);
+        QuestionTailorEntity tailor;
+        if (tailorId != null) {
+            tailor = questionTailorRepository.findById(tailorId).orElse(null);
+        } else {
+            tailor = jobId == null ? null : questionTailorRepository.findByJobId(jobId).orElse(null);
         }
-        // 세션이 아직 없는 시점이라 면접은 interviewId로 가리킨다.
-        Long interviewId = parseInterviewId(interviewIdValue);
-        QuestionTailorEntity tailor = questionTailorRepository.findById(tailorId).orElse(null);
         if (tailor == null) {
             return null;
         }
+        // 세션이 아직 없는 시점이라 면접은 interviewId로 가리킨다.
+        Long interviewId = parseInterviewId(interviewIdValue);
         boolean otherInterview = interviewId != null && !interviewId.equals(tailor.getInterviewId());
         boolean otherJob = jobId != null && tailor.getJobId() != null && !jobId.equals(tailor.getJobId());
         if (otherInterview || otherJob || tailor.getMode() != mode) {

@@ -443,6 +443,20 @@ class QuestionTailorServiceCallbackTest {
         verify(chatInterviewHandoffService, never()).deliver(any());
     }
 
+    /** jobId로 찾은 배포 전 콜백도 tailorId로 찾은 콜백과 같은 검사를 거친다. */
+    @Test
+    void 배포_전_콜백도_면접이나_방식이_어긋나면_반영하지_않는다() {
+        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(pendingTailor()));
+        service.handleCallback(rewritten("job-1", "4"), null);
+
+        QuestionTailorEntity multi = pendingTailor();
+        multi.setMode(InterviewMode.MULTI);
+        when(questionTailorRepository.findByJobId("job-2")).thenReturn(Optional.of(multi));
+        service.handleCallback(rewritten("job-2", "3"), null);
+
+        verify(questionTailorRepository, never()).save(any());
+    }
+
     @Test
     void 콜백_주소에_tailorId를_붙이고_원래_쿼리는_남긴다() {
         assertThat(QuestionTailorService.withTailorId("https://api.repit.test/api/questions/tailor/callback", 5L))
