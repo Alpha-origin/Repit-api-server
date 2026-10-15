@@ -8,12 +8,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStatus;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackPersonaRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackRepository;
@@ -36,6 +39,7 @@ import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.response.UserResponse;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -45,10 +49,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -91,6 +97,7 @@ class FeedbackServiceSoloRequestTest {
                 interviewRepository, interviewPersonaRepository, personaRepository, questionRepository,
                 answerRepository, aiServerClient);
         ReflectionTestUtils.setField(service, "callbackBaseUrl", "https://api.repit.test");
+        ReflectionTestUtils.setField(service, "pendingTimeout", Duration.ofMinutes(5));
 
         UserResponse user = mock(UserResponse.class);
         when(user.getId()).thenReturn(7L);
@@ -102,6 +109,97 @@ class FeedbackServiceSoloRequestTest {
 
         when(questionRepository.findAllByInterviewIdOrderByQuestionIdAsc(3L)).thenReturn(questions());
         when(answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(3L)).thenReturn(answers());
+    }
+
+    @Test
+    void 피드백이_없으면_접수_결과를_돌려주고_PENDING을_남긴다() {
+        FeedbackAcceptedResponse accepted = new FeedbackAcceptedResponse("new-job", "sess-1", "PENDING", null);
+        when(aiServerClient.requestSoloFeedback(any())).thenReturn(accepted);
+
+        assertThat(service.requestFeedback(USER_ID, 3L)).isSameAs(accepted);
+
+        ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
+        verify(feedbackRepository).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(FeedbackStatus.PENDING);
+        assertThat(saved.getValue().getJobId()).isEqualTo("new-job");
+        assertThat(saved.getValue().getInterviewId()).isEqualTo(3L);
+        assertThat(saved.getValue().getUserId()).isEqualTo(USER_ID);
+    }
+
+    @Test
+    void FAILED_피드백은_새_작업으로_다시_접수한다() {
+        FeedbackEntity failed = previousFeedback(FeedbackStatus.FAILED, LocalDateTime.now());
+        when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(failed));
+        FeedbackAcceptedResponse accepted = new FeedbackAcceptedResponse("retry-job", "sess-1", "PENDING", null);
+        when(aiServerClient.requestSoloFeedback(any())).thenReturn(accepted);
+
+        assertThat(service.requestFeedback(USER_ID, 3L)).isSameAs(accepted);
+
+        ArgumentCaptor<FeedbackEntity> saved = ArgumentCaptor.forClass(FeedbackEntity.class);
+        verify(feedbackRepository).save(saved.capture());
+        assertThat(saved.getValue()).isNotSameAs(failed);
+        assertThat(saved.getValue().getStatus()).isEqualTo(FeedbackStatus.PENDING);
+        assertThat(saved.getValue().getJobId()).isEqualTo("retry-job");
+        assertThat(failed.getStatus()).isEqualTo(FeedbackStatus.FAILED);
+    }
+
+    @Test
+    void 진행_중인_PENDING은_409로_거절하고_채점을_중복_접수하지_않는다() {
+        FeedbackEntity pending = previousFeedback(FeedbackStatus.PENDING, LocalDateTime.now());
+        when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(pending));
+
+        assertThatThrownBy(() -> service.requestFeedback(USER_ID, 3L))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessage("이미 피드백을 생성하고 있습니다. 잠시 후 다시 확인해주세요.");
+
+        verifyNoInteractions(aiServerClient);
+        verify(feedbackRepository, never()).save(any());
+        assertThat(pending.getStatus()).isEqualTo(FeedbackStatus.PENDING);
+    }
+
+    @Test
+    void SUCCEEDED는_오래되어도_409로_거절하고_다시_채점하지_않는다() {
+        FeedbackEntity succeeded = previousFeedback(FeedbackStatus.SUCCEEDED, LocalDateTime.now().minusDays(1));
+        when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(succeeded));
+
+        assertThatThrownBy(() -> service.requestFeedback(USER_ID, 3L))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessage("이미 생성된 피드백이 있습니다.");
+
+        verifyNoInteractions(aiServerClient);
+        verify(feedbackRepository, never()).save(any());
+        assertThat(succeeded.getStatus()).isEqualTo(FeedbackStatus.SUCCEEDED);
+    }
+
+    @Test
+    void 시간을_넘긴_PENDING은_실패로_정리하고_같은_요청에서_재접수한다() {
+        FeedbackEntity expired = previousFeedback(FeedbackStatus.PENDING, LocalDateTime.now().minusMinutes(6));
+        when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(expired));
+        FeedbackAcceptedResponse accepted = new FeedbackAcceptedResponse("retry-job", "sess-1", "PENDING", null);
+        when(aiServerClient.requestSoloFeedback(any())).thenReturn(accepted);
+
+        assertThat(service.requestFeedback(USER_ID, 3L)).isSameAs(accepted);
+
+        assertThat(expired.getStatus()).isEqualTo(FeedbackStatus.FAILED);
+        assertThat(expired.getErrorMessage()).isEqualTo("피드백 생성 결과를 제때 받지 못했습니다. 다시 시도해주세요.");
+        verify(feedbackRepository).save(expired);
+        verify(feedbackRepository).save(argThat(row ->
+                row != expired && row.getStatus() == FeedbackStatus.PENDING && "retry-job".equals(row.getJobId())));
+        verify(aiServerClient).requestSoloFeedback(any());
+    }
+
+    @Test
+    void 다른_사용자는_피드백을_접수할_수_없다() {
+        assertThatThrownBy(() -> service.requestFeedback(8L, 3L))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+
+        verifyNoInteractions(feedbackRepository, aiServerClient);
+    }
+
+    private FeedbackEntity previousFeedback(FeedbackStatus status, LocalDateTime createdAt) {
+        return FeedbackEntity.builder()
+                .feedbackId(10L).interviewId(3L).userId(USER_ID).sessionId("sess-1")
+                .jobId("old-job").status(status).createdAt(createdAt).build();
     }
 
     private InterviewEntity interview(Status status, Long personaId) {

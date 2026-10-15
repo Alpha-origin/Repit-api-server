@@ -529,6 +529,22 @@ class VideoAnalysisServiceTest {
         verify(analysisRepository, never()).findDueChecks(any(), any());
     }
 
+    @Test
+    void 분석이_꺼져_있고_요청이_없는_영상은_WAITING이며_재분석할_수_없다() {
+        ReflectionTestUtils.setField(service, "enabled", false);
+
+        VideoAnalysisResponse response = service.get(USER_ID, INTERVIEW_ID);
+
+        assertThat(response.status()).isEqualTo(VideoAnalysisResponse.Status.WAITING);
+        assertThat(response.result()).isNull();
+        assertThat(response.canRetry()).isFalse();
+        assertThatThrownBy(() -> service.retry(USER_ID, INTERVIEW_ID))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessage("영상 분석을 아직 사용할 수 없습니다.");
+        verify(analysisRepository, never()).save(any());
+        verify(aiServerClient, never()).requestVideoAnalysis(any());
+    }
+
     // ---- 준비 ----
 
     private static InterviewEntity interview(String sessionId) {
