@@ -10,6 +10,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewHandoffService;
@@ -73,6 +74,8 @@ class QuestionTailorServiceCallbackTest {
 
         // 넘길 권리를 차지한 상태를 기본으로 둔다. 차지하지 못하는 경우는 따로 검증한다.
         when(questionTailorRepository.claimChatDelivery(anyLong())).thenReturn(1);
+        // 콜백 결과는 아직 PENDING일 때만 확정된다. 다른 처리가 먼저 확정한 경우는 따로 검증한다.
+        when(questionTailorRepository.settleCallback(any())).thenReturn(1);
     }
 
     private QuestionTailorEntity pendingTailor() {
@@ -101,8 +104,9 @@ class QuestionTailorServiceCallbackTest {
     }
 
     /** 콜백 처리는 결과 저장과 채팅 서버 전달 기록으로 두 번 저장한다. 마지막 상태가 최종본이다. */
+    /** 콜백 결과는 settleCallback으로 확정한다. 넘긴 엔티티가 최종본이고, 채팅 서버 전달 기록도 같은 객체에 남는다. */
     private QuestionTailorEntity lastSaved() {
-        verify(questionTailorRepository, atLeastOnce()).save(savedTailor.capture());
+        verify(questionTailorRepository, atLeastOnce()).settleCallback(savedTailor.capture());
         return savedTailor.getValue();
     }
 
@@ -115,7 +119,7 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(true, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
-                null));
+                null), null);
 
         QuestionTailorEntity saved = lastSaved();
         assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
@@ -144,10 +148,11 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(true, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
-                null));
+                null), null);
 
-        verify(chatInterviewHandoffService).deliver(tailor);
-        assertThat(lastSaved().getChatDelivered()).isTrue();
+        QuestionTailorEntity settled = lastSaved();
+        verify(chatInterviewHandoffService).deliver(settled);
+        assertThat(settled.getChatDelivered()).isTrue();
     }
 
     @Test
@@ -161,7 +166,7 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(true, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
-                null));
+                null), null);
 
         QuestionTailorEntity saved = lastSaved();
         assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
@@ -180,7 +185,7 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(true, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
-                null));
+                null), null);
 
         verify(chatInterviewHandoffService, never()).deliver(any());
     }
@@ -193,7 +198,7 @@ class QuestionTailorServiceCallbackTest {
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorCallbackRequest.Result(true, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", "다시 쓴 레디스 질문"))),
-                null));
+                null), null);
 
         QuestionTailorEntity saved = lastSaved();
         assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
@@ -215,7 +220,7 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(true, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", "다시 쓴 레디스 질문"),
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", "  "))),
-                null));
+                null), null);
 
         QuestionTailorEntity saved = lastSaved();
         assertThat(saved.getTailored()).isTrue();
@@ -235,7 +240,7 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(false, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "왜 Redis 를 썼나요?", "왜 레디스를 썼나요?"),
                         new QuestionTailorCallbackRequest.Question(2, "왜 WebFlux 를 썼나요?", "왜 웹플럭스를 썼나요?"))),
-                null));
+                null), null);
 
         QuestionTailorEntity saved = lastSaved();
         assertThat(saved.getTailored()).isFalse();
@@ -252,7 +257,7 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(false, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "왜 Redis 를 썼나요?", null),
                         new QuestionTailorCallbackRequest.Question(2, "왜 WebFlux 를 썼나요?", null))),
-                null));
+                null), null);
 
         QuestionTailorEntity saved = lastSaved();
         assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
@@ -266,7 +271,7 @@ class QuestionTailorServiceCallbackTest {
         when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(tailor));
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "failed", null,
-                new QuestionTailorCallbackRequest.Error(422, "사전 정보가 없습니다.")));
+                new QuestionTailorCallbackRequest.Error(422, "사전 정보가 없습니다.")), null);
 
         QuestionTailorEntity saved = lastSaved();
         assertThat(saved.getStatus()).isEqualTo(TailorStatus.FAILED);
@@ -274,19 +279,33 @@ class QuestionTailorServiceCallbackTest {
         assertThat(saved.getErrorStatusCode()).isEqualTo(422);
         assertThat(saved.getQuestions()).hasSize(2);
         // 재작성이 실패해도 원질문으로 면접은 열려야 한다.
-        verify(chatInterviewHandoffService).deliver(tailor);
+        verify(chatInterviewHandoffService).deliver(saved);
+    }
+
+    /**
+     * 배포 전에 나간 요청의 콜백(tailorId 없음)은 jobId로만 잇는다. 면접으로 찾으면 같은 면접의 새 시도 — 아직 접수 응답을
+     * 받지 못해 jobId가 빈 건 — 에 이전 요청의 결과가 들어간다.
+     */
+    @Test
+    void jobId로_못_찾으면_면접으로_잇지_않는다() {
+        QuestionTailorEntity newAttempt = pendingTailor();
+        newAttempt.setJobId(null);
+        when(questionTailorRepository.findByJobId("job-old")).thenReturn(Optional.empty());
+        when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(newAttempt));
+
+        service.handleCallback(rewritten("job-old", "3"), null);
+
+        verify(questionTailorRepository, never()).settleCallback(any());
+        verify(questionTailorRepository, never()).findTopByInterviewIdOrderByCreatedAtDesc(any());
     }
 
     @Test
-    void jobId로_못_찾으면_interviewId로_매칭한다() {
-        QuestionTailorEntity tailor = pendingTailor();
-        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.empty());
-        when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(tailor));
+    void 배포_전_콜백도_jobId로는_잇는다() {
+        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(pendingTailor()));
 
-        service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
-                new QuestionTailorCallbackRequest.Result(false, List.of()), null));
+        service.handleCallback(rewritten("job-1", "3"), null);
 
-        verify(questionTailorRepository, atLeastOnce()).save(any(QuestionTailorEntity.class));
+        assertThat(lastSaved().getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
     }
 
     @Test
@@ -295,9 +314,9 @@ class QuestionTailorServiceCallbackTest {
         when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(99L)).thenReturn(Optional.empty());
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-9", "99", "succeeded",
-                new QuestionTailorCallbackRequest.Result(true, List.of()), null));
+                new QuestionTailorCallbackRequest.Result(true, List.of()), null), null);
 
-        verify(questionTailorRepository, never()).save(any());
+        verify(questionTailorRepository, never()).settleCallback(any());
         verify(chatInterviewHandoffService, never()).deliver(any());
     }
 
@@ -316,7 +335,7 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(true, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
-                null));
+                null), null);
 
         verify(chatInterviewHandoffService, never()).deliver(any());
         // 넘기지 못했을 뿐 재작성 결과는 남아야 한다.
@@ -334,11 +353,12 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(true, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
-                null));
+                null), null);
 
+        QuestionTailorEntity settled = lastSaved();
         InOrder order = inOrder(questionTailorRepository, chatInterviewHandoffService);
         order.verify(questionTailorRepository).claimChatDelivery(1L);
-        order.verify(chatInterviewHandoffService).deliver(tailor);
+        order.verify(chatInterviewHandoffService).deliver(settled);
     }
 
     /** 이미 넘긴 건은 DB까지 가지 않고 걸러낸다. 콜백 재전송마다 갱신이 나갈 이유가 없다. */
@@ -352,8 +372,113 @@ class QuestionTailorServiceCallbackTest {
                 new QuestionTailorCallbackRequest.Result(true, List.of(
                         new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
                         new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
-                null));
+                null), null);
 
         verify(questionTailorRepository, never()).claimChatDelivery(anyLong());
+    }
+
+    // ---- 콜백 주소의 tailorId로 찾기 (P-2) ----
+
+    private QuestionTailorCallbackRequest rewritten(String jobId, String interviewId) {
+        return new QuestionTailorCallbackRequest(jobId, interviewId, "succeeded",
+                new QuestionTailorCallbackRequest.Result(true, List.of(
+                        new QuestionTailorCallbackRequest.Question(1, "다시 쓴 Redis 질문", null),
+                        new QuestionTailorCallbackRequest.Question(2, "다시 쓴 WebFlux 질문", null))),
+                null);
+    }
+
+    /** 접수 응답보다 콜백이 먼저 오면 이 건에는 아직 jobId가 없다. tailorId로 찾고 jobId를 채운다. */
+    @Test
+    void 접수_응답_전이라_jobId가_없어도_tailorId로_찾는다() {
+        QuestionTailorEntity tailor = pendingTailor();
+        tailor.setJobId(null);
+        when(questionTailorRepository.findById(1L)).thenReturn(Optional.of(tailor));
+
+        service.handleCallback(rewritten("job-1", "3"), 1L);
+
+        QuestionTailorEntity saved = lastSaved();
+        assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
+        assertThat(saved.getJobId()).isEqualTo("job-1");
+        verify(questionTailorRepository, never()).findByJobId(any());
+    }
+
+    /** tailorId가 틀렸으면 jobId나 면접으로 다른 건을 찾아 잇지 않는다. 그 건은 다른 시도일 수 있다. */
+    @Test
+    void 없는_tailorId면_다른_건으로_우회하지_않는다() {
+        when(questionTailorRepository.findById(9L)).thenReturn(Optional.empty());
+        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(pendingTailor()));
+        when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(pendingTailor()));
+
+        service.handleCallback(rewritten("job-1", "3"), 9L);
+
+        verify(questionTailorRepository, never()).settleCallback(any());
+        verify(chatInterviewHandoffService, never()).deliver(any());
+    }
+
+    @Test
+    void 면접이나_jobId나_방식이_어긋나면_반영하지_않는다() {
+        when(questionTailorRepository.findById(1L)).thenReturn(Optional.of(pendingTailor()));
+
+        service.handleCallback(rewritten("job-1", "4"), 1L);
+        service.handleCallback(rewritten("job-2", "3"), 1L);
+
+        QuestionTailorEntity multi = pendingTailor();
+        multi.setMode(InterviewMode.MULTI);
+        when(questionTailorRepository.findById(2L)).thenReturn(Optional.of(multi));
+        service.handleCallback(rewritten("job-1", "3"), 2L);
+
+        verify(questionTailorRepository, never()).settleCallback(any());
+    }
+
+    /** 재전송이거나 시간 초과로 먼저 확정된 건이다. 채팅 서버가 이미 그 질문으로 열었을 수 있어 바꾸지 않는다. */
+    @Test
+    void 이미_확정된_건은_콜백이_다시_와도_결과를_바꾸지_않는다() {
+        QuestionTailorEntity tailor = pendingTailor();
+        tailor.setStatus(TailorStatus.FAILED);
+        tailor.setTailored(false);
+        tailor.setQuestions(tailor.getSourceQuestions());
+        tailor.setChatDelivered(true);
+        when(questionTailorRepository.findById(1L)).thenReturn(Optional.of(tailor));
+
+        service.handleCallback(rewritten("job-1", "3"), 1L);
+
+        verify(questionTailorRepository, never()).settleCallback(any());
+        assertThat(tailor.getQuestions()).extracting(TailoredQuestionResponse::getQuestion)
+                .containsExactly("왜 Redis 를 썼나요?", "왜 WebFlux 를 썼나요?");
+        verify(chatInterviewHandoffService, never()).deliver(any());
+    }
+
+    /** jobId로 찾은 배포 전 콜백도 tailorId로 찾은 콜백과 같은 검사를 거친다. */
+    @Test
+    void 배포_전_콜백도_면접이나_방식이_어긋나면_반영하지_않는다() {
+        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(pendingTailor()));
+        service.handleCallback(rewritten("job-1", "4"), null);
+
+        QuestionTailorEntity multi = pendingTailor();
+        multi.setMode(InterviewMode.MULTI);
+        when(questionTailorRepository.findByJobId("job-2")).thenReturn(Optional.of(multi));
+        service.handleCallback(rewritten("job-2", "3"), null);
+
+        verify(questionTailorRepository, never()).settleCallback(any());
+    }
+
+    /** 그사이 시간 초과나 이어가기 실패가 먼저 확정했다. 콜백은 아무것도 쓰지 않고 넘기지도 않는다. */
+    @Test
+    void 다른_처리가_먼저_확정했으면_콜백은_결과를_쓰지_않는다() {
+        when(questionTailorRepository.findById(1L)).thenReturn(Optional.of(pendingTailor()));
+        when(questionTailorRepository.settleCallback(any())).thenReturn(0);
+
+        service.handleCallback(rewritten("job-1", "3"), 1L);
+
+        verify(questionTailorRepository, never()).save(any());
+        verify(chatInterviewHandoffService, never()).deliver(any());
+    }
+
+    @Test
+    void 콜백_주소에_tailorId를_붙이고_원래_쿼리는_남긴다() {
+        assertThat(QuestionTailorService.withTailorId("https://api.repit.test/api/questions/tailor/callback", 5L))
+                .isEqualTo("https://api.repit.test/api/questions/tailor/callback?tailorId=5");
+        assertThat(QuestionTailorService.withTailorId("https://api.repit.test/cb?env=dev", 5L))
+                .isEqualTo("https://api.repit.test/cb?env=dev&tailorId=5");
     }
 }

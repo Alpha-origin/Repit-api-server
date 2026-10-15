@@ -19,20 +19,23 @@ public class QuestionTailorController {
     private final QuestionTailorService questionTailorService;
 
     // 분석 서버 전용 콜백. 2xx가 늦거나 실패하면 결과가 폐기되므로 저장과 전달만 하고 바로 응답한다.
+    // tailorId는 우리가 콜백 주소에 실어 보낸 준비 건 id다. 배포 전에 나간 요청의 콜백에는 없다.
     @PostMapping("/callback")
     public ResponseEntity<Void> callback(
+            @RequestParam(name = QuestionTailorService.TAILOR_ID_PARAM, required = false) Long tailorId,
             @RequestBody QuestionTailorCallbackRequest request
     ) {
-        questionTailorService.handleCallback(request);
+        questionTailorService.handleCallback(request, tailorId);
         return ResponseEntity.ok().build();
     }
 
     // N:1 전용 콜백. 1:1과 본문 형태가 달라 경로를 나눈다.
     @PostMapping("/multi/callback")
     public ResponseEntity<Void> multiCallback(
+            @RequestParam(name = QuestionTailorService.TAILOR_ID_PARAM, required = false) Long tailorId,
             @RequestBody QuestionTailorMultiCallbackRequest request
     ) {
-        questionTailorService.handleMultiCallback(request);
+        questionTailorService.handleMultiCallback(request, tailorId);
         return ResponseEntity.ok().build();
     }
 

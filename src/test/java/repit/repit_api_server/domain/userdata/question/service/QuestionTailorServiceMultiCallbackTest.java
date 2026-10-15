@@ -78,6 +78,8 @@ class QuestionTailorServiceMultiCallbackTest {
                 new ObjectMapper());
 
         when(questionTailorRepository.claimChatDelivery(anyLong())).thenReturn(1);
+        // 콜백 결과는 아직 PENDING일 때만 확정된다. 다른 처리가 먼저 확정한 경우는 따로 검증한다.
+        when(questionTailorRepository.settleCallback(any())).thenReturn(1);
         when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(pendingMultiTailor()));
     }
 
@@ -102,8 +104,9 @@ class QuestionTailorServiceMultiCallbackTest {
                 .build();
     }
 
+    /** 콜백 결과는 settleCallback으로 확정한다. 넘긴 엔티티가 최종본이고, 채팅 서버 전달 기록도 같은 객체에 남는다. */
     private QuestionTailorEntity lastSaved() {
-        verify(questionTailorRepository, atLeastOnce()).save(savedTailor.capture());
+        verify(questionTailorRepository, atLeastOnce()).settleCallback(savedTailor.capture());
         return savedTailor.getValue();
     }
 
@@ -122,7 +125,7 @@ class QuestionTailorServiceMultiCallbackTest {
                         new QuestionTailorMultiCallbackRequest.Question(6, 12L, "hr", "갈등이 있었다면?",
                                 "확인할 것 6", "  ", "기대 6", List.of()),
                         question(7, 13L, "왜 지원했나요?"))),
-                null));
+                null), null);
 
         assertThat(lastSaved().getQuestions()).extracting(TailoredQuestionResponse::getSpokenText)
                 .containsExactly("왜 레디스를 썼나요?", null, null);
@@ -135,7 +138,7 @@ class QuestionTailorServiceMultiCallbackTest {
                 new QuestionTailorMultiCallbackRequest.Result(List.of(
                         new QuestionTailorMultiCallbackRequest.Question(2, 11L, "tech_choice", "다시 쓴 Redis 질문",
                                 null, "다시 쓴 레디스 질문", "기대 2", List.of()))),
-                null));
+                null), null);
 
         TailoredQuestionResponse saved = lastSaved().getQuestions().getFirst();
         assertThat(saved.getIntention()).isEqualTo("캐시 계층을 고른 근거");
@@ -148,7 +151,7 @@ class QuestionTailorServiceMultiCallbackTest {
                 new QuestionTailorMultiCallbackRequest.Result(List.of(
                         question(2, 11L, "다시 쓴 Redis 질문"),
                         question(6, 12L, "팀에서 갈등이 있었다면?"))),
-                null));
+                null), null);
 
         QuestionTailorEntity saved = lastSaved();
         assertThat(saved.getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
@@ -168,7 +171,7 @@ class QuestionTailorServiceMultiCallbackTest {
     @Test
     void 질문을_만들지_못하면_실패를_구독에_알린다() {
         service.handleMultiCallback(new QuestionTailorMultiCallbackRequest("job-1", "3", "failed", null,
-                new QuestionTailorMultiCallbackRequest.Error(502, "질문 생성에 실패했습니다.")));
+                new QuestionTailorMultiCallbackRequest.Error(502, "질문 생성에 실패했습니다.")), null);
 
         ArgumentCaptor<InterviewReadyResponse> sent = ArgumentCaptor.forClass(InterviewReadyResponse.class);
         verify(sseNotifier).sendFinal(eq("analysis-1"),
@@ -185,7 +188,7 @@ class QuestionTailorServiceMultiCallbackTest {
     @Test
     void 실패하면_원질문으로_폴백하지_않고_면접을_열지_않는다() {
         service.handleMultiCallback(new QuestionTailorMultiCallbackRequest("job-1", "3", "failed", null,
-                new QuestionTailorMultiCallbackRequest.Error(502, "질문 생성에 실패했습니다.")));
+                new QuestionTailorMultiCallbackRequest.Error(502, "질문 생성에 실패했습니다.")), null);
 
         QuestionTailorEntity saved = lastSaved();
         assertThat(saved.getStatus()).isEqualTo(TailorStatus.FAILED);
@@ -200,7 +203,7 @@ class QuestionTailorServiceMultiCallbackTest {
         service.handleMultiCallback(new QuestionTailorMultiCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorMultiCallbackRequest.Result(List.of(
                         new QuestionTailorMultiCallbackRequest.Question(6, 12L, "hr", "  ", "의도", null, "의도", List.of()))),
-                null));
+                null), null);
 
         assertThat(lastSaved().getStatus()).isEqualTo(TailorStatus.FAILED);
         verify(chatInterviewHandoffService, never()).deliver(any());
@@ -210,7 +213,7 @@ class QuestionTailorServiceMultiCallbackTest {
     void 성공하면_채팅_서버로_넘긴다() {
         service.handleMultiCallback(new QuestionTailorMultiCallbackRequest("job-1", "3", "succeeded",
                 new QuestionTailorMultiCallbackRequest.Result(List.of(question(2, 11L, "다시 쓴 Redis 질문"))),
-                null));
+                null), null);
 
         verify(chatInterviewHandoffService).deliver(any());
         assertThat(lastSaved().getChatDelivered()).isTrue();

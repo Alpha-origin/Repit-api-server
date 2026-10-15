@@ -305,4 +305,41 @@ class QuestionTailorServiceWaitingTest {
         assertThat(waiting.getStatus()).isEqualTo(TailorStatus.FAILED);
         assertThat(waiting.getErrorMessage()).contains("public으로 변경해주세요");
     }
+
+    // ---- 이어가다 분석 서버 요청이 실패한 경우 ----
+
+    private QuestionTailorEntity givenResumeFails(int claimExpiration) {
+        QuestionTailorEntity waiting = waitingTailor();
+        when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
+                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, true, false));
+        when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
+                .thenReturn(List.of(waiting));
+        when(questionTailorRepository.claimResume(eq(1L), any())).thenReturn(1);
+        when(questionPoolService.takeSet(7L, InterviewMode.SOLO, 3L)).thenReturn(SET);
+        when(aiServerClient.tailorQuestions(any())).thenThrow(new IllegalStateException("접수 응답 읽기 시간 초과"));
+        when(questionTailorRepository.claimExpiration(1L)).thenReturn(claimExpiration);
+        return waiting;
+    }
+
+    /** 접수 응답만 늦게 실패하고 콜백은 먼저 와서 결과를 확정했다. 그 결과를 실패로 덮지 않는다. */
+    @Test
+    void 이어가다_요청이_실패해도_먼저_확정된_결과는_실패로_덮지_않는다() {
+        QuestionTailorEntity waiting = givenResumeFails(0);
+
+        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("succeeded").build(), 5L, 1);
+
+        assertThat(waiting.getStatus()).isNotEqualTo(TailorStatus.FAILED);
+        verify(sseNotifier, never()).sendFinal(any(), eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), any());
+    }
+
+    @Test
+    void 이어가다_요청이_실패하고_아직_기다리는_건이면_실패로_닫고_알린다() {
+        QuestionTailorEntity waiting = givenResumeFails(1);
+
+        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("succeeded").build(), 5L, 1);
+
+        assertThat(waiting.getStatus()).isEqualTo(TailorStatus.FAILED);
+        assertThat(waiting.getQuestions()).isNull();
+        verify(sseNotifier).sendFinal(eq("profile-1"), eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), any());
+    }
 }
