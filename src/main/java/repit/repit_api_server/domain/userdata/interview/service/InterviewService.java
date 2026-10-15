@@ -344,7 +344,7 @@ public class InterviewService {
     }
 
     /**
-     * 채팅 서버가 면접을 마치고 넘겨주는 전체 기록을 저장한다. 처음 저장했으면 참을 돌려준다.
+     * 채팅 서버가 면접을 마치고 넘겨주는 전체 기록을 저장한다.
      *
      * <p>채팅 서버는 이 요청을 보낸 직후 세션을 지운다. 여기가 마지막 기회라 실패하면 면접
      * 내용이 사라진다. 그래서 질문·답변과 종료 상태를 한 트랜잭션에서 함께 남긴다 — 중간에 실패하면 모두 롤백되고
@@ -354,7 +354,7 @@ public class InterviewService {
      * 않는다. 지우고 다시 넣으면 질문 PK가 바뀌어 그 질문에 매달린 채점·녹음과 어긋난다. 내용이 달라도 처음 것을 둔다.
      */
     @Transactional
-    public boolean saveInterview(SaveInterviewRequest request) {
+    public void saveInterview(SaveInterviewRequest request) {
         InterviewEntity interview = interviewRepository.findById(request.getInterviewId())
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
 
@@ -367,7 +367,7 @@ public class InterviewService {
             log.info("이미 기록을 저장한 면접이라 다시 저장하지 않습니다. interviewId={}, 받은 상태={}, 받은 문항 수={}",
                     interview.getInterviewId(), request.getStatus(),
                     request.getQnaRequests() == null ? 0 : request.getQnaRequests().size());
-            return false;
+            return;
         }
 
         // 세션과 상태는 비어 오면 덮어쓰지 않는다. 둘 다 not null 컬럼이라 null을 넣으면 저장이
@@ -387,7 +387,6 @@ public class InterviewService {
 
         Map<Long, Long> questionIdByChatId = saveQuestions(interview, qnAs);
         saveAnswers(interview, qnAs, questionIdByChatId);
-        return true;
     }
 
     /**

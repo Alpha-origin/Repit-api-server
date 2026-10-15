@@ -28,6 +28,7 @@ import java.util.concurrent.CountDownLatch;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -111,7 +112,9 @@ class InterviewResultIdempotencyTest {
                         .map(answer -> tuple(answer.getAnswerId(), answer.getContent()))
                         .toList());
         assertThat(interviewRepository.findById(interviewId).orElseThrow().getStatus()).isEqualTo(Status.COMPLETED);
-        verify(feedbackDispatchService, times(1)).onTranscriptSaved(interviewId);
+        // 다시 받은 기록에도 채점 준비를 부른다. 빠진 대기 행을 채우고, 있는 것은 다시 요청하지 않는다
+        // (FeedbackDispatchServiceTest가 확인한다).
+        verify(feedbackDispatchService, times(3)).onTranscriptSaved(interviewId);
     }
 
     @Test
@@ -134,7 +137,24 @@ class InterviewResultIdempotencyTest {
 
         assertThat(questions()).hasSize(2);
         assertThat(answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(interviewId)).hasSize(2);
-        verify(feedbackDispatchService, times(1)).onTranscriptSaved(interviewId);
+        verify(feedbackDispatchService, times(3)).onTranscriptSaved(interviewId);
+    }
+
+    /**
+     * 처음 저장은 커밋됐는데 채점·음성 분석 준비가 빠진 경우(그 직후 서버 종료, DB 오류). 기록은 다시 저장하지 않지만
+     * 다시 받은 기록으로 준비를 채운다. 스윕은 있는 대기 행만 훑으므로 이 길이 아니면 아무도 채우지 않는다.
+     */
+    @Test
+    void 저장_뒤_채점_준비가_빠졌으면_다시_받은_기록으로_채운다() {
+        doThrow(new IllegalStateException("대기 행을 만들지 못함")).doNothing()
+                .when(feedbackDispatchService).onTranscriptSaved(interviewId);
+
+        chatInterviewResultService.handleResult(record("조회가 쓰기보다 많았습니다."));
+        List<Long> firstIds = questions().stream().map(QuestionEntity::getQuestionId).toList();
+        chatInterviewResultService.handleResult(record("조회가 쓰기보다 많았습니다."));
+
+        assertThat(questions()).extracting(QuestionEntity::getQuestionId).containsExactlyElementsOf(firstIds);
+        verify(feedbackDispatchService, times(2)).onTranscriptSaved(interviewId);
     }
 
     /** 중간에 실패하면 질문까지 함께 롤백되고 면접은 진행 중으로 남는다. 다시 받은 기록이 처음부터 저장된다. */

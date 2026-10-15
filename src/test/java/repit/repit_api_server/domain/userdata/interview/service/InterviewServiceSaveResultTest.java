@@ -308,18 +308,13 @@ class InterviewServiceSaveResultTest {
     void 이미_저장한_면접이면_질문과_답변을_건드리지_않는다() {
         when(interviewRepository.claimResultSave(eq(3L), any())).thenReturn(0);
 
-        assertThat(service.saveInterview(request())).isFalse();
+        service.saveInterview(request());
 
         verify(answerRepository, never()).deleteAllByInterviewId(anyLong());
         verify(questionRepository, never()).deleteAllByInterviewId(anyLong());
         verify(questionRepository, never()).save(any());
         verify(answerRepository, never()).saveAll(any());
         verify(interviewRepository, never()).save(any());
-    }
-
-    @Test
-    void 처음_저장하면_참을_돌려준다() {
-        assertThat(service.saveInterview(request())).isTrue();
     }
 
     /** 진행 중으로 남기면 다시 온 기록을 처음 것으로 보고 또 저장한다. */
