@@ -9,6 +9,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
+import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
@@ -466,5 +467,51 @@ class QuestionTailorServiceRequestTest {
                 .isInstanceOf(BusinessException.class);
 
         verify(aiServerClient, never()).tailorQuestionsMulti(any());
+    }
+
+    private static final CompanySnapshot SNAPSHOT = new CompanySnapshot("3", "샘플커머스", "CONSUMER",
+            List.of(new CompanySnapshot.Fact("23", "TALENT", "오너십", "문제를 스스로 정의하고 결과까지 책임진다",
+                    List.of("끝까지 해결한 경험을 설명함"), List.of())),
+            "샘플커머스는 가상의 기업이다.");
+
+    private InterviewEntity interview(InterviewMode mode, CompanySnapshot snapshot) {
+        InterviewEntity interview = interview(mode);
+        interview.setCompanySnapshot(snapshot);
+        return interview;
+    }
+
+    /** 면접을 만들 때 남긴 스냅샷을 그대로 싣는다. 기업 테이블을 다시 읽지 않는다. */
+    @Test
+    void 기업을_고른_면접은_재작성_요청에_스냅샷을_싣는다() {
+        givenMultiPersonas();
+
+        service.requestTailor(interview(InterviewMode.SOLO, SNAPSHOT), user);
+        service.requestTailor(interview(InterviewMode.MULTI, SNAPSHOT), user);
+
+        ArgumentCaptor<QuestionTailorRequest> solo = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(solo.capture());
+        assertThat(solo.getValue().getCompany()).isEqualTo(SNAPSHOT);
+
+        ArgumentCaptor<QuestionTailorMultiRequest> multi = ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
+        verify(aiServerClient).tailorQuestionsMulti(multi.capture());
+        assertThat(multi.getValue().getCompany()).isEqualTo(SNAPSHOT);
+    }
+
+    /** 기업이 없는 면접은 지금과 같은 본문이어야 한다. null도 보내지 않는다. */
+    @Test
+    void 기업이_없으면_재작성_요청에_company_키가_없다() {
+        givenMultiPersonas();
+        ObjectMapper mapper = new ObjectMapper();
+
+        service.requestTailor(interview(InterviewMode.SOLO), user);
+        service.requestTailor(interview(InterviewMode.MULTI), user);
+
+        ArgumentCaptor<QuestionTailorRequest> solo = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(solo.capture());
+        assertThat(mapper.readTree(mapper.writeValueAsString(solo.getValue())).has("company")).isFalse();
+
+        ArgumentCaptor<QuestionTailorMultiRequest> multi = ArgumentCaptor.forClass(QuestionTailorMultiRequest.class);
+        verify(aiServerClient).tailorQuestionsMulti(multi.capture());
+        assertThat(mapper.readTree(mapper.writeValueAsString(multi.getValue())).has("company")).isFalse();
     }
 }

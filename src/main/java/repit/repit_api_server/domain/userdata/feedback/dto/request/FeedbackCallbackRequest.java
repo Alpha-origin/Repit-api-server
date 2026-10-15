@@ -30,6 +30,8 @@ public class FeedbackCallbackRequest {
         // N:1 면접에만 실린다. 1:1 콜백에는 없다.
         private List<Persona> personas;
         private List<Item> feedbacks;
+        // 기업 관점 코멘트. 기업을 고르지 않았거나 만들지 못했으면 null이다. 푸는 것은 CompanyFitReader가 한다.
+        private JsonNode companyFit;
     }
 
     @Getter

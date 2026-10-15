@@ -70,6 +70,7 @@ public class ChatInterviewHandoffService {
                 .questions(toQuestions(tailor, defaultPersonaId(interview, persona),
                         personas.stream().map(PersonaEntity::getPersonaId).collect(Collectors.toSet())))
                 .personas(personas.stream().map(this::toPersona).toList())
+                .company(interview.getCompanySnapshot() == null ? null : interview.getCompanySnapshot().toChat())
                 .build());
     }
 

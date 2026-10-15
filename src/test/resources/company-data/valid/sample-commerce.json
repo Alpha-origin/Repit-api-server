@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "code": "sample-commerce",
+  "displayName": "샘플커머스",
+  "legalName": "샘플커머스 주식회사",
+  "aliases": ["샘플마켓", "Sample Commerce"],
+  "parentCode": null,
+  "category": "CONSUMER",
+  "legalSize": null,
+  "legalSizeSource": null,
+  "dartCorpCode": null,
+  "businessRegNo": null,
+  "dataAsOf": "2026-10-15",
+  "sources": [
+    {
+      "sourceKey": "about",
+      "sourceType": "SAMPLE",
+      "url": "https://example.invalid/sample-commerce/about",
+      "title": "회사 소개 (샘플)",
+      "scope": "샘플커머스 전체",
+      "publishedAt": null,
+      "collectedAt": "2026-10-15"
+    }
+  ],
+  "facts": [
+    {
+      "kind": "BUSINESS",
+      "title": "샘플마켓",
+      "content": "판매자와 구매자를 연결하는 온라인 거래 서비스",
+      "sourceKey": "about"
+    },
+    {
+      "kind": "BUSINESS",
+      "title": "샘플배송",
+      "content": "주문한 상품을 다음 날까지 배송하는 물류 서비스",
+      "sourceKey": "about"
+    },
+    {
+      "kind": "PROBLEM",
+      "title": "재고 초과 판매",
+      "content": "샘플마켓 주문 사례에서 여러 구매 요청이 동시에 들어올 때 재고보다 많이 팔리지 않게 막는 문제를 다룸",
+      "sourceKey": "about"
+    },
+    {
+      "kind": "PROBLEM",
+      "title": "배송 상태 지연",
+      "content": "샘플배송 사례에서 배송 상태 변경이 여러 시스템에 늦게 반영되는 문제를 다룸",
+      "sourceKey": "about"
+    },
+    {
+      "kind": "TALENT",
+      "title": "오너십",
+      "content": "문제를 스스로 정의하고 결과까지 책임진다",
+      "sourceKey": "about",
+      "positiveSignals": ["맡은 문제를 스스로 정의하고 끝까지 해결한 경험을 구체적으로 설명함"],
+      "concernSignals": ["결정의 책임을 다른 사람이나 지시에 돌리는 모습을 직접 설명함"],
+      "signalsOrigin": "DERIVED"
+    },
+    {
+      "kind": "TALENT",
+      "title": "고객 관점",
+      "content": "기능보다 고객이 겪는 불편을 먼저 보고 우선순위를 정한다",
+      "sourceKey": "about",
+      "positiveSignals": ["사용자 불편을 근거로 우선순위를 정한 경험을 설명함"],
+      "concernSignals": ["사용자 영향을 고려하지 않고 결정한 과정을 직접 설명함"],
+      "signalsOrigin": "DERIVED"
+    }
+  ],
+  "interviewerBrief": "샘플커머스는 판매자와 구매자를 연결하는 거래 서비스 샘플마켓과 다음 날 배송 서비스 샘플배송을 운영하는 가상의 기업이다. 공개 사례로는 동시 주문 시 재고 초과 판매를 막는 문제와 배송 상태가 여러 시스템에 늦게 반영되는 문제를 다뤘다. 인재상은 문제를 스스로 정의하고 결과까지 책임지는 오너십, 고객이 겪는 불편을 먼저 보고 우선순위를 정하는 고객 관점이다.",
+  "review": { "reviewedBy": null, "reviewedAt": null }
+}

@@ -5,6 +5,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import repit.repit_api_server.domain.company.dto.CompanySnapshot;
+import repit.repit_api_server.domain.company.service.CompanySnapshotFactory;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 import repit.repit_api_server.domain.userdata.interview.dto.request.CreateInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
@@ -64,10 +66,11 @@ public class InterviewService {
     private final QuestionTailorService questionTailorService;
     private final InterviewPersonaRepository interviewPersonaRepository;
     private final AnalysisLaunchService analysisLaunchService;
+    private final CompanySnapshotFactory companySnapshotFactory;
 
     public InterviewResponse createInterview(Long userId, CreateInterviewRequest request) {
         if (request.getPersonaIds() != null && !request.getPersonaIds().isEmpty()) {
-            return createMultiInterview(userId, request.getPersonaIds());
+            return createMultiInterview(userId, request.getPersonaIds(), request.getCompanyId());
         }
 
         PersonaEntity persona = findPersona(request);
@@ -78,6 +81,8 @@ public class InterviewService {
                 .personaId(persona.getPersonaId())
                 .status(Status.IN_PROGRESS)
                 .sessionId(UUID.randomUUID().toString())
+                .companyId(request.getCompanyId())
+                .companySnapshot(companySnapshotOf(request.getCompanyId()))
                 .build();
 
         InterviewEntity saved = interviewRepository.save(interview);
@@ -91,7 +96,7 @@ public class InterviewService {
      * 이 순서를 따르고, 꼬리질문이 부모 질문 바로 뒤에 삽입되므로 한 면접관의 질문 묶음이 끝나야
      * 다음 면접관으로 넘어간다.
      */
-    private InterviewResponse createMultiInterview(Long userId, List<Long> requestedIds) {
+    private InterviewResponse createMultiInterview(Long userId, List<Long> requestedIds, Long companyId) {
         List<Long> personaIds = new ArrayList<>(new LinkedHashSet<>(requestedIds));
         if (personaIds.size() != requestedIds.size()) {
             throw BusinessException.unprocessable("같은 면접관을 두 번 지정할 수 없습니다.");
@@ -112,6 +117,8 @@ public class InterviewService {
                 .mode(InterviewMode.MULTI)
                 .status(Status.IN_PROGRESS)
                 .sessionId(UUID.randomUUID().toString())
+                .companyId(companyId)
+                .companySnapshot(companySnapshotOf(companyId))
                 .build());
 
         List<InterviewPersonaEntity> members = new ArrayList<>();
@@ -125,6 +132,11 @@ public class InterviewService {
         interviewPersonaRepository.saveAll(members);
 
         return InterviewResponse.from(saved, ordered.stream().map(PersonaEntity::getPersonaId).toList());
+    }
+
+    /** 고른 기업을 지금 모습 그대로 복사해 둔다. 공개 기업이 아니면 404다. 고르지 않았으면 비어 있다. */
+    private CompanySnapshot companySnapshotOf(Long companyId) {
+        return companyId == null ? null : companySnapshotFactory.create(companyId);
     }
 
     /**

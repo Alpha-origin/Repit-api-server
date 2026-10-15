@@ -198,6 +198,7 @@ public class QuestionTailorService {
                 .userId(String.valueOf(interview.getUserId()))
                 .profile(profile)
                 .questions(drawn.questions().stream().map(this::toRequestQuestion).toList())
+                .company(interview.getCompanySnapshot())
                 .callbackUrl(callbackBaseUrl + CALLBACK_PATH)
                 .build());
     }
@@ -253,6 +254,7 @@ public class QuestionTailorService {
                         .toList())
                 .questions(techQuestions.stream().map(this::toMultiRequestQuestion).toList())
                 .projectSummary(toRequestProjectSummary(drawn))
+                .company(interview.getCompanySnapshot())
                 .callbackUrl(callbackBaseUrl + MULTI_CALLBACK_PATH)
                 .build());
     }

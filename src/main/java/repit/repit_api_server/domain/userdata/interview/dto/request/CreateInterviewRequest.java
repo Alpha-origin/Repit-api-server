@@ -17,6 +17,8 @@ import java.util.List;
  * 값이라 id 쪽이 안전하지만, 웹이 이름으로 보내던 기존 방식도 그대로 받는다.
  *
  * <p>N:1 면접은 면접관이 여럿이라 {@code personaIds}로 보낸다. 이 값이 있으면 위 두 값은 보지 않는다.
+ *
+ * <p>{@code companyId}는 선택이다. 고르면 그 기업 정보를 면접에 스냅샷으로 남긴다. 1:1·N:1 모두 받는다.
  */
 @Getter
 @Setter
@@ -29,4 +31,5 @@ public class CreateInterviewRequest {
     // 직책은 겹칠 수 없고, 진행 순서에서 기술 면접관을 맨 앞으로 올리는 것 말고는 담아 보낸
     // 순서를 그대로 쓴다.
     private List<Long> personaIds;
+    private Long companyId;
 }

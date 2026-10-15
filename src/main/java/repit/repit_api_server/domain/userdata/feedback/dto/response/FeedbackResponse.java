@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import repit.repit_api_server.domain.company.dto.CompanyBadge;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackPersonaEntity;
@@ -64,6 +65,11 @@ public class FeedbackResponse {
     private List<FeedbackItemResponse> feedbacks;
     private LocalDateTime createdAt;
 
+    // 면접을 만들 때 고른 기업. 고르지 않았으면 비어 있다.
+    private CompanyBadge company;
+    // 기업 관점 코멘트. 기업이 없거나 분석 서버가 만들지 못했으면 비어 있다.
+    private CompanyFitResponse companyFit;
+
     /**
      * @param interview 이 피드백이 나온 면접. 면접이 남아 있지 않으면 null이다.
      * @param persona   이 면접의 면접관. 성향·난이도는 채점 결과가 아니라 여기서 읽는다.
@@ -97,6 +103,8 @@ public class FeedbackResponse {
                 .personas(personas.stream().map(FeedbackPersonaResponse::from).toList())
                 .feedbacks(items.stream().map(FeedbackItemResponse::from).toList())
                 .createdAt(feedback.getCreatedAt())
+                .company(interview == null ? null : CompanyBadge.from(interview.getCompanySnapshot()))
+                .companyFit(feedback.getCompanyFit())
                 .build();
     }
 }

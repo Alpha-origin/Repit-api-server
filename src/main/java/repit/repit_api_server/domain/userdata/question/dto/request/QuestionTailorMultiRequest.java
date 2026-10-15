@@ -1,9 +1,11 @@
 package repit.repit_api_server.domain.userdata.question.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 
 import java.util.List;
 
@@ -34,6 +36,9 @@ public class QuestionTailorMultiRequest {
     private List<Question> questions;
     // 신규 질문 생성의 근거. /profile 결과의 projectSummary를 넘긴다.
     private ProjectSummary projectSummary;
+    // 면접을 만들 때 고른 기업. 고르지 않은 면접은 키 자체를 보내지 않는다 — null도 보내지 않는다.
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private CompanySnapshot company;
     private String callbackUrl;
 
     /** 면접관 한 명. role(직책)이 질문 관점을, style(성향)이 파고들 대상을, tone(어조)이 세기를 정한다. */

@@ -1,9 +1,11 @@
 package repit.repit_api_server.domain.userdata.question.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 
 import java.util.List;
 
@@ -20,6 +22,9 @@ public class QuestionTailorRequest {
     private String userId;
     private Profile profile;
     private List<Question> questions;
+    // 면접을 만들 때 고른 기업. 고르지 않은 면접은 키 자체를 보내지 않는다 — null도 보내지 않는다.
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private CompanySnapshot company;
     private String callbackUrl;
 
     /** 세 축 모두 선택이지만 하나도 없으면 분석 서버가 422로 거부한다. */

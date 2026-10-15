@@ -6,6 +6,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.CompanyFitResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FrequentWordResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStatus;
@@ -74,6 +75,11 @@ public class FeedbackEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private List<FrequentWordResponse> frequentWords;
+
+    // 기업 관점 코멘트. 기업을 고르지 않은 면접이거나 분석 서버가 만들지 못했으면 비어 있다. 점수와 무관하다.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private CompanyFitResponse companyFit;
 
     private Integer answeredCount;
 

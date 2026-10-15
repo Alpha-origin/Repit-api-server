@@ -110,7 +110,7 @@ class FeedbackCallbackPersistenceTest {
                 "부작용까지는 못 짚었습니다.", null);
 
         return new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
-                new FeedbackCallbackRequest.Result(overall, List.of(tech, hr), List.of(item)), null);
+                new FeedbackCallbackRequest.Result(overall, List.of(tech, hr), List.of(item), null), null);
     }
 
     /** 쓴 것을 DB에서 다시 읽어오게 한다. 컨텍스트에 남아 있는 것을 그대로 보면 저장 여부를 알 수 없다. */
@@ -219,7 +219,7 @@ class FeedbackCallbackPersistenceTest {
                 JsonMapper.shared().valueToTree(axisScores));
 
         feedbackService.handleCallback(new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
-                new FeedbackCallbackRequest.Result(overall, List.of(tech, hr), List.of(item)), null));
+                new FeedbackCallbackRequest.Result(overall, List.of(tech, hr), List.of(item), null), null));
         flushAndClear();
 
         FeedbackEntity saved = feedbackRepository.findById(accepted.getFeedbackId()).orElseThrow();
@@ -254,7 +254,7 @@ class FeedbackCallbackPersistenceTest {
                 70, 70, 70, "요약", List.of(), List.of(), List.of(), 1, 1,
                 JsonMapper.shared().valueToTree(new ScoreBreakdownResponse(longVersion, List.of(), null)));
         feedbackService.handleCallback(new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
-                new FeedbackCallbackRequest.Result(overall, null, List.of()), null));
+                new FeedbackCallbackRequest.Result(overall, null, List.of(), null), null));
         flushAndClear();
 
         FeedbackEntity saved = feedbackRepository.findById(accepted.getFeedbackId()).orElseThrow();
