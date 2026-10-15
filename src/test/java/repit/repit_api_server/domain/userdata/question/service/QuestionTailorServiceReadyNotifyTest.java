@@ -114,7 +114,7 @@ class QuestionTailorServiceReadyNotifyTest {
         QuestionTailorEntity tailor = pendingTailor();
         when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(tailor));
 
-        service.handleCallback(succeeded());
+        service.handleCallback(succeeded(), null);
 
         ArgumentCaptor<InterviewReadyResponse> sent = ArgumentCaptor.forClass(InterviewReadyResponse.class);
         // 웹이 구독한 열쇠는 면접 id가 아니라 분석 jobId다.
@@ -133,7 +133,7 @@ class QuestionTailorServiceReadyNotifyTest {
         when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(tailor));
 
         service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "failed", null,
-                new QuestionTailorCallbackRequest.Error(502, "질문 재작성에 실패했습니다.")));
+                new QuestionTailorCallbackRequest.Error(502, "질문 재작성에 실패했습니다.")), null);
 
         ArgumentCaptor<InterviewReadyResponse> sent = ArgumentCaptor.forClass(InterviewReadyResponse.class);
         verify(sseNotifier).sendFinal(eq("analysis-1"), eq(SseNotifier.INTERVIEW_READY), sent.capture());
@@ -150,7 +150,7 @@ class QuestionTailorServiceReadyNotifyTest {
         doThrow(new ExternalApiException("채팅 서버에 오류가 발생했습니다.", null, null))
                 .when(chatInterviewHandoffService).deliver(any());
 
-        service.handleCallback(succeeded());
+        service.handleCallback(succeeded(), null);
 
         verify(sseNotifier).sendFinal(eq("analysis-1"),
                 eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), any(InterviewReadyResponse.class));

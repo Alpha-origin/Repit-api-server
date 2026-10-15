@@ -89,4 +89,36 @@ public interface QuestionTailorRepository extends JpaRepository<QuestionTailorEn
                and t.status = repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus.WAITING
             """)
     int claimResume(@Param("tailorId") Long tailorId, @Param("now") LocalDateTime now);
+
+    /**
+     * 분석 서버가 돌려준 jobId를 남긴다. jobId가 아직 없을 때만 채운다.
+     *
+     * <p>콜백이 접수 응답보다 먼저 올 수 있다. 접수 응답을 받고 엔티티를 통째로 저장하면 이미 들어온 결과를 PENDING으로
+     * 되돌린다. 그래서 접수 응답은 이 칸 하나만 조건을 담아 고친다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update QuestionTailorEntity t
+               set t.jobId = :jobId
+             where t.tailorId = :tailorId
+               and t.jobId is null
+            """)
+    int recordJobId(@Param("tailorId") Long tailorId, @Param("jobId") String jobId);
+
+    /**
+     * 분석 서버에 접수하지 못한 새 건을 지운다. 그사이 콜백이 와서 결과가 들어갔거나 jobId를 받았으면 남긴다.
+     *
+     * <p>분석 서버를 부르기 전에 저장해 두므로, 요청이 실패하면 콜백이 올 리 없는 PENDING이 남는다. 그대로 두면 면접을
+     * 다시 시작해도 이 건이 최신이라 제한 시간까지 기다려야 한다.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            delete from QuestionTailorEntity t
+             where t.tailorId = :tailorId
+               and t.jobId is null
+               and t.status = repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus.PENDING
+            """)
+    int discardUnaccepted(@Param("tailorId") Long tailorId);
 }
