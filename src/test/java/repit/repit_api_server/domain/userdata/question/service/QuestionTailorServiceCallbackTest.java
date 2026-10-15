@@ -278,16 +278,30 @@ class QuestionTailorServiceCallbackTest {
         verify(chatInterviewHandoffService).deliver(tailor);
     }
 
+    /**
+     * 배포 전에 나간 요청의 콜백(tailorId 없음)은 jobId로만 잇는다. 면접으로 찾으면 같은 면접의 새 시도 — 아직 접수 응답을
+     * 받지 못해 jobId가 빈 건 — 에 이전 요청의 결과가 들어간다.
+     */
     @Test
-    void jobId로_못_찾으면_interviewId로_매칭한다() {
-        QuestionTailorEntity tailor = pendingTailor();
-        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.empty());
-        when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(tailor));
+    void jobId로_못_찾으면_면접으로_잇지_않는다() {
+        QuestionTailorEntity newAttempt = pendingTailor();
+        newAttempt.setJobId(null);
+        when(questionTailorRepository.findByJobId("job-old")).thenReturn(Optional.empty());
+        when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(newAttempt));
 
-        service.handleCallback(new QuestionTailorCallbackRequest("job-1", "3", "succeeded",
-                new QuestionTailorCallbackRequest.Result(false, List.of()), null), null);
+        service.handleCallback(rewritten("job-old", "3"), null);
 
-        verify(questionTailorRepository, atLeastOnce()).save(any(QuestionTailorEntity.class));
+        verify(questionTailorRepository, never()).save(any());
+        verify(questionTailorRepository, never()).findTopByInterviewIdOrderByCreatedAtDesc(any());
+    }
+
+    @Test
+    void 배포_전_콜백도_jobId로는_잇는다() {
+        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.of(pendingTailor()));
+
+        service.handleCallback(rewritten("job-1", "3"), null);
+
+        assertThat(lastSaved().getStatus()).isEqualTo(TailorStatus.SUCCEEDED);
     }
 
     @Test
@@ -427,24 +441,6 @@ class QuestionTailorServiceCallbackTest {
         assertThat(tailor.getQuestions()).extracting(TailoredQuestionResponse::getQuestion)
                 .containsExactly("왜 Redis 를 썼나요?", "왜 WebFlux 를 썼나요?");
         verify(chatInterviewHandoffService, never()).deliver(any());
-    }
-
-    /** 배포 전에 나간 요청의 콜백(tailorId 없음). 면접의 마지막 건이 그 jobId를 기다릴 때만 잇는다. */
-    @Test
-    void 배포_전_콜백은_기다리는_건_하나로_짚힐_때만_면접으로_잇는다() {
-        when(questionTailorRepository.findByJobId("job-1")).thenReturn(Optional.empty());
-
-        QuestionTailorEntity settled = pendingTailor();
-        settled.setStatus(TailorStatus.SUCCEEDED);
-        when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(settled));
-        service.handleCallback(rewritten("job-1", "3"), null);
-
-        QuestionTailorEntity otherJob = pendingTailor();
-        otherJob.setJobId("job-other");
-        when(questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(otherJob));
-        service.handleCallback(rewritten("job-1", "3"), null);
-
-        verify(questionTailorRepository, never()).save(any());
     }
 
     @Test

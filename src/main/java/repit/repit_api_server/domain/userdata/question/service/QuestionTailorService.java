@@ -938,11 +938,13 @@ public class QuestionTailorService {
      * 다른 건으로 우회하지도 않는다 — 우회하면 다른 시도의 결과가 이 면접에 들어간다.
      */
     private QuestionTailorEntity findTarget(Long tailorId, String jobId, String interviewIdValue, InterviewMode mode) {
+        if (tailorId == null) {
+            // 콜백 주소에 tailorId가 없던 시절(배포 전)에 나간 요청의 콜백이다. 그 건을 확실히 짚는 것은 jobId뿐이라
+            // jobId로만 잇는다. 면접으로 찾으면 같은 면접의 새 시도(아직 jobId가 없는 건)에 이전 요청의 결과가 들어간다.
+            return jobId == null ? null : questionTailorRepository.findByJobId(jobId).orElse(null);
+        }
         // 세션이 아직 없는 시점이라 면접은 interviewId로 가리킨다.
         Long interviewId = parseInterviewId(interviewIdValue);
-        if (tailorId == null) {
-            return findLegacyTarget(jobId, interviewId);
-        }
         QuestionTailorEntity tailor = questionTailorRepository.findById(tailorId).orElse(null);
         if (tailor == null) {
             return null;
@@ -956,31 +958,6 @@ public class QuestionTailorService {
             return null;
         }
         return tailor;
-    }
-
-    /**
-     * 콜백 주소에 tailorId가 없던 시절(배포 전)에 나간 요청의 콜백. 그 건을 하나로 짚을 수 있을 때만 잇는다.
-     *
-     * <p>jobId로 찾고, 없으면 이 면접의 마지막 건이 아직 콜백을 기다리고 그 jobId와 어긋나지 않을 때만 그 건으로 본다.
-     * 이미 닫힌 건이나 다른 jobId를 받은 건에 이으면 다른 시도의 결과가 섞인다.
-     */
-    private QuestionTailorEntity findLegacyTarget(String jobId, Long interviewId) {
-        if (jobId != null) {
-            QuestionTailorEntity byJobId = questionTailorRepository.findByJobId(jobId).orElse(null);
-            if (byJobId != null) {
-                return byJobId;
-            }
-        }
-        if (interviewId == null) {
-            return null;
-        }
-        QuestionTailorEntity latest = questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId)
-                .orElse(null);
-        if (latest == null || latest.getStatus() != TailorStatus.PENDING
-                || (latest.getJobId() != null && !latest.getJobId().equals(jobId))) {
-            return null;
-        }
-        return latest;
     }
 
     /**
