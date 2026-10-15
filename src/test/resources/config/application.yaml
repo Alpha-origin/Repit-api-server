@@ -1,0 +1,4 @@
+# 테스트 전용 설정. classpath:/config/ 파일이라 기본 application.yaml 위에 겹쳐 읽힌다.
+app:
+  # 테스트는 외부 서버를 부르지 않는다. 기본값이 없어진 콜백 주소를 명시적으로 채워 기동 검사를 통과시킨다.
+  callback-base-url: https://api.repit.test
