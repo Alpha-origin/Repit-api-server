@@ -34,6 +34,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -82,6 +85,8 @@ class InterviewServiceSaveResultTest {
                 .status(Status.IN_PROGRESS)
                 .build()));
         when(interviewRepository.save(any(InterviewEntity.class))).thenAnswer(call -> call.getArgument(0));
+        // 진행 중인 면접이라 처음 저장을 차지한다. 이미 저장한 경우는 따로 검증한다.
+        when(interviewRepository.claimResultSave(eq(3L), any())).thenReturn(1);
 
         // 저장하면 DB가 PK를 발급한다. 채팅 서버 번호와 겹치지 않는 값을 준다.
         AtomicLong nextId = new AtomicLong(900L);
@@ -296,5 +301,27 @@ class InterviewServiceSaveResultTest {
                 .isInstanceOf(BusinessException.class);
 
         verify(questionRepository, org.mockito.Mockito.never()).save(any(QuestionEntity.class));
+    }
+
+    /** 채팅 서버는 저장이 끝났는데 응답을 받지 못하면 같은 기록을 다시 보낸다. 지우고 다시 넣으면 질문 PK가 바뀐다. */
+    @Test
+    void 이미_저장한_면접이면_질문과_답변을_건드리지_않는다() {
+        when(interviewRepository.claimResultSave(eq(3L), any())).thenReturn(0);
+
+        service.saveInterview(request());
+
+        verify(answerRepository, never()).deleteAllByInterviewId(anyLong());
+        verify(questionRepository, never()).deleteAllByInterviewId(anyLong());
+        verify(questionRepository, never()).save(any());
+        verify(answerRepository, never()).saveAll(any());
+        verify(interviewRepository, never()).save(any());
+    }
+
+    /** 진행 중으로 남기면 다시 온 기록을 처음 것으로 보고 또 저장한다. */
+    @Test
+    void 진행_중_상태로_와도_끝난_것으로_저장한다() {
+        service.saveInterview(new SaveInterviewRequest("sess-1", 3L, 7L, Status.IN_PROGRESS, null, List.of()));
+
+        verify(interviewRepository).claimResultSave(3L, Status.COMPLETED);
     }
 }
