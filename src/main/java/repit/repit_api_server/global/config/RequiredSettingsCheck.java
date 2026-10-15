@@ -43,25 +43,25 @@ class RequiredSettingsCheck {
         try {
             uri = new URI(value.trim());
         } catch (URISyntaxException e) {
-            throw invalid(value, "주소 형식이 아닙니다");
+            throw invalid(null, "주소 형식이 아닙니다");
         }
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         if (!scheme.equals("http") && !scheme.equals("https")) {
-            throw invalid(value, "http 또는 https 주소여야 합니다");
+            throw invalid(uri.getHost(), "http 또는 https 주소여야 합니다");
         }
         if (uri.getHost() == null || uri.getUserInfo() != null || uri.getRawQuery() != null
                 || uri.getRawFragment() != null || value.trim().endsWith("/")) {
-            throw invalid(value, "호스트가 있고 사용자 정보·쿼리·조각·끝 슬래시가 없어야 합니다");
+            throw invalid(uri.getHost(), "호스트가 있고 사용자 정보·쿼리·조각·끝 슬래시가 없어야 합니다");
         }
         if (!production) {
             return;
         }
         String host = uri.getHost().toLowerCase(Locale.ROOT);
         if (!scheme.equals("https")) {
-            throw invalid(value, "운영에서는 https 주소여야 합니다");
+            throw invalid(host, "운영에서는 https 주소여야 합니다");
         }
         if (host.contains("ngrok") || isLoopback(host)) {
-            throw invalid(value, "운영에서는 ngrok이나 localhost 같은 개발용 주소를 쓸 수 없습니다");
+            throw invalid(host, "운영에서는 ngrok이나 localhost 같은 개발용 주소를 쓸 수 없습니다");
         }
     }
 
@@ -81,8 +81,12 @@ class RequiredSettingsCheck {
                 || host.equals("[::1]") || host.equals("0.0.0.0");
     }
 
-    private static IllegalStateException invalid(String value, String reason) {
-        return new IllegalStateException("CALLBACK_BASE_URL(app.callback-base-url)이 올바르지 않습니다: " + value
-                + " — " + reason + ".");
+    /**
+     * 주소 원문은 싣지 않는다. 막는 이유가 사용자 정보·쿼리이기도 해서, 원문을 남기면 그 안의 자격 증명이 기동 실패 로그에
+     * 그대로 남는다. 어느 설정인지 짚을 수 있도록 검증 항목과 호스트만 싣는다.
+     */
+    private static IllegalStateException invalid(String host, String reason) {
+        return new IllegalStateException("CALLBACK_BASE_URL(app.callback-base-url)이 올바르지 않습니다 — " + reason
+                + ". 호스트: " + (host == null ? "(읽을 수 없음)" : host));
     }
 }

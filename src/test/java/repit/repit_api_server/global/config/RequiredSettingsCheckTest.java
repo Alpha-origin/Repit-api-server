@@ -82,4 +82,15 @@ class RequiredSettingsCheckTest {
                         "app.internal-auth.required=true", "app.internal-auth.token=secret-token-value")
                 .run(context -> assertThat(context).hasNotFailed());
     }
+
+    /** 사용자 정보·쿼리를 막는 검사라, 원문을 오류에 실으면 그 안의 자격 증명이 기동 실패 로그에 남는다. */
+    @Test
+    void 오류_메시지에_주소_원문을_싣지_않는다() {
+        assertThatThrownBy(() -> RequiredSettingsCheck.verifyCallbackBaseUrl(
+                "https://user:secret-password@api.repit.example?token=query-secret", false))
+                .isInstanceOf(IllegalStateException.class)
+                .message()
+                .doesNotContain("secret-password", "query-secret", "user:")
+                .contains("api.repit.example");
+    }
 }
