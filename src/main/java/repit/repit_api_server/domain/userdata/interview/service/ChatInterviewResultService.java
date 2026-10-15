@@ -36,7 +36,10 @@ public class ChatInterviewResultService {
      * 채팅 서버의 면접 완료 처리까지 끊긴다. 채점은 웹에서 다시 요청할 수 있다.
      */
     public void handleResult(SaveInterviewRequest request) {
-        interviewService.saveInterview(request);
+        // 이미 저장한 기록이면(채팅 서버의 재전송) 채점·음성 분석 준비도 다시 하지 않는다. 응답은 그대로 성공이다.
+        if (!interviewService.saveInterview(request)) {
+            return;
+        }
 
         try {
             feedbackDispatchService.onTranscriptSaved(request.getInterviewId());

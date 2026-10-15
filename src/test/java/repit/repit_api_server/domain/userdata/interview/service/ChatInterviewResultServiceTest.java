@@ -17,6 +17,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -41,6 +43,8 @@ class ChatInterviewResultServiceTest {
     void setUp() {
         service = new ChatInterviewResultService(interviewService, feedbackDispatchService);
         request = new SaveInterviewRequest("sess-1", 3L, 7L, Status.COMPLETED, null, List.of());
+        // 처음 받은 기록이다. 다시 받은 기록은 따로 검증한다.
+        lenient().when(interviewService.saveInterview(request)).thenReturn(true);
     }
 
     @Test
@@ -71,5 +75,15 @@ class ChatInterviewResultServiceTest {
 
         // 기록은 이미 저장됐다. 여기서 실패를 돌려주면 채팅 서버의 완료 처리까지 끊긴다.
         assertThatCode(() -> service.handleResult(request)).doesNotThrowAnyException();
+    }
+
+    /** 채팅 서버의 재전송이다. 채점·음성 분석 준비를 다시 하지 않고, 응답은 그대로 성공이다. */
+    @Test
+    void 이미_저장한_기록이면_채점을_다시_준비하지_않는다() {
+        when(interviewService.saveInterview(request)).thenReturn(false);
+
+        assertThatCode(() -> service.handleResult(request)).doesNotThrowAnyException();
+
+        verify(feedbackDispatchService, never()).onTranscriptSaved(3L);
     }
 }

@@ -344,23 +344,38 @@ public class InterviewService {
     }
 
     /**
-     * 채팅 서버가 면접을 마치고 넘겨주는 전체 기록을 저장한다.
+     * 채팅 서버가 면접을 마치고 넘겨주는 전체 기록을 저장한다. 처음 저장했으면 참을 돌려준다.
      *
      * <p>채팅 서버는 이 요청을 보낸 직후 세션을 지운다. 여기가 마지막 기회라 실패하면 면접
-     * 내용이 사라진다. 콜백이 두 번 와도 같은 결과가 되도록 기존 기록을 지우고 다시 넣는다.
+     * 내용이 사라진다. 그래서 질문·답변과 종료 상태를 한 트랜잭션에서 함께 남긴다 — 중간에 실패하면 모두 롤백되고
+     * 면접은 진행 중으로 남아, 다시 보낸 기록이 처음부터 저장된다.
+     *
+     * <p>채팅 서버는 저장이 끝났는데 응답을 받지 못하면 같은 기록을 다시 보낸다. 이미 저장한 면접이면 아무것도 바꾸지
+     * 않는다. 지우고 다시 넣으면 질문 PK가 바뀌어 그 질문에 매달린 채점·녹음과 어긋난다. 내용이 달라도 처음 것을 둔다.
      */
     @Transactional
-    public void saveInterview(SaveInterviewRequest request) {
+    public boolean saveInterview(SaveInterviewRequest request) {
         InterviewEntity interview = interviewRepository.findById(request.getInterviewId())
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+
+        // 기록을 넘겼다는 것 자체가 면접이 끝났다는 뜻이다. 상태가 비거나 진행 중으로 와도 진행 중으로 두지 않는다 —
+        // 진행 중으로 두면 다시 온 기록을 처음 것으로 보고 또 저장한다.
+        Status status = request.getStatus() == null || request.getStatus() == Status.IN_PROGRESS
+                ? Status.COMPLETED
+                : request.getStatus();
+        if (interviewRepository.claimResultSave(interview.getInterviewId(), status) == 0) {
+            log.info("이미 기록을 저장한 면접이라 다시 저장하지 않습니다. interviewId={}, 받은 상태={}, 받은 문항 수={}",
+                    interview.getInterviewId(), request.getStatus(),
+                    request.getQnaRequests() == null ? 0 : request.getQnaRequests().size());
+            return false;
+        }
 
         // 세션과 상태는 비어 오면 덮어쓰지 않는다. 둘 다 not null 컬럼이라 null을 넣으면 저장이
         // 통째로 실패하고, 그 500이 채팅 서버의 완료 처리까지 끊어 세션을 남긴 채로 끝난다.
         if (request.getSessionId() != null && !request.getSessionId().isBlank()) {
             interview.setSessionId(request.getSessionId());
         }
-        // 기록을 넘겼다는 것 자체가 면접이 끝났다는 뜻이다. 상태가 비어 와도 진행 중으로 두지 않는다.
-        interview.setStatus(request.getStatus() == null ? Status.COMPLETED : request.getStatus());
+        interview.setStatus(status);
         interviewRepository.save(interview);
 
         answerRepository.deleteAllByInterviewId(interview.getInterviewId());
@@ -372,6 +387,7 @@ public class InterviewService {
 
         Map<Long, Long> questionIdByChatId = saveQuestions(interview, qnAs);
         saveAnswers(interview, qnAs, questionIdByChatId);
+        return true;
     }
 
     /**
