@@ -4,8 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.io.support.ResourcePatternResolver;
@@ -28,11 +27,13 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -44,10 +45,14 @@ import java.util.stream.Collectors;
  * 오류 로그를 남긴다. 위치를 비워 두면 아무것도 하지 않고, 공개 기업은 기존 DB 그대로다.
  *
  * <p>API는 1대 전제다. 여러 대가 동시에 가져와도 code UNIQUE와 기업별 트랜잭션 때문에 데이터가 깨지지는 않는다.
+ *
+ * <p>웹 서버가 요청을 받기 전에 끝낸다. ApplicationRunner는 내장 서버가 뜬 뒤에 돌아, 그 사이 들어온 요청이 반쯤 반영된
+ * 기업 목록을 보거나 갱신 중인 기업으로 면접을 만든다. 싱글턴이 모두 만들어진 뒤(마이그레이션·JPA 준비 완료)이고
+ * 서버가 뜨기 전인 이 자리에서 돈다.
  */
 @Component
 @RequiredArgsConstructor
-public class CompanyDataImporter implements ApplicationRunner {
+public class CompanyDataImporter implements SmartInitializingSingleton {
 
     private static final Logger log = LoggerFactory.getLogger(CompanyDataImporter.class);
 
@@ -63,7 +68,7 @@ public class CompanyDataImporter implements ApplicationRunner {
     private String dataLocation;
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void afterSingletonsInstantiated() {
         try {
             importFrom(dataLocation);
         } catch (Exception e) {
@@ -123,31 +128,75 @@ public class CompanyDataImporter implements ApplicationRunner {
         List<Loaded> unique = withoutDuplicates(loaded);
         skipped += loaded.size() - unique.size();
 
-        int created = 0;
-        int updated = 0;
-        int unchanged = 0;
+        // 숨김은 읽은 파일 목록만으로 정해지므로 반영보다 먼저 한다. 숨긴 기업이 들고 있던 식별자를 이번 묶음이 받을 수 있게
+        // 놓게 한 뒤 반영한다 — 그러지 않으면 code를 바꿔 다시 낸 기업이 DART 고유번호 UNIQUE에 걸려 끝내 들어가지 못한다.
+        int hidden = transactionTemplate.execute(status -> hideMissing(readCodes));
+        transactionTemplate.executeWithoutResult(status -> releaseClaimedIdentifiers(unique));
+
+        Map<Outcome, Integer> tally = new EnumMap<>(Outcome.class);
         List<CompanyDataPackage> applied = new ArrayList<>();
+        List<Loaded> retry = new ArrayList<>();
         for (Loaded each : unique) {
-            try {
-                switch (transactionTemplate.execute(status -> apply(each))) {
-                    case CREATED -> created++;
-                    case UPDATED -> updated++;
-                    case UNCHANGED -> unchanged++;
-                }
+            Outcome outcome = applyInOwnTransaction(each, true);
+            if (outcome == null) {
+                retry.add(each);
+            } else {
+                tally.merge(outcome, 1, Integer::sum);
                 applied.add(each.pkg());
-            } catch (RuntimeException e) {
-                log.error("기업 데이터를 반영하지 못해 건너뜁니다. file={}", each.fileName(), e);
+            }
+        }
+        // 다른 기업이 먼저 놓아야 받을 수 있는 값(이 묶음 안에서 DART 고유번호를 옮긴 경우)은 처리 순서에 따라 처음에 막힌다.
+        // 나머지를 반영한 뒤 한 번 더 해 순서와 상관없이 같은 결과가 나오게 한다.
+        for (Loaded each : retry) {
+            Outcome outcome = applyInOwnTransaction(each, false);
+            if (outcome == null) {
                 skipped++;
+            } else {
+                tally.merge(outcome, 1, Integer::sum);
+                applied.add(each.pkg());
             }
         }
 
-        transactionTemplate.executeWithoutResult(status -> linkParents(applied));
-        int hidden = transactionTemplate.execute(status -> hideMissing(readCodes));
+        transactionTemplate.executeWithoutResult(status -> linkParents(applied, readCodes));
 
-        Result result = new Result(created, updated, unchanged, hidden, skipped);
+        Result result = new Result(tally.getOrDefault(Outcome.CREATED, 0), tally.getOrDefault(Outcome.UPDATED, 0),
+                tally.getOrDefault(Outcome.UNCHANGED, 0), hidden, skipped);
         log.info("기업 데이터 가져오기: 새로 {}, 갱신 {}, 그대로 {}, 숨김 {}, 건너뜀 {}",
-                created, updated, unchanged, hidden, skipped);
+                result.created(), result.updated(), result.unchanged(), result.hidden(), result.skipped());
         return result;
+    }
+
+    /** 기업 하나 = 트랜잭션 하나. 실패하면 그 기업만 롤백하고 null을 돌려준다. */
+    private Outcome applyInOwnTransaction(Loaded each, boolean firstTry) {
+        try {
+            return transactionTemplate.execute(status -> apply(each));
+        } catch (RuntimeException e) {
+            if (firstTry) {
+                log.warn("기업 데이터를 반영하지 못해 나머지를 반영한 뒤 한 번 더 해봅니다. file={}, 오류={}",
+                        each.fileName(), e.getMessage());
+            } else {
+                log.error("기업 데이터를 반영하지 못해 건너뜁니다. file={}", each.fileName(), e);
+            }
+            return null;
+        }
+    }
+
+    /** 숨긴 기업이 들고 있는 DART 고유번호·사업자등록번호를 이번 묶음이 쓰면 놓게 한다. 숨긴 행은 지우지 않는다. */
+    private void releaseClaimedIdentifiers(List<Loaded> loaded) {
+        List<String> dartCorpCodes = loaded.stream()
+                .map(each -> each.pkg().dartCorpCode()).filter(Objects::nonNull).toList();
+        List<String> businessRegNos = loaded.stream()
+                .map(each -> each.pkg().businessRegNo()).filter(Objects::nonNull).toList();
+        int released = 0;
+        if (!dartCorpCodes.isEmpty()) {
+            released += companyRepository.releaseHiddenDartCorpCodes(dartCorpCodes);
+        }
+        if (!businessRegNos.isEmpty()) {
+            released += companyRepository.releaseHiddenBusinessRegNos(businessRegNos);
+        }
+        if (released > 0) {
+            log.info("숨긴 기업이 들고 있던 식별자를 이번 기업 데이터에 넘겼습니다. {}건", released);
+        }
     }
 
     /** 묶음 규칙 8. code·DART 고유번호·사업자등록번호가 다른 파일과 겹치면 어느 쪽이 맞는지 몰라 둘 다 건너뛴다. */
@@ -255,18 +304,29 @@ public class CompanyDataImporter implements ApplicationRunner {
         return outcome;
     }
 
-    /** 묶음 규칙 10. 모회사는 같은 묶음에서 반영된 기업이어야 한다. 없으면 연결만 빼고 가져온다. */
-    private void linkParents(List<CompanyDataPackage> applied) {
+    /**
+     * 묶음 규칙 10. 모회사는 이번 묶음에 있어야 잇는다. 묶음에 아예 없으면 연결만 빼고 경고한다.
+     *
+     * <p>모회사 파일이 묶음에 있는데 검증·반영에 실패했으면 그 기업 행은 기존 상태로 남는다. 그때는 연결도 지금 그대로 둔다 —
+     * 모회사 파일 하나가 잠깐 틀렸다고 자회사의 연결까지 끊지 않는다.
+     */
+    private void linkParents(List<CompanyDataPackage> applied, Set<String> readCodes) {
         Set<String> codes = applied.stream().map(CompanyDataPackage::code).collect(Collectors.toSet());
         for (CompanyDataPackage pkg : applied) {
+            CompanyEntity company = companyRepository.findByCode(pkg.code()).orElseThrow();
             String parentCode = pkg.parentCode();
-            if (parentCode != null && !codes.contains(parentCode)) {
+            if (parentCode == null) {
+                company.setParent(null);
+            } else if (codes.contains(parentCode)) {
+                company.setParent(companyRepository.findByCode(parentCode).orElseThrow());
+            } else if (readCodes.contains(parentCode)) {
+                log.warn("모회사 기업 데이터를 반영하지 못해 모회사 연결은 그대로 둡니다. code={}, parentCode={}",
+                        pkg.code(), parentCode);
+            } else {
                 log.warn("모회사가 이번 기업 데이터에 없어 연결하지 않습니다. code={}, parentCode={}",
                         pkg.code(), parentCode);
-                parentCode = null;
+                company.setParent(null);
             }
-            CompanyEntity company = companyRepository.findByCode(pkg.code()).orElseThrow();
-            company.setParent(parentCode == null ? null : companyRepository.findByCode(parentCode).orElseThrow());
         }
     }
 

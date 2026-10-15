@@ -44,7 +44,7 @@ public class InterviewResponse {
                 interview.getSessionId(),
                 interview.getStatus(),
                 interview.getCreatedAt(),
-                CompanyBadge.from(interview.getCompanySnapshot())
+                CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot())
         );
     }
 }

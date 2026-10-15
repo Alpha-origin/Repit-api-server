@@ -55,6 +55,14 @@ public final class CompanyDataValidator {
         pattern(errors, "dartCorpCode", pkg.dartCorpCode(), DART_CORP_CODE, "8자리 숫자");
         pattern(errors, "businessRegNo", pkg.businessRegNo(), BUSINESS_REG_NO, "10자리 숫자");
         required(errors, "dataAsOf", pkg.dataAsOf());
+        // 자기 자신을 모회사로 두면 목록에 자기 이름이 모회사로 나가고, 모회사를 따라가는 코드가 생기면 끝없이 돈다.
+        if (pkg.parentCode() != null && pkg.parentCode().equals(pkg.code())) {
+            errors.add("parentCode가 자기 code와 같습니다: " + pkg.code());
+        }
+        if (pkg.review() != null) {
+            // 컬럼이 VARCHAR(50)이다. 넘으면 검증 오류 대신 저장 단계의 예외로만 드러난다.
+            text(errors, "review.reviewedBy", pkg.review().reviewedBy(), 50, false);
+        }
         text(errors, "interviewerBrief", pkg.interviewerBrief(), CompanyLimits.INTERVIEWER_BRIEF, true);
 
         List<CompanyDataPackage.Source> sources = present(errors, "sources", pkg.sources(), 1, 30);

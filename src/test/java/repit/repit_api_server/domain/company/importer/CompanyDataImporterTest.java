@@ -18,6 +18,7 @@ import repit.repit_api_server.domain.company.importer.CompanyDataImporter.Result
 import repit.repit_api_server.domain.company.repository.CompanyFactRepository;
 import repit.repit_api_server.domain.company.repository.CompanyRepository;
 import repit.repit_api_server.domain.company.repository.CompanySourceRepository;
+import repit.repit_api_server.domain.company.service.CompanyQueryService;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -31,7 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 기업 데이터 가져오기를 실제 스키마에 대고 확인한다(04 §3-4).
  *
- * <p>파일을 고치고 지우는 경우를 보려고 테스트 리소스의 패키지를 임시 폴더에 복사해 그 위치를 넘긴다.
+ * <p>파일을 고치고 지우는 경우를 보려고 실제로 배포되는 샘플 패키지(company-data/sample)를 임시 폴더에 복사해 그 위치를 넘긴다.
+ * 복사본을 따로 두지 않는다 — 두면 샘플을 고쳐도 이 테스트는 옛 복사본으로 통과한다.
  * 테스트 트랜잭션은 끝나면 롤백되고, 기업별 트랜잭션은 그 안에 합류한다.
  */
 @SpringBootTest
@@ -48,6 +50,8 @@ class CompanyDataImporterTest {
     private CompanyFactRepository companyFactRepository;
     @Autowired
     private CompanySourceRepository companySourceRepository;
+    @Autowired
+    private CompanyQueryService companyQueryService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -66,15 +70,23 @@ class CompanyDataImporterTest {
         entityManager.createNativeQuery("delete from company").executeUpdate();
 
         for (String fileName : SAMPLES) {
-            copy("valid/" + fileName, dir.resolve(fileName));
+            copy(fileName, dir.resolve(fileName));
         }
     }
 
-    private static void copy(String resource, Path target) throws IOException {
+    private static void copy(String sample, Path target) throws IOException {
         Files.createDirectories(target.getParent());
-        try (InputStream in = new ClassPathResource("company-data/" + resource).getInputStream()) {
+        try (InputStream in = new ClassPathResource("company-data/sample/" + sample).getInputStream()) {
             Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
         }
+    }
+
+    /** 샘플 파일 한 군데를 바꿔 쓴다. 바꿀 문자열이 없으면 테스트가 엉뚱한 것을 확인하므로 바로 실패시킨다. */
+    private void rewrite(String fileName, String from, String to) throws IOException {
+        Path file = dir.resolve(fileName);
+        String content = Files.readString(file);
+        assertThat(content).contains(from);
+        Files.writeString(file, content.replace(from, to));
     }
 
     private String location() {
@@ -135,8 +147,7 @@ class CompanyDataImporterTest {
         List<Long> gamesBefore = factIds("sample-games");
         List<Long> payBefore = factIds("sample-pay");
 
-        Path games = dir.resolve("sample-games.json");
-        Files.writeString(games, Files.readString(games).replace("모바일 게임\"", "모바일 대전 게임\""));
+        rewrite("sample-games.json", "모바일 게임\"", "모바일 대전 게임\"");
 
         assertThat(importer.importFrom(location())).isEqualTo(new Result(0, 1, 2, 0, 0));
         assertThat(factIds("sample-games")).hasSameSizeAs(gamesBefore).doesNotContainAnyElementsOf(gamesBefore);
@@ -153,7 +164,7 @@ class CompanyDataImporterTest {
         assertThat(importer.importFrom(location())).isEqualTo(new Result(0, 0, 2, 1, 0));
         assertThat(company("sample-games").getStatus()).isEqualTo(CompanyStatus.HIDDEN);
 
-        copy("valid/sample-games.json", dir.resolve("sample-games.json"));
+        copy("sample-games.json", dir.resolve("sample-games.json"));
         assertThat(importer.importFrom(location())).isEqualTo(new Result(0, 1, 2, 0, 0));
         assertThat(company("sample-games").getStatus()).isEqualTo(CompanyStatus.PUBLISHED);
     }
@@ -163,7 +174,8 @@ class CompanyDataImporterTest {
         importer.importFrom(location());
         String payHash = company("sample-pay").getContentHash();
 
-        copy("invalid/sample-pay.json", dir.resolve("sample-pay.json"));
+        // 규칙 7 위반(금지 표현)과 깨진 JSON.
+        rewrite("sample-pay.json", "\"interviewerBrief\": \"샘플페이는", "\"interviewerBrief\": \"합격을 돕는 샘플페이는");
         Files.writeString(dir.resolve("sample-games.json"), "{ 깨진 JSON");
 
         assertThat(importer.importFrom(location())).isEqualTo(new Result(0, 0, 1, 0, 2));
@@ -175,8 +187,8 @@ class CompanyDataImporterTest {
     @Test
     void code가_겹치는_두_파일은_둘_다_건너뛴다() throws IOException {
         Files.delete(dir.resolve("sample-pay.json"));
-        copy("valid/sample-pay.json", dir.resolve("a/sample-pay.json"));
-        copy("valid/sample-pay.json", dir.resolve("b/sample-pay.json"));
+        copy("sample-pay.json", dir.resolve("a/sample-pay.json"));
+        copy("sample-pay.json", dir.resolve("b/sample-pay.json"));
 
         assertThat(importer.importFrom("file:" + dir.toAbsolutePath() + "/**/*.json"))
                 .isEqualTo(new Result(2, 0, 0, 0, 2));
@@ -193,5 +205,30 @@ class CompanyDataImporterTest {
         // 위치를 잘못 적었을 수 있다. 숨기지도 않는다.
         assertThat(importer.importFrom("file:" + empty.toAbsolutePath() + "/*.json")).isEqualTo(Result.NONE);
         assertThat(companyRepository.findAllByStatus(CompanyStatus.PUBLISHED)).hasSize(3);
+    }
+
+    private CompanyEntity parentOf(String code) {
+        entityManager.flush();
+        entityManager.clear();
+        CompanyEntity parent = company(code).getParent();
+        return parent == null ? null : company(parent.getCode());
+    }
+
+    /** 모회사 파일이 잠깐 틀렸다고 자회사 연결까지 끊지 않는다. 모회사가 묶음에서 아예 빠지면 그때 끊는다. */
+    @Test
+    void 모회사_파일이_실패하면_연결을_두고_빠지면_끊는다() throws IOException {
+        rewrite("sample-commerce.json", "\"parentCode\": null", "\"parentCode\": \"sample-pay\"");
+        importer.importFrom(location());
+        assertThat(parentOf("sample-commerce").getCode()).isEqualTo("sample-pay");
+        // 목록은 모회사를 함께 읽어 이름을 싣는다(findWithParentByStatus).
+        assertThat(companyQueryService.search("샘플커머스", null).getFirst().parentDisplayName()).isEqualTo("샘플페이");
+
+        rewrite("sample-pay.json", "\"interviewerBrief\": \"샘플페이는", "\"interviewerBrief\": \"합격을 돕는 샘플페이는");
+        importer.importFrom(location());
+        assertThat(parentOf("sample-commerce").getCode()).isEqualTo("sample-pay");
+
+        Files.delete(dir.resolve("sample-pay.json"));
+        importer.importFrom(location());
+        assertThat(parentOf("sample-commerce")).isNull();
     }
 }

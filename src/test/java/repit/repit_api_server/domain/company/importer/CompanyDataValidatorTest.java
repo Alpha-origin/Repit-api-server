@@ -176,4 +176,17 @@ class CompanyDataValidatorTest {
         assertThat(violate(real.andThen(node -> node.putObject("review")
                 .put("reviewedBy", "검수자").put("reviewedAt", "2026-10-15")))).isEmpty();
     }
+
+    @Test
+    void 자기_자신을_모회사로_두면_오류다() {
+        assertThat(violate(node -> node.put("parentCode", "sample-commerce"))).anyMatch(e -> e.startsWith("parentCode"));
+    }
+
+    @Test
+    void 검수자_이름이_50자를_넘으면_오류다() {
+        assertThat(violate(node -> node.putObject("review").put("reviewedBy", "가".repeat(51)).put("reviewedAt", "2026-10-15")))
+                .anyMatch(e -> e.startsWith("review.reviewedBy"));
+        assertThat(violate(node -> node.putObject("review").put("reviewedBy", "가".repeat(50)).put("reviewedAt", "2026-10-15")))
+                .isEmpty();
+    }
 }

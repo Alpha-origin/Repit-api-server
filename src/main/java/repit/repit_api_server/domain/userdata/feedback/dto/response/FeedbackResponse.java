@@ -103,7 +103,7 @@ public class FeedbackResponse {
                 .personas(personas.stream().map(FeedbackPersonaResponse::from).toList())
                 .feedbacks(items.stream().map(FeedbackItemResponse::from).toList())
                 .createdAt(feedback.getCreatedAt())
-                .company(interview == null ? null : CompanyBadge.from(interview.getCompanySnapshot()))
+                .company(interview == null ? null : CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot()))
                 .companyFit(feedback.getCompanyFit())
                 .build();
     }

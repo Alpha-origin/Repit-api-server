@@ -129,4 +129,28 @@ class CompanySnapshotFactoryTest {
 
         assertThatThrownBy(() -> factory.create(3L)).isInstanceOf(IllegalStateException.class);
     }
+
+    /** 분석 서버는 인재상·주력 사업이 하나도 없는 기업 정보를 422로 거부한다. 고정된 스냅샷이라 면접을 영영 못 연다. */
+    @Test
+    void 인재상이나_주력_사업이_없으면_만들지_않는다() {
+        when(companyFactRepository.findAllByCompanyIdOrderBySortOrder(3L))
+                .thenReturn(List.of(fact(21L, CompanyFactKind.BUSINESS, "샘플마켓", 0, List.of())));
+        assertThatThrownBy(() -> factory.create(3L)).isInstanceOf(IllegalStateException.class);
+
+        when(companyFactRepository.findAllByCompanyIdOrderBySortOrder(3L))
+                .thenReturn(List.of(fact(23L, CompanyFactKind.TALENT, "오너십", 0, List.of())));
+        assertThatThrownBy(() -> factory.create(3L)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void 이름이나_요약이_비어_있으면_만들지_않는다() {
+        when(companyRepository.findByCompanyIdAndStatus(4L, CompanyStatus.PUBLISHED)).thenReturn(Optional.of(
+                CompanyEntity.builder().companyId(4L).code("blank").displayName("샘플")
+                        .category(CompanyCategory.CONSUMER).status(CompanyStatus.PUBLISHED).interviewerBrief(" ").build()));
+        when(companyFactRepository.findAllByCompanyIdOrderBySortOrder(4L)).thenReturn(List.of(
+                fact(21L, CompanyFactKind.BUSINESS, "샘플마켓", 0, List.of()),
+                fact(23L, CompanyFactKind.TALENT, "오너십", 1, List.of())));
+
+        assertThatThrownBy(() -> factory.create(4L)).isInstanceOf(IllegalStateException.class);
+    }
 }

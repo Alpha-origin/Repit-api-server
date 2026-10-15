@@ -10,6 +10,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.company.dto.CompanyBadge;
 import repit.repit_api_server.domain.company.dto.CompanySnapshot;
+import repit.repit_api_server.domain.company.entity.CompanyEntity;
+import repit.repit_api_server.domain.company.entity.enums.CompanyCategory;
+import repit.repit_api_server.domain.company.entity.enums.CompanyStatus;
+import repit.repit_api_server.domain.company.repository.CompanyRepository;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallbackRequest;
@@ -31,6 +35,7 @@ import repit.repit_api_server.global.client.AiServerClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -44,7 +49,7 @@ import static org.mockito.Mockito.when;
  * 기업을 고른 면접의 피드백. 요청에 기업 정보가 실리고, 콜백의 기업 관점 코멘트가 저장·조회되는지 본다.
  *
  * <p>면접 스냅샷과 companyFit이 jsonb로 실제 스키마에 들어가는지까지 보려고 DB에 쓴다. 롤백된다.
- * 면접의 모든 경로는 스냅샷만 읽으므로 기업 행은 만들지 않는다.
+ * 면접의 경로는 스냅샷만 읽지만, 조회 응답의 기업 id는 면접의 company_id 컬럼이라 기업 행을 하나 만든다.
  */
 @SpringBootTest
 @Transactional
@@ -69,6 +74,8 @@ class FeedbackServiceCompanyTest {
     private QuestionRepository questionRepository;
     @Autowired
     private AnswerRepository answerRepository;
+    @Autowired
+    private CompanyRepository companyRepository;
 
     @MockitoBean
     private AiServerClient aiServerClient;
@@ -79,13 +86,28 @@ class FeedbackServiceCompanyTest {
     private final String sessionId = UUID.randomUUID().toString();
     private final String jobId = UUID.randomUUID().toString();
 
-    /** 채점할 것이 있는 끝난 1:1 면접. */
+    private Long givenCompany() {
+        return companyRepository.save(CompanyEntity.builder()
+                .code("fit-" + UUID.randomUUID().toString().substring(0, 8))
+                .displayName("샘플커머스")
+                .legalName("샘플커머스 주식회사")
+                .aliases(List.of())
+                .category(CompanyCategory.CONSUMER)
+                .status(CompanyStatus.PUBLISHED)
+                .interviewerBrief("샘플커머스는 가상의 기업이다.")
+                .dataAsOf(LocalDate.parse("2026-10-15"))
+                .contentHash("0".repeat(64))
+                .build()).getCompanyId();
+    }
+
+    /** 채점할 것이 있는 끝난 1:1 면접. 스냅샷이 있으면 그 기업을 고른 면접이다. */
     private InterviewEntity givenFinishedInterview(CompanySnapshot snapshot) {
         InterviewEntity interview = interviewRepository.save(InterviewEntity.builder()
                 .userId(USER_ID)
                 .mode(InterviewMode.SOLO)
                 .status(Status.COMPLETED)
                 .sessionId(sessionId)
+                .companyId(snapshot == null ? null : givenCompany())
                 .companySnapshot(snapshot)
                 .build());
         QuestionEntity question = questionRepository.save(QuestionEntity.builder()
@@ -177,7 +199,7 @@ class FeedbackServiceCompanyTest {
         assertThat(fit.gaps()).isEmpty();
 
         FeedbackResponse response = feedbackService.getFeedback(USER_ID, interview.getInterviewId());
-        assertThat(response.getCompany()).isEqualTo(new CompanyBadge(3L, "샘플커머스"));
+        assertThat(response.getCompany()).isEqualTo(new CompanyBadge(interview.getCompanyId(), "샘플커머스"));
         assertThat(response.getCompanyFit()).isEqualTo(fit);
     }
 
