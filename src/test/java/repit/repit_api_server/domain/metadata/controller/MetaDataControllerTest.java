@@ -8,6 +8,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import repit.repit_api_server.domain.metadata.dto.response.MaterialsResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
+import repit.repit_api_server.domain.metadata.service.MaterialsService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
 import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.response.UserResponse;
@@ -29,6 +30,8 @@ class MetaDataControllerTest {
     private MetaService metaService;
     @Mock
     private AnalysisLaunchService analysisLaunchService;
+    @Mock
+    private MaterialsService materialsService;
     @InjectMocks
     private MetaDataController controller;
 
