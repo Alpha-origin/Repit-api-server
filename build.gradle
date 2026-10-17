@@ -27,6 +27,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.8'
     implementation 'software.amazon.awssdk:s3:2.25.26'
+    // 자료 PDF의 쪽수를 세고 손상·암호화를 가려낸다(비개발 직군 명세 가정 A-8).
+    implementation 'org.apache.pdfbox:pdfbox:3.0.4'
     implementation 'org.springframework.boot:spring-boot-starter-flyway'
     implementation 'org.flywaydb:flyway-database-postgresql'
     developmentOnly 'me.paulschwarz:springboot4-dotenv:5.1.0'
