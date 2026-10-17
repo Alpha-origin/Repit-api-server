@@ -17,6 +17,8 @@ import repit.repit_api_server.domain.metadata.exception.MaterialValidationExcept
 import repit.repit_api_server.domain.metadata.service.MaterialsValidator.ValidatedMaterials;
 import repit.repit_api_server.domain.metadata.support.JobRole;
 import repit.repit_api_server.domain.metadata.support.MaterialFileStorage;
+import repit.repit_api_server.domain.metadata.support.MaterialFileStorage.Download;
+import repit.repit_api_server.domain.metadata.support.MaterialFileStorage.DownloadStatus;
 import repit.repit_api_server.domain.metadata.support.PdfInspector;
 import repit.repit_api_server.domain.metadata.support.TestPdfs;
 import repit.repit_api_server.global.exception.BusinessException;
@@ -25,11 +27,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -207,7 +210,7 @@ class MaterialsValidatorTest {
             assertThat(document.fileName()).isEqualTo("saved.pdf");
             assertThat(document.pageCount()).isEqualTo(18);
         });
-        verify(storage, never()).download(SAVED_URL);
+        verify(storage, never()).download(eq(SAVED_URL), anyLong());
     }
 
     @Test
@@ -221,13 +224,58 @@ class MaterialsValidatorTest {
 
     @Test
     void 직무가_없던_옛_사용자는_백엔드로_보고_개발_직무에서_옛_PDF를_쓰며_쪽수를_지금_센다() {
-        when(storage.download(SAVED_URL)).thenReturn(Optional.of(TestPdfs.pdf(7, "legacy")));
+        when(storage.download(SAVED_URL, MaterialsValidator.MAX_FILE_BYTES))
+                .thenReturn(new Download(DownloadStatus.OK, TestPdfs.pdf(7, "legacy")));
 
         ValidatedMaterials result = validator().validate(payload("BACKEND",
                 List.of(existingDoc("PORTFOLIO", SAVED_URL)), List.of("https://github.com/a/b"), List.of()),
                 files, saved(null, null));
 
         assertThat(result.documents()).singleElement().extracting("pageCount").isEqualTo(7);
+    }
+
+    @Test
+    void 쪽수를_세야_하는_옛_PDF가_50MB를_넘으면_받지_않고_FILE_TOO_LARGE() {
+        when(storage.download(SAVED_URL, MaterialsValidator.MAX_FILE_BYTES))
+                .thenReturn(new Download(DownloadStatus.TOO_LARGE, null));
+
+        List<MaterialError> errors = errorsOf(payload("BACKEND",
+                List.of(existingDoc("PORTFOLIO", SAVED_URL)), List.of("https://github.com/a/b"), List.of()), saved(null, null));
+
+        assertThat(errors).containsExactly(new MaterialError("documents[0]", Reason.FILE_TOO_LARGE, null));
+    }
+
+    @Test
+    void 새_파일_합계가_200MB를_넘으면_하나도_읽지_않고_FILE_TOO_LARGE() throws Exception {
+        List<MultipartFile> parts = new java.util.ArrayList<>();
+        List<DocumentInput> inputs = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            MultipartFile part = mock(MultipartFile.class);
+            when(part.getSize()).thenReturn(45L * 1024 * 1024);
+            files.put("file" + i, part);
+            parts.add(part);
+            inputs.add(new DocumentInput("TEST_PLAN", "NEW", "file" + i, null));
+        }
+
+        List<MaterialError> errors = errorsOf(payload("QA_ENGINEER", inputs, List.of(), List.of()), NOTHING_SAVED);
+
+        assertThat(errors).containsExactly(
+                new MaterialError("documents", Reason.FILE_TOO_LARGE, String.valueOf(5 * 45L * 1024 * 1024)));
+        for (MultipartFile part : parts) {
+            verify(part, never()).getBytes();
+        }
+    }
+
+    @Test
+    void 문서_목록이_가리키지_않는_파일_파트가_있으면_400() {
+        newDoc("TEST_PLAN", "file0", TestPdfs.pdf(1, "plan"));
+        files.put("file1", new MockMultipartFile("file1", "extra.pdf", "application/pdf", TestPdfs.pdf(1, "extra")));
+        files.put("payload", new MockMultipartFile("payload", "blob", "application/json", "{}".getBytes()));
+
+        assertThatThrownBy(() -> validator().validate(payload("QA_ENGINEER",
+                List.of(new DocumentInput("TEST_PLAN", "NEW", "file0", null)), List.of(), List.of()), files, NOTHING_SAVED))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("file1");
     }
 
     @Test

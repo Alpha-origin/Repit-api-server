@@ -43,6 +43,9 @@ public class MaterialsValidator {
     static final int MAX_DOCUMENTS = 5;
     static final int MAX_TOTAL_PAGES = 50;
     static final long MAX_FILE_BYTES = 50L * 1024 * 1024;
+    /** 한 요청에서 새로 올리는 파일 합계(가정 A-9). 파일을 메모리로 읽기 전에 건다. */
+    static final long MAX_TOTAL_FILE_BYTES = 200L * 1024 * 1024;
+    private static final String PAYLOAD_PART = "payload";
     static final int MAX_SUPPLEMENTS = 3;
     static final int MAX_SUPPLEMENT_TITLE = 80;
     static final int MAX_SUPPLEMENT_ITEM = 500;
@@ -71,6 +74,7 @@ public class MaterialsValidator {
     }
 
     public ValidatedMaterials validate(MaterialsPayload payload, Map<String, MultipartFile> files, MaterialsResponse saved) {
+        rejectUnreferencedParts(payload, files);
         JobRole job = JobRole.find(payload.jobRole()).orElseThrow(() ->
                 new MaterialValidationException(List.of(error("jobRole", Reason.JOB_ROLE_REQUIRED, null))));
 
@@ -94,6 +98,20 @@ public class MaterialsValidator {
         }
         if (inputs.size() > MAX_DOCUMENTS) {
             errors.add(error("documents", Reason.TOO_MANY_DOCUMENTS, null));
+            return List.of();
+        }
+
+        // 파일마다 50MB여도 다섯 개면 250MB다. 하나라도 메모리로 읽기 전에 합계를 본다.
+        long totalNewBytes = inputs.stream()
+                .filter(input -> input != null && MaterialsPayload.SOURCE_NEW.equals(input.source()) && input.fileKey() != null)
+                .map(DocumentInput::fileKey)
+                .distinct()
+                .map(files::get)
+                .filter(file -> file != null)
+                .mapToLong(MultipartFile::getSize)
+                .sum();
+        if (totalNewBytes > MAX_TOTAL_FILE_BYTES) {
+            errors.add(error("documents", Reason.FILE_TOO_LARGE, String.valueOf(totalNewBytes)));
             return List.of();
         }
 
@@ -138,6 +156,21 @@ public class MaterialsValidator {
         return documents;
     }
 
+    /** payload가 가리키지 않는 파일 파트는 받지 않는다. 검사 없이 쌓이는 업로드를 막는다. */
+    private static void rejectUnreferencedParts(MaterialsPayload payload, Map<String, MultipartFile> files) {
+        Set<String> referenced = new HashSet<>();
+        if (payload.documents() != null) {
+            payload.documents().stream()
+                    .filter(input -> input != null && MaterialsPayload.SOURCE_NEW.equals(input.source()) && input.fileKey() != null)
+                    .forEach(input -> referenced.add(input.fileKey()));
+        }
+        for (String part : files.keySet()) {
+            if (!PAYLOAD_PART.equals(part) && !referenced.contains(part)) {
+                throw new BusinessException("문서 목록이 가리키지 않는 파일(" + part + ")이 요청에 있습니다.", HttpStatus.BAD_REQUEST);
+            }
+        }
+    }
+
     /**
      * 저장된 문서를 그대로 쓸 수 있는지. 개발 3직무 사이만 유지한다.
      * 직무를 고른 적 없는 옛 사용자는 백엔드로 본다(가정 A-7).
@@ -168,13 +201,17 @@ public class MaterialsValidator {
 
         Integer pages = savedDocument.pageCount();
         if (pages == null) {
-            // 옛 업로드 경로로 올린 PDF는 쪽수를 센 적이 없어 지금 센다.
-            Optional<byte[]> bytes = storage.download(input.fileUrl());
-            if (bytes.isEmpty()) {
+            // 옛 업로드 경로로 올린 PDF는 쪽수를 센 적이 없어 지금 센다. 새 파일과 같은 50MB 제한을 받기 전에 건다.
+            MaterialFileStorage.Download download = storage.download(input.fileUrl(), MAX_FILE_BYTES);
+            if (download.status() == MaterialFileStorage.DownloadStatus.TOO_LARGE) {
+                errors.add(error(field, Reason.FILE_TOO_LARGE, null));
+                return null;
+            }
+            if (download.status() != MaterialFileStorage.DownloadStatus.OK) {
                 errors.add(error(field, Reason.EXISTING_NOT_FOUND, null));
                 return null;
             }
-            PdfInspector.Result result = pdfInspector.inspect(bytes.get());
+            PdfInspector.Result result = pdfInspector.inspect(download.bytes());
             if (result.status() != PdfInspector.Status.OK) {
                 errors.add(error(field, unreadableReason(result.status()), null));
                 return null;

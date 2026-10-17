@@ -10,9 +10,9 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
-import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -43,20 +43,36 @@ public class MaterialFileStorage {
         return baseUrl + "/" + key;
     }
 
-    /** 이 버킷의 주소가 아니거나 읽지 못하면 빈 값이다. */
-    public Optional<byte[]> download(String fileUrl) {
+    public enum DownloadStatus { OK, NOT_FOUND, TOO_LARGE }
+
+    public record Download(DownloadStatus status, byte[] bytes) {
+    }
+
+    /**
+     * 저장된 PDF를 받는다. 옛 업로드 경로는 1GB까지 받았으므로, 크기를 먼저 보고 maxBytes를 넘으면 받지 않는다.
+     * 이 버킷의 주소가 아니거나 읽지 못하면 NOT_FOUND다.
+     */
+    public Download download(String fileUrl, long maxBytes) {
         String key = keyOf(fileUrl);
         if (key == null) {
-            return Optional.empty();
+            return new Download(DownloadStatus.NOT_FOUND, null);
         }
         try {
-            return Optional.of(s3Client.getObjectAsBytes(GetObjectRequest.builder()
+            Long size = s3Client.headObject(HeadObjectRequest.builder().bucket(bucketName).key(key).build()).contentLength();
+            if (size == null || size > maxBytes) {
+                return new Download(DownloadStatus.TOO_LARGE, null);
+            }
+            byte[] bytes = s3Client.getObjectAsBytes(GetObjectRequest.builder()
                     .bucket(bucketName)
                     .key(key)
-                    .build()).asByteArray());
+                    .build()).asByteArray();
+            // 크기를 본 뒤 다른 파일로 바뀌었을 수도 있어 받은 크기로 한 번 더 본다.
+            return bytes.length > maxBytes
+                    ? new Download(DownloadStatus.TOO_LARGE, null)
+                    : new Download(DownloadStatus.OK, bytes);
         } catch (SdkException e) {
             log.warn("저장된 자료 PDF를 읽지 못했습니다. key={}, 원인={}", key, e.getMessage());
-            return Optional.empty();
+            return new Download(DownloadStatus.NOT_FOUND, null);
         }
     }
 
