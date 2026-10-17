@@ -3,6 +3,7 @@ package repit.repit_api_server.global.client;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
+import repit.repit_api_server.domain.metadata.dto.request.AuthMaterialsRequest;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
 import repit.repit_api_server.domain.metadata.dto.response.AuthMaterialsResponse;
 import repit.repit_api_server.global.common.ApiResponse;
@@ -41,6 +42,18 @@ public class AuthServerClient {
     public AuthMaterialsResponse getMaterials(String authorization) {
         ApiResponse<AuthMaterialsResponse> response = executor.execute(SERVER_NAME,
                 () -> authServerApi.getMaterials(authorization),
+                this::resolveMessage, true);
+
+        return response == null ? null : response.getData();
+    }
+
+    /**
+     * Auth 서버에 직무·문서·GitHub·보완 입력을 통째로 바꿔 저장.
+     * 같은 본문을 다시 보내도 결과가 같은 교체라 GET처럼 재시도한다.
+     */
+    public AuthMaterialsResponse putMaterials(String authorization, AuthMaterialsRequest request) {
+        ApiResponse<AuthMaterialsResponse> response = executor.execute(SERVER_NAME,
+                () -> authServerApi.putMaterials(authorization, request),
                 this::resolveMessage, true);
 
         return response == null ? null : response.getData();

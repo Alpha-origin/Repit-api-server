@@ -245,4 +245,27 @@ class AnalysisLaunchServiceTest {
         org.mockito.Mockito.doThrow(new RuntimeException("DB 장애"))
                 .when(aiMetaDataService).registerJob(any(), any(), any(), any());
     }
+
+    @Test
+    void 비개발_직무는_분석을_요청하지_않고_422() {
+        assertThatThrownBy(() -> service.launch(OWNER_ID, "MAJOR_QA_ENGINEER", metaData()))
+                .isInstanceOf(repit.repit_api_server.global.exception.BusinessException.class)
+                .hasMessage(AnalysisLaunchService.NON_DEV_NOT_SUPPORTED)
+                .extracting("status").hasToString("422 UNPROCESSABLE_CONTENT");
+        verify(aiServerClient, never()).requestProfile(any());
+    }
+
+    @Test
+    void 면접을_시작해도_비개발_직무는_자동_분석을_돌리지_않는다() {
+        UserResponse user = mock(UserResponse.class);
+        when(user.getId()).thenReturn(OWNER_ID);
+        when(user.getMajor()).thenReturn("MAJOR_QA_ENGINEER");
+        givenLatestProfile(null);
+        when(metaService.getMetaData("token-1")).thenReturn(metaData());
+
+        service.launchIfMissing(new AuthUser(user, "token-1"));
+
+        verify(aiServerClient, never()).requestProfile(any());
+        verify(analysisDataRepository, never()).lockProfileLaunch(any());
+    }
 }

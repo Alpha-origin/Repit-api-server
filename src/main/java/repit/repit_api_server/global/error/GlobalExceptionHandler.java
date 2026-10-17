@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import repit.repit_api_server.domain.metadata.dto.response.MaterialErrorResponse;
+import repit.repit_api_server.domain.metadata.exception.MaterialValidationException;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.exception.ExternalApiException;
 
@@ -25,6 +27,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         // 상태 코드만으로는 어느 규칙에 걸렸는지 알 수 없어 한 줄 남긴다. 예상된 흐름이라 스택트레이스는 붙이지 않는다.
         log.warn("업무 규칙에 걸려 요청을 중단했습니다. status={}, message={}", e.getStatus(), e.getMessage());
         return asJson(e.getStatus()).body(new ErrorResponse(e.getMessage()));
+    }
+
+    // 직무·자료 저장 규칙 위반. Web이 행·영역마다 문구를 띄우도록 사유 목록을 그대로 내보낸다.
+    @ExceptionHandler(MaterialValidationException.class)
+    public ResponseEntity<MaterialErrorResponse> handleMaterialValidationException(MaterialValidationException e) {
+        log.warn("자료 저장 규칙에 걸렸습니다. errors={}", e.getErrors());
+        return asJson(HttpStatus.UNPROCESSABLE_CONTENT)
+                .body(new MaterialErrorResponse(MaterialErrorResponse.MESSAGE, e.getErrors()));
     }
 
     @ExceptionHandler(ExternalApiException.class)
