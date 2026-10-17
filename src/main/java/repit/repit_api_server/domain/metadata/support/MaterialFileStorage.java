@@ -5,24 +5,34 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.UUID;
 
 /**
  * 자료 PDF를 S3에 둔다. 주소 모양은 옛 업로드 경로(MetaService)와 같다: base-url + "/" + 무작위 키.
+ *
+ * <p>올리고 받는 내용은 파일로 흘려보낸다. PDF를 힙에 통째로 올리지 않는다.
  */
 @Component
 @RequiredArgsConstructor
 public class MaterialFileStorage {
 
     private static final Logger log = LoggerFactory.getLogger(MaterialFileStorage.class);
+    private static final int COPY_BUFFER = 64 * 1024;
 
     private final S3Client s3Client;
 
@@ -32,24 +42,26 @@ public class MaterialFileStorage {
     @Value("${spring.cloud.aws.s3.base-url}")
     private String baseUrl;
 
-    public String upload(byte[] pdf) {
+    public String upload(Path pdf) {
         String key = UUID.randomUUID() + ".pdf";
         s3Client.putObject(PutObjectRequest.builder()
                         .bucket(bucketName)
                         .key(key)
                         .contentType("application/pdf")
                         .build(),
-                RequestBody.fromBytes(pdf));
+                RequestBody.fromFile(pdf));
         return baseUrl + "/" + key;
     }
 
     public enum DownloadStatus { OK, NOT_FOUND, TOO_LARGE }
 
-    public record Download(DownloadStatus status, byte[] bytes) {
+    /** OK면 file에 받은 내용이 있다. 다 쓴 뒤 MaterialTempFiles.deleteQuietly로 지운다. */
+    public record Download(DownloadStatus status, Path file) {
     }
 
     /**
-     * 저장된 PDF를 받는다. 옛 업로드 경로는 1GB까지 받았으므로, 크기를 먼저 보고 maxBytes를 넘으면 받지 않는다.
+     * 저장된 PDF를 임시 파일로 받는다. 옛 업로드 경로는 1GB까지 받았으므로, 크기를 먼저 보고 maxBytes를 넘으면 받지 않는다.
+     * 크기를 본 뒤 다른 파일로 바뀌었을 수도 있어 받는 동안에도 maxBytes에서 끊는다.
      * 이 버킷의 주소가 아니거나 읽지 못하면 NOT_FOUND다.
      */
     public Download download(String fileUrl, long maxBytes) {
@@ -57,20 +69,23 @@ public class MaterialFileStorage {
         if (key == null) {
             return new Download(DownloadStatus.NOT_FOUND, null);
         }
+        Path file = null;
         try {
             Long size = s3Client.headObject(HeadObjectRequest.builder().bucket(bucketName).key(key).build()).contentLength();
             if (size == null || size > maxBytes) {
                 return new Download(DownloadStatus.TOO_LARGE, null);
             }
-            byte[] bytes = s3Client.getObjectAsBytes(GetObjectRequest.builder()
-                    .bucket(bucketName)
-                    .key(key)
-                    .build()).asByteArray();
-            // 크기를 본 뒤 다른 파일로 바뀌었을 수도 있어 받은 크기로 한 번 더 본다.
-            return bytes.length > maxBytes
-                    ? new Download(DownloadStatus.TOO_LARGE, null)
-                    : new Download(DownloadStatus.OK, bytes);
-        } catch (SdkException e) {
+            file = MaterialTempFiles.create();
+            try (ResponseInputStream<GetObjectResponse> in = s3Client.getObject(
+                    GetObjectRequest.builder().bucket(bucketName).key(key).build())) {
+                if (!copyAtMost(in, file, maxBytes)) {
+                    MaterialTempFiles.deleteQuietly(file);
+                    return new Download(DownloadStatus.TOO_LARGE, null);
+                }
+            }
+            return new Download(DownloadStatus.OK, file);
+        } catch (SdkException | IOException e) {
+            MaterialTempFiles.deleteQuietly(file);
             log.warn("저장된 자료 PDF를 읽지 못했습니다. key={}, 원인={}", key, e.getMessage());
             return new Download(DownloadStatus.NOT_FOUND, null);
         }
@@ -87,6 +102,23 @@ public class MaterialFileStorage {
         } catch (SdkException e) {
             log.warn("쓰지 않게 된 자료 PDF를 지우지 못했습니다. key={}, 원인={}", key, e.getMessage());
         }
+    }
+
+    /** maxBytes까지만 옮긴다. 넘으면 false다. */
+    private static boolean copyAtMost(InputStream in, Path target, long maxBytes) throws IOException {
+        long copied = 0;
+        byte[] buffer = new byte[COPY_BUFFER];
+        try (OutputStream out = Files.newOutputStream(target)) {
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                copied += read;
+                if (copied > maxBytes) {
+                    return false;
+                }
+                out.write(buffer, 0, read);
+            }
+        }
+        return true;
     }
 
     private String keyOf(String fileUrl) {

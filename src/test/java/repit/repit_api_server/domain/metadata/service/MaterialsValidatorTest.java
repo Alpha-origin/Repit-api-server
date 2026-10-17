@@ -23,6 +23,8 @@ import repit.repit_api_server.domain.metadata.support.PdfInspector;
 import repit.repit_api_server.domain.metadata.support.TestPdfs;
 import repit.repit_api_server.global.exception.BusinessException;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -31,6 +33,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -156,7 +159,7 @@ class MaterialsValidatorTest {
     }
 
     @Test
-    void 파일_하나가_50MB를_넘으면_읽지_않고_FILE_TOO_LARGE() throws Exception {
+    void 파일_하나가_50MB를_넘으면_옮기지_않고_FILE_TOO_LARGE() throws Exception {
         MultipartFile huge = mock(MultipartFile.class);
         when(huge.getOriginalFilename()).thenReturn("huge.pdf");
         when(huge.getContentType()).thenReturn("application/pdf");
@@ -167,7 +170,7 @@ class MaterialsValidatorTest {
                 List.of(new DocumentInput("TEST_PLAN", "NEW", "file0", null)), List.of(), List.of()), NOTHING_SAVED);
 
         assertThat(errors).extracting(MaterialError::reason).containsExactly(Reason.FILE_TOO_LARGE);
-        verify(huge, never()).getBytes();
+        verify(huge, never()).transferTo(any(Path.class));
     }
 
     @Test
@@ -223,15 +226,18 @@ class MaterialsValidatorTest {
     }
 
     @Test
-    void 직무가_없던_옛_사용자는_백엔드로_보고_개발_직무에서_옛_PDF를_쓰며_쪽수를_지금_센다() {
+    void 직무가_없던_옛_사용자는_백엔드로_보고_개발_직무에서_옛_PDF를_쓰며_쪽수를_지금_센다() throws Exception {
+        Path legacyFile = Files.write(Files.createTempFile("legacy-", ".pdf"), TestPdfs.pdf(7, "legacy"));
         when(storage.download(SAVED_URL, MaterialsValidator.MAX_FILE_BYTES))
-                .thenReturn(new Download(DownloadStatus.OK, TestPdfs.pdf(7, "legacy")));
+                .thenReturn(new Download(DownloadStatus.OK, legacyFile));
 
         ValidatedMaterials result = validator().validate(payload("BACKEND",
                 List.of(existingDoc("PORTFOLIO", SAVED_URL)), List.of("https://github.com/a/b"), List.of()),
                 files, saved(null, null));
 
         assertThat(result.documents()).singleElement().extracting("pageCount").isEqualTo(7);
+        // 쪽수만 세고 받은 임시 파일은 바로 지운다.
+        assertThat(legacyFile).doesNotExist();
     }
 
     @Test
@@ -246,7 +252,7 @@ class MaterialsValidatorTest {
     }
 
     @Test
-    void 새_파일_합계가_200MB를_넘으면_하나도_읽지_않고_FILE_TOO_LARGE() throws Exception {
+    void 새_파일_합계가_200MB를_넘으면_하나도_옮기지_않고_FILE_TOO_LARGE() throws Exception {
         List<MultipartFile> parts = new java.util.ArrayList<>();
         List<DocumentInput> inputs = new java.util.ArrayList<>();
         for (int i = 0; i < 5; i++) {
@@ -262,7 +268,7 @@ class MaterialsValidatorTest {
         assertThat(errors).containsExactly(
                 new MaterialError("documents", Reason.FILE_TOO_LARGE, String.valueOf(5 * 45L * 1024 * 1024)));
         for (MultipartFile part : parts) {
-            verify(part, never()).getBytes();
+            verify(part, never()).transferTo(any(Path.class));
         }
     }
 
@@ -358,5 +364,63 @@ class MaterialsValidatorTest {
         assertThatThrownBy(() -> validator().validate(payload("QA_ENGINEER",
                 List.of(new DocumentInput("TEST_PLAN", "NEW", "payload", null)), List.of(), List.of()), files, NOTHING_SAVED))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void 통과하면_새_파일은_임시_파일로_남고_deleteTempFiles로_지워진다() {
+        ValidatedMaterials result = validator().validate(payload("QA_ENGINEER",
+                List.of(newDoc("TEST_PLAN", "file0", TestPdfs.pdf(2, "plan"))), List.of(), List.of()), files, NOTHING_SAVED);
+
+        Path temp = result.documents().get(0).file();
+        assertThat(temp).exists();
+        result.deleteTempFiles();
+        assertThat(temp).doesNotExist();
+    }
+
+    @Test
+    void 검사에_걸리면_만든_임시_파일을_남기지_않는다() throws Exception {
+        long before = countMaterialTempFiles();
+
+        errorsOf(payload("QA_ENGINEER", List.of(newDoc("TEST_PLAN", "file0", TestPdfs.pdf(2, "plan"))),
+                List.of("gitlab.com/a/b"), List.of()), NOTHING_SAVED);
+
+        assertThat(countMaterialTempFiles()).isEqualTo(before);
+    }
+
+    @Test
+    void 같은_저장소를_가리키는_GitHub_주소는_처음_것_하나만_남긴다() {
+        ValidatedMaterials result = validator().validate(payload("BACKEND",
+                List.of(newDoc("PORTFOLIO", "file0", TestPdfs.pdf(1, "p"))),
+                List.of("https://github.com/alpha/api", "github.com/Alpha/API/", "https://www.github.com/alpha/api.git",
+                        "https://github.com/alpha/batch"),
+                List.of()), files, NOTHING_SAVED);
+
+        assertThat(result.gitUrls()).containsExactly("https://github.com/alpha/api", "https://github.com/alpha/batch");
+    }
+
+    @Test
+    void GitHub_주소는_서로_다른_것_10개까지_받는다() {
+        List<String> eleven = java.util.stream.IntStream.range(0, 11)
+                .mapToObj(i -> "https://github.com/alpha/repo" + i).toList();
+
+        assertThat(errorsOf(payload("BACKEND", List.of(newDoc("PORTFOLIO", "file0", TestPdfs.pdf(1, "p"))), eleven, List.of()),
+                NOTHING_SAVED)).containsExactly(new MaterialError("gitUrls", Reason.INVALID_GITHUB_URL, "TOO_MANY"));
+    }
+
+    @Test
+    void GitHub_기능_경로는_계정_주소로_받지_않는다() {
+        List<MaterialError> errors = errorsOf(payload("DATA_ANALYST",
+                List.of(newDoc("ANALYSIS_REPORT", "file0", TestPdfs.pdf(1, "r"))),
+                List.of("https://github.com/settings", "github.com/orgs/alpha", "https://github.com/alpha/settings"),
+                List.of()), NOTHING_SAVED);
+
+        // 계정 자리가 기능 경로인 것만 막는다. 저장소 이름이 settings인 것은 받는다.
+        assertThat(errors).extracting(MaterialError::field).containsExactly("gitUrls[0]", "gitUrls[1]");
+    }
+
+    private static long countMaterialTempFiles() throws Exception {
+        try (var stream = Files.list(Path.of(System.getProperty("java.io.tmpdir")))) {
+            return stream.filter(path -> path.getFileName().toString().startsWith("repit-material-")).count();
+        }
     }
 }

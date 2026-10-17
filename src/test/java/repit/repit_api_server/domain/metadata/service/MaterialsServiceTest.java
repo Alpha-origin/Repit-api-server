@@ -29,6 +29,8 @@ import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.global.exception.ExternalApiException;
 import repit.repit_api_server.global.response.UserResponse;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -106,59 +108,143 @@ class MaterialsServiceTest {
         verify(storage, never()).upload(any());
     }
 
-    @Test
-    void 새_파일은_올린_뒤_요청_순서대로_인증_서버에_저장하고_첫_문서로_분석을_요청한다() {
-        when(authServerClient.getMaterials(TOKEN)).thenReturn(new AuthMaterialsResponse(null, List.of(), List.of(), List.of(), null));
-        when(storage.upload(any())).thenReturn("https://bucket/prd.pdf", "https://bucket/policy.pdf");
+    private void authEchoesSavedRequest() {
         when(authServerClient.putMaterials(eq(TOKEN), any())).thenAnswer(invocation -> {
             AuthMaterialsRequest request = invocation.getArgument(1);
             return new AuthMaterialsResponse(request.major(), request.documents(), request.gitUrls(), request.supplements(), null);
         });
-        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_PRODUCT_MANAGER"), any()))
-                .thenReturn(new GenerateResponse("job-2", "processing", null));
-        Map<String, MultipartFile> files = Map.of(
-                "file0", new MockMultipartFile("file0", "회원가입-PRD.pdf", "application/pdf", TestPdfs.pdf(9, "prd")),
-                "file1", new MockMultipartFile("file1", "정책서.pdf", "application/pdf", TestPdfs.pdf(6, "policy")));
+    }
 
-        MaterialsSaveResponse response = service.replace(authUser, new MaterialsPayload("PRODUCT_MANAGER",
-                List.of(new DocumentInput("PRD", "NEW", "file0", null), new DocumentInput("POLICY_DOC", "NEW", "file1", null)),
-                null, List.of(new SupplementInput("회원가입 개편", 0, "이탈 줄이기", null, null, null))), files);
+    private static Map<String, MultipartFile> oneNewPortfolio() {
+        return Map.of("file0", new MockMultipartFile("file0", "new.pdf", "application/pdf", TestPdfs.pdf(2, "new")));
+    }
 
-        ArgumentCaptor<AuthMaterialsRequest> sent = ArgumentCaptor.forClass(AuthMaterialsRequest.class);
-        verify(authServerClient).putMaterials(eq(TOKEN), sent.capture());
-        assertThat(sent.getValue()).isEqualTo(new AuthMaterialsRequest("MAJOR_PRODUCT_MANAGER",
-                List.of(new DocumentEntry("PRD", "https://bucket/prd.pdf", "회원가입-PRD.pdf", 9),
-                        new DocumentEntry("POLICY_DOC", "https://bucket/policy.pdf", "정책서.pdf", 6)),
-                List.of(),
-                List.of(new SupplementEntry("회원가입 개편", 0, "이탈 줄이기", null, null, null))));
-
-        ArgumentCaptor<MetaDataResponse> launched = ArgumentCaptor.forClass(MetaDataResponse.class);
-        verify(analysisLaunchService).launch(eq(7L), eq("MAJOR_PRODUCT_MANAGER"), launched.capture());
-        assertThat(launched.getValue().getFileUrl()).isEqualTo("https://bucket/prd.pdf");
-        assertThat(launched.getValue().getGitUrls()).isEmpty();
-
-        assertThat(response.materials().documents()).extracting("index", "fileName", "pageCount")
-                .containsExactly(org.assertj.core.groups.Tuple.tuple(0, "회원가입-PRD.pdf", 9),
-                        org.assertj.core.groups.Tuple.tuple(1, "정책서.pdf", 6));
-        assertThat(response.analysis().jobId()).isEqualTo("job-2");
+    private MaterialsPayload backendWithNewPortfolio() {
+        return new MaterialsPayload("BACKEND", List.of(new DocumentInput("PORTFOLIO", "NEW", "file0", null)),
+                List.of("https://github.com/a/api"), List.of());
     }
 
     @Test
-    void 인증_서버_저장이_실패하면_방금_올린_파일을_지우고_실패를_그대로_던진다() {
+    void 새_파일은_임시_파일에서_올린_뒤_요청_순서대로_저장하고_첫_문서로_분석을_요청한다() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(new AuthMaterialsResponse(null, List.of(), List.of(), List.of(), null));
+        List<Path> uploadedFrom = new ArrayList<>();
+        when(storage.upload(any())).thenAnswer(invocation -> {
+            Path file = invocation.getArgument(0);
+            assertThat(file).exists();
+            uploadedFrom.add(file);
+            return uploadedFrom.size() == 1 ? "https://bucket/portfolio.pdf" : "https://bucket/resume.pdf";
+        });
+        authEchoesSavedRequest();
+        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_BACKEND"), any()))
+                .thenReturn(new GenerateResponse("job-2", "processing", null));
+        Map<String, MultipartFile> files = Map.of(
+                "file0", new MockMultipartFile("file0", "포트폴리오.pdf", "application/pdf", TestPdfs.pdf(9, "portfolio")),
+                "file1", new MockMultipartFile("file1", "이력서.pdf", "application/pdf", TestPdfs.pdf(2, "resume")));
+
+        MaterialsSaveResponse response = service.replace(authUser, new MaterialsPayload("BACKEND",
+                List.of(new DocumentInput("PORTFOLIO", "NEW", "file0", null), new DocumentInput("RESUME", "NEW", "file1", null)),
+                List.of("https://github.com/a/api"), List.of()), files);
+
+        ArgumentCaptor<AuthMaterialsRequest> sent = ArgumentCaptor.forClass(AuthMaterialsRequest.class);
+        verify(authServerClient).putMaterials(eq(TOKEN), sent.capture());
+        assertThat(sent.getValue()).isEqualTo(new AuthMaterialsRequest("MAJOR_BACKEND",
+                List.of(new DocumentEntry("PORTFOLIO", "https://bucket/portfolio.pdf", "포트폴리오.pdf", 9),
+                        new DocumentEntry("RESUME", "https://bucket/resume.pdf", "이력서.pdf", 2)),
+                List.of("https://github.com/a/api"), List.of()));
+
+        ArgumentCaptor<MetaDataResponse> launched = ArgumentCaptor.forClass(MetaDataResponse.class);
+        verify(analysisLaunchService).launch(eq(7L), eq("MAJOR_BACKEND"), launched.capture());
+        assertThat(launched.getValue().getFileUrl()).isEqualTo("https://bucket/portfolio.pdf");
+        assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis("job-2", "accepted"));
+        // 올린 뒤 임시 파일은 남지 않는다.
+        assertThat(uploadedFrom).hasSize(2).allSatisfy(file -> assertThat(file).doesNotExist());
+    }
+
+    @Test
+    void 비개발_직무는_저장하지만_분석은_요청하지_않고_skipped() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(new AuthMaterialsResponse(null, List.of(), List.of(), List.of(), null));
+        when(storage.upload(any())).thenReturn("https://bucket/prd.pdf");
+        authEchoesSavedRequest();
+        Map<String, MultipartFile> files = Map.of(
+                "file0", new MockMultipartFile("file0", "회원가입-PRD.pdf", "application/pdf", TestPdfs.pdf(9, "prd")));
+
+        MaterialsSaveResponse response = service.replace(authUser, new MaterialsPayload("PRODUCT_MANAGER",
+                List.of(new DocumentInput("PRD", "NEW", "file0", null)), null,
+                List.of(new SupplementInput("회원가입 개편", 0, "이탈 줄이기", null, null, null))), files);
+
+        assertThat(response.materials().jobRole()).isEqualTo("PRODUCT_MANAGER");
+        assertThat(response.materials().supplements()).hasSize(1);
+        assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis(null, "skipped"));
+        verifyNoInteractions(analysisLaunchService);
+    }
+
+    @Test
+    void 인증_서버가_4xx로_거절하면_저장되지_않은_게_확실해_올린_파일을_지운다() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
+        when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
+        ExternalApiException failure = new ExternalApiException("인증 서버 요청이 올바르지 않습니다. (400)", HttpStatus.BAD_REQUEST, null);
+        when(authServerClient.putMaterials(eq(TOKEN), any())).thenThrow(failure);
+
+        assertThatThrownBy(() -> service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio())).isSameAs(failure);
+
+        verify(storage).deleteQuietly("https://bucket/new.pdf");
+        verifyNoInteractions(analysisLaunchService);
+    }
+
+    @Test
+    void 타임아웃이어도_인증_서버가_실제로_저장했으면_올린_파일을_남긴다() {
+        AuthMaterialsResponse committed = new AuthMaterialsResponse("MAJOR_BACKEND",
+                List.of(new DocumentEntry("PORTFOLIO", "https://bucket/new.pdf", "new.pdf", 2)),
+                List.of("https://github.com/a/api"), List.of(), null);
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend(), committed);
+        when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
+        ExternalApiException timeout = new ExternalApiException("인증 서버와 연결할 수 없습니다.", null, null);
+        when(authServerClient.putMaterials(eq(TOKEN), any())).thenThrow(timeout);
+
+        assertThatThrownBy(() -> service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio())).isSameAs(timeout);
+
+        verify(storage, never()).deleteQuietly(anyString());
+    }
+
+    @Test
+    void 서버_오류이고_다시_조회해도_저장되지_않았으면_올린_파일을_지운다() {
         when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
         when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
         ExternalApiException failure = new ExternalApiException("인증 서버에 오류가 발생했습니다.", HttpStatus.BAD_GATEWAY, null);
         when(authServerClient.putMaterials(eq(TOKEN), any())).thenThrow(failure);
-        Map<String, MultipartFile> files = Map.of(
-                "file0", new MockMultipartFile("file0", "new.pdf", "application/pdf", TestPdfs.pdf(2, "new")));
 
-        assertThatThrownBy(() -> service.replace(authUser, new MaterialsPayload("BACKEND",
-                List.of(new DocumentInput("PORTFOLIO", "NEW", "file0", null)),
-                List.of("https://github.com/a/api"), List.of()), files))
-                .isSameAs(failure);
+        assertThatThrownBy(() -> service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio())).isSameAs(failure);
 
         verify(storage).deleteQuietly("https://bucket/new.pdf");
-        verifyNoInteractions(analysisLaunchService);
+    }
+
+    @Test
+    void 저장_결과를_다시_조회하지_못하면_올린_파일을_지우지_않는다() {
+        ExternalApiException down = new ExternalApiException("인증 서버와 연결할 수 없습니다.", null, null);
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend()).thenThrow(down);
+        when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
+        when(authServerClient.putMaterials(eq(TOKEN), any())).thenThrow(down);
+
+        assertThatThrownBy(() -> service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio())).isSameAs(down);
+
+        verify(storage, never()).deleteQuietly(anyString());
+    }
+
+    @Test
+    void 인증_서버를_부르기_전에_업로드가_실패하면_먼저_올린_파일을_지운다() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
+        RuntimeException s3Down = new RuntimeException("S3 업로드 실패");
+        when(storage.upload(any())).thenReturn("https://bucket/first.pdf").thenThrow(s3Down);
+        Map<String, MultipartFile> files = Map.of(
+                "file0", new MockMultipartFile("file0", "p.pdf", "application/pdf", TestPdfs.pdf(2, "p")),
+                "file1", new MockMultipartFile("file1", "r.pdf", "application/pdf", TestPdfs.pdf(1, "r")));
+
+        assertThatThrownBy(() -> service.replace(authUser, new MaterialsPayload("BACKEND",
+                List.of(new DocumentInput("PORTFOLIO", "NEW", "file0", null), new DocumentInput("RESUME", "NEW", "file1", null)),
+                List.of("https://github.com/a/api"), List.of()), files)).isSameAs(s3Down);
+
+        verify(storage).deleteQuietly("https://bucket/first.pdf");
+        verify(authServerClient, never()).putMaterials(anyString(), any());
     }
 
     @Test

@@ -14,15 +14,21 @@ import repit.repit_api_server.domain.metadata.dto.response.MaterialsResponse.Mat
 import repit.repit_api_server.domain.metadata.exception.MaterialValidationException;
 import repit.repit_api_server.domain.metadata.support.JobRole;
 import repit.repit_api_server.domain.metadata.support.MaterialFileStorage;
+import repit.repit_api_server.domain.metadata.support.MaterialTempFiles;
 import repit.repit_api_server.domain.metadata.support.PdfInspector;
 import repit.repit_api_server.global.exception.BusinessException;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -35,6 +41,9 @@ import java.util.regex.Pattern;
  *
  * <p>순서: 직무 → 문서(직무 변경, 종류, 파일, 중복, 쪽수 합계, 필수 종류) → GitHub → 보완 입력.
  * 직무를 알 수 없으면 나머지 규칙을 정할 수 없어 바로 멈춘다.
+ *
+ * <p>새 파일은 임시 파일로 옮겨 검사한다. PDF를 힙에 통째로 올리지 않는다. 검사를 통과하면 임시 파일은
+ * {@link ValidatedMaterials#deleteTempFiles()}로, 실패하면 여기서 지운다.
  */
 @Component
 @RequiredArgsConstructor
@@ -51,25 +60,37 @@ public class MaterialsValidator {
     static final int MAX_SUPPLEMENT_ITEM = 500;
     private static final int MAX_FILE_NAME = 255;
 
+    static final int MAX_GITHUB_URLS = 10;
     // 저장소 주소 또는 계정 주소. 다른 사이트 주소나 아이디만 적은 값은 받지 않는다.
     private static final Pattern GITHUB_URL = Pattern.compile(
-            "^(https?://)?(www\\.)?github\\.com/[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?/?$", Pattern.CASE_INSENSITIVE);
+            "^(https?://)?(www\\.)?github\\.com/([A-Za-z0-9-]+)(/[A-Za-z0-9._-]+)?/?$", Pattern.CASE_INSENSITIVE);
+    // 계정이 아닌 GitHub 기능 경로. 계정 이름으로 쓸 수 없다.
+    private static final Set<String> GITHUB_RESERVED_PATHS = Set.of(
+            "about", "account", "apps", "codespaces", "collections", "contact", "copilot", "customer-stories",
+            "dashboard", "discussions", "enterprise", "enterprises", "events", "explore", "features", "issues",
+            "join", "login", "logout", "marketplace", "new", "notifications", "organizations", "orgs", "pricing",
+            "pulls", "readme", "search", "security", "sessions", "settings", "signup", "site", "sponsors",
+            "stars", "team", "teams", "topics", "trending");
     // 새 파일 파트 이름. multipart에는 payload 파트도 섞여 오므로 이 이름만 파일로 읽는다.
     private static final Pattern FILE_KEY = Pattern.compile("file[0-4]");
 
     private final PdfInspector pdfInspector;
     private final MaterialFileStorage storage;
 
-    /** 검사를 통과한 저장 내용. 문서는 요청 순서 그대로다. */
+    /** 검사를 통과한 저장 내용. 문서는 요청 순서 그대로다. 다 쓰면 {@link #deleteTempFiles()}를 부른다. */
     public record ValidatedMaterials(JobRole jobRole, List<ValidDocument> documents,
                                      List<String> gitUrls, List<SupplementInput> supplements) {
+
+        public void deleteTempFiles() {
+            documents.forEach(document -> MaterialTempFiles.deleteQuietly(document.file()));
+        }
     }
 
-    /** 저장된 문서면 fileUrl, 새로 올린 문서면 bytes가 있다. */
-    public record ValidDocument(String type, String fileUrl, byte[] bytes, String fileName, int pageCount) {
+    /** 저장된 문서면 fileUrl, 새로 올린 문서면 임시 파일(file)이 있다. */
+    public record ValidDocument(String type, String fileUrl, Path file, String fileName, int pageCount) {
 
         public boolean isNew() {
-            return bytes != null;
+            return file != null;
         }
     }
 
@@ -79,19 +100,25 @@ public class MaterialsValidator {
                 new MaterialValidationException(List.of(error("jobRole", Reason.JOB_ROLE_REQUIRED, null))));
 
         List<MaterialError> errors = new ArrayList<>();
-        List<DocumentInput> inputs = payload.documents() == null ? List.of() : payload.documents();
-        List<ValidDocument> documents = validateDocuments(job, inputs, files, saved, errors);
-        List<String> gitUrls = validateGithub(job, payload.gitUrls(), errors);
-        List<SupplementInput> supplements = validateSupplements(job, payload.supplements(), inputs.size(), errors);
+        List<Path> tempFiles = new ArrayList<>();
+        try {
+            List<DocumentInput> inputs = payload.documents() == null ? List.of() : payload.documents();
+            List<ValidDocument> documents = validateDocuments(job, inputs, files, saved, errors, tempFiles);
+            List<String> gitUrls = validateGithub(job, payload.gitUrls(), errors);
+            List<SupplementInput> supplements = validateSupplements(job, payload.supplements(), inputs.size(), errors);
 
-        if (!errors.isEmpty()) {
-            throw new MaterialValidationException(errors);
+            if (!errors.isEmpty()) {
+                throw new MaterialValidationException(errors);
+            }
+            return new ValidatedMaterials(job, documents, gitUrls, supplements);
+        } catch (RuntimeException e) {
+            tempFiles.forEach(MaterialTempFiles::deleteQuietly);
+            throw e;
         }
-        return new ValidatedMaterials(job, documents, gitUrls, supplements);
     }
 
     private List<ValidDocument> validateDocuments(JobRole job, List<DocumentInput> inputs, Map<String, MultipartFile> files,
-                                                  MaterialsResponse saved, List<MaterialError> errors) {
+                                                  MaterialsResponse saved, List<MaterialError> errors, List<Path> tempFiles) {
         if (inputs.isEmpty()) {
             errors.add(error("documents", Reason.NO_DOCUMENT, null));
             return List.of();
@@ -101,7 +128,7 @@ public class MaterialsValidator {
             return List.of();
         }
 
-        // 파일마다 50MB여도 다섯 개면 250MB다. 하나라도 메모리로 읽기 전에 합계를 본다.
+        // 파일마다 50MB여도 다섯 개면 250MB다. 하나라도 옮기기 전에 합계를 본다.
         long totalNewBytes = inputs.stream()
                 .filter(input -> input != null && MaterialsPayload.SOURCE_NEW.equals(input.source()) && input.fileKey() != null)
                 .map(DocumentInput::fileKey)
@@ -134,7 +161,7 @@ public class MaterialsValidator {
             if (MaterialsPayload.SOURCE_EXISTING.equals(input.source())) {
                 document = existingDocument(input, field, keepsSaved, saved, existingUrls, errors);
             } else if (MaterialsPayload.SOURCE_NEW.equals(input.source())) {
-                document = newDocument(input, field, files, newFileHashes, errors);
+                document = newDocument(input, field, files, newFileHashes, errors, tempFiles);
             } else {
                 throw new BusinessException(field + ".source는 NEW 또는 EXISTING이어야 합니다.", HttpStatus.BAD_REQUEST);
             }
@@ -211,7 +238,12 @@ public class MaterialsValidator {
                 errors.add(error(field, Reason.EXISTING_NOT_FOUND, null));
                 return null;
             }
-            PdfInspector.Result result = pdfInspector.inspect(download.bytes());
+            PdfInspector.Result result;
+            try {
+                result = pdfInspector.inspect(download.file());
+            } finally {
+                MaterialTempFiles.deleteQuietly(download.file());
+            }
             if (result.status() != PdfInspector.Status.OK) {
                 errors.add(error(field, unreadableReason(result.status()), null));
                 return null;
@@ -222,7 +254,7 @@ public class MaterialsValidator {
     }
 
     private ValidDocument newDocument(DocumentInput input, String field, Map<String, MultipartFile> files,
-                                      Set<String> newFileHashes, List<MaterialError> errors) {
+                                      Set<String> newFileHashes, List<MaterialError> errors, List<Path> tempFiles) {
         MultipartFile file = input.fileKey() == null || !FILE_KEY.matcher(input.fileKey()).matches()
                 ? null : files.get(input.fileKey());
         if (file == null || file.isEmpty()) {
@@ -237,36 +269,49 @@ public class MaterialsValidator {
             return null;
         }
 
-        byte[] bytes;
+        // multipart가 이미 디스크에 둔 내용을 임시 파일로 옮겨 그 파일로 검사·업로드한다.
+        Path temp = MaterialTempFiles.create();
+        tempFiles.add(temp);
+        String hash;
         try {
-            bytes = file.getBytes();
+            file.transferTo(temp);
+            hash = sha256(temp);
         } catch (IOException e) {
             errors.add(error(field, Reason.BROKEN_PDF, null));
             return null;
         }
-        if (!newFileHashes.add(sha256(bytes))) {
+        if (!newFileHashes.add(hash)) {
             errors.add(error(field, Reason.DUPLICATE_FILE, null));
             return null;
         }
-        PdfInspector.Result result = pdfInspector.inspect(bytes);
+        PdfInspector.Result result = pdfInspector.inspect(temp);
         if (result.status() != PdfInspector.Status.OK) {
             errors.add(error(field, unreadableReason(result.status()), null));
             return null;
         }
-        return new ValidDocument(input.type(), null, bytes, fileNameOf(file), result.pageCount());
+        return new ValidDocument(input.type(), null, temp, fileNameOf(file), result.pageCount());
     }
 
+    /**
+     * 같은 저장소를 가리키는 주소(대소문자·https·www·끝의 / 와 .git만 다름)는 처음 것 하나만 남긴다.
+     * 오류 위치(gitUrls[i])는 Web이 보낸 순서 그대로다.
+     */
     private List<String> validateGithub(JobRole job, List<String> requested, List<MaterialError> errors) {
-        List<String> gitUrls = requested == null ? List.of()
+        List<String> stripped = requested == null ? List.of()
                 : requested.stream().map(url -> url == null ? "" : url.strip()).toList();
+        Map<String, String> unique = new LinkedHashMap<>();
+        for (String url : stripped) {
+            unique.putIfAbsent(githubKey(url), url);
+        }
+        List<String> gitUrls = List.copyOf(unique.values());
         switch (job.githubRule()) {
             case REQUIRED -> {
                 if (gitUrls.isEmpty()) {
                     errors.add(error("gitUrls", Reason.GITHUB_REQUIRED, null));
                 }
-                checkGithubFormat(gitUrls, errors);
+                checkGithub(stripped, gitUrls.size(), errors);
             }
-            case OPTIONAL -> checkGithubFormat(gitUrls, errors);
+            case OPTIONAL -> checkGithub(stripped, gitUrls.size(), errors);
             case HIDDEN -> {
                 if (!gitUrls.isEmpty()) {
                     errors.add(error("gitUrls", Reason.GITHUB_NOT_ALLOWED, null));
@@ -276,12 +321,25 @@ public class MaterialsValidator {
         return gitUrls;
     }
 
-    private static void checkGithubFormat(List<String> gitUrls, List<MaterialError> errors) {
-        for (int i = 0; i < gitUrls.size(); i++) {
-            if (!GITHUB_URL.matcher(gitUrls.get(i)).matches()) {
+    private static void checkGithub(List<String> requested, int uniqueCount, List<MaterialError> errors) {
+        if (uniqueCount > MAX_GITHUB_URLS) {
+            errors.add(error("gitUrls", Reason.INVALID_GITHUB_URL, "TOO_MANY"));
+            return;
+        }
+        for (int i = 0; i < requested.size(); i++) {
+            var matcher = GITHUB_URL.matcher(requested.get(i));
+            if (!matcher.matches() || GITHUB_RESERVED_PATHS.contains(matcher.group(3).toLowerCase(Locale.ROOT))) {
                 errors.add(error("gitUrls[" + i + "]", Reason.INVALID_GITHUB_URL, null));
             }
         }
+    }
+
+    private static String githubKey(String url) {
+        String key = url.toLowerCase(Locale.ROOT).replaceFirst("^https?://", "").replaceFirst("^www\\.", "");
+        while (key.endsWith("/")) {
+            key = key.substring(0, key.length() - 1);
+        }
+        return key.endsWith(".git") ? key.substring(0, key.length() - ".git".length()) : key;
     }
 
     /** 내용이 하나도 없는 프로젝트(화면에 펼쳐만 둔 빈 칸)는 저장하지 않는다. */
@@ -346,9 +404,13 @@ public class MaterialsValidator {
         return status == PdfInspector.Status.ENCRYPTED ? Reason.ENCRYPTED_PDF : Reason.BROKEN_PDF;
     }
 
-    private static String sha256(byte[] bytes) {
+    private static String sha256(Path file) throws IOException {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream in = new DigestInputStream(Files.newInputStream(file), digest)) {
+                in.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256을 쓸 수 없습니다.", e);
         }
