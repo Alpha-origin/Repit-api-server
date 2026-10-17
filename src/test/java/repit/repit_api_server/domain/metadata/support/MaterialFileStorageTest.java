@@ -76,15 +76,20 @@ class MaterialFileStorageTest {
     }
 
     @Test
-    void 크기를_본_뒤_내용이_커졌으면_받는_도중에_끊고_임시_파일을_지운다() {
+    void 크기를_본_뒤_내용이_커졌으면_받는_도중에_연결을_끊고_임시_파일을_지운다() {
+        java.util.concurrent.atomic.AtomicBoolean aborted = new java.util.concurrent.atomic.AtomicBoolean();
         when(s3Client.headObject(any(HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().contentLength(3L).build());
-        when(s3Client.getObject(any(GetObjectRequest.class))).thenReturn(body(new byte[(int) MAX + 5]));
+        when(s3Client.getObject(any(GetObjectRequest.class))).thenReturn(new ResponseInputStream<>(
+                GetObjectResponse.builder().build(),
+                AbortableInputStream.create(new ByteArrayInputStream(new byte[(int) MAX + 5]), () -> aborted.set(true))));
 
         MaterialFileStorage.Download download = storage.download(BASE_URL + "/grew.pdf", MAX);
 
         assertThat(download.status()).isEqualTo(DownloadStatus.TOO_LARGE);
         assertThat(download.file()).isNull();
+        // 닫기 전에 끊어야 HTTP 클라이언트가 남은 본문을 끝까지 읽지 않는다.
+        assertThat(aborted).isTrue();
     }
 
     @Test

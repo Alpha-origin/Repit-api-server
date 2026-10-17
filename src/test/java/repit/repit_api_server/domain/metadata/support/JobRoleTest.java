@@ -63,4 +63,14 @@ class JobRoleTest {
         assertThat(JobRole.find(null)).isEmpty();
         assertThat(JobRole.QA_ENGINEER.authMajor()).isEqualTo("MAJOR_QA_ENGINEER");
     }
+
+    @Test
+    void 지금_분석_요청_모양으로_분석하는_것은_개발_직무뿐이고_직무가_없으면_백엔드로_본다() {
+        assertThat(JobRole.BACKEND.supportsCurrentProfileRequest()).isTrue();
+        assertThat(JobRole.QA_ENGINEER.supportsCurrentProfileRequest()).isFalse();
+        assertThat(JobRole.supportsCurrentProfileRequest("MAJOR_WEB_PUBLISHER")).isTrue();
+        assertThat(JobRole.supportsCurrentProfileRequest("MAJOR_PRODUCT_MANAGER")).isFalse();
+        assertThat(JobRole.supportsCurrentProfileRequest(null)).isTrue();
+        assertThat(JobRole.supportsCurrentProfileRequest("MAJOR_SOMETHING_OLD")).isTrue();
+    }
 }

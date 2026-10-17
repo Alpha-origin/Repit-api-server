@@ -192,17 +192,21 @@ class MaterialsServiceTest {
     }
 
     @Test
-    void 타임아웃이어도_인증_서버가_실제로_저장했으면_올린_파일을_남긴다() {
+    void 타임아웃이어도_보낸_내용이_그대로_저장돼_있으면_성공으로_이어_가고_분석을_요청한다() {
         AuthMaterialsResponse committed = new AuthMaterialsResponse("MAJOR_BACKEND",
                 List.of(new DocumentEntry("PORTFOLIO", "https://bucket/new.pdf", "new.pdf", 2)),
                 List.of("https://github.com/a/api"), List.of(), null);
         when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend(), committed);
         when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
-        ExternalApiException timeout = new ExternalApiException("인증 서버와 연결할 수 없습니다.", null, null);
-        when(authServerClient.putMaterials(eq(TOKEN), any())).thenThrow(timeout);
+        when(authServerClient.putMaterials(eq(TOKEN), any()))
+                .thenThrow(new ExternalApiException("인증 서버와 연결할 수 없습니다.", null, null));
+        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_BACKEND"), any()))
+                .thenReturn(new GenerateResponse("job-3", "processing", null));
 
-        assertThatThrownBy(() -> service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio())).isSameAs(timeout);
+        MaterialsSaveResponse response = service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio());
 
+        assertThat(response.materials().documents()).extracting("fileUrl").containsExactly("https://bucket/new.pdf");
+        assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis("job-3", "accepted"));
         verify(storage, never()).deleteQuietly(anyString());
     }
 

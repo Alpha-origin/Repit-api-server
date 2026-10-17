@@ -1,5 +1,7 @@
 package repit.repit_api_server.domain.metadata.support;
 
+import repit.repit_api_server.domain.userdata.persona.support.UserJobMajors;
+
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -77,6 +79,22 @@ public enum JobRole {
             case DEV -> next.family == JobFamily.DEV;
             case NON_DEV -> false;
         };
+    }
+
+    /**
+     * 지금 /profile 요청 모양(첫 문서 + GitHub)으로 맞는 분석이 나오는 직무인지.
+     * 비개발은 분석 서버의 새 요청 모양(계약 C-3)이 붙기 전까지 분석하지 않는다. 분석을 시작하는 모든 길이 이 판단을 쓴다.
+     */
+    public boolean supportsCurrentProfileRequest() {
+        return switch (family) {
+            case DEV -> true;
+            case NON_DEV -> false;
+        };
+    }
+
+    /** 인증 서버 저장값(MAJOR_ 접두사)으로 판단한다. 직무가 없거나 모르는 값은 백엔드로 본다(가정 A-7). */
+    public static boolean supportsCurrentProfileRequest(String userMajor) {
+        return find(UserJobMajors.normalize(userMajor)).map(JobRole::supportsCurrentProfileRequest).orElse(true);
     }
 
     /** 인증 서버 저장값(MAJOR_ 접두사). */

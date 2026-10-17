@@ -79,6 +79,8 @@ public class MaterialFileStorage {
             try (ResponseInputStream<GetObjectResponse> in = s3Client.getObject(
                     GetObjectRequest.builder().bucket(bucketName).key(key).build())) {
                 if (!copyAtMost(in, file, maxBytes)) {
+                    // 닫기만 하면 HTTP 클라이언트가 연결을 다시 쓰려고 남은 본문을 끝까지 읽는다. 먼저 끊는다.
+                    in.abort();
                     MaterialTempFiles.deleteQuietly(file);
                     return new Download(DownloadStatus.TOO_LARGE, null);
                 }

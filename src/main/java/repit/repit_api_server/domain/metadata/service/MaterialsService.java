@@ -64,7 +64,7 @@ public class MaterialsService {
 
         List<String> uploaded = new ArrayList<>();
         boolean authCalled = false;
-        AuthMaterialsRequest request;
+        AuthMaterialsRequest request = null;
         MaterialsResponse stored;
         try {
             List<DocumentEntry> documents = new ArrayList<>();
@@ -81,39 +81,56 @@ public class MaterialsService {
             authCalled = true;
             stored = MaterialsResponse.from(authServerClient.putMaterials(authUser.token(), request));
         } catch (RuntimeException e) {
-            discardUnsavedUploads(authUser, uploaded, authCalled, e);
-            throw e;
+            stored = recoverOrDiscard(authUser, next.jobRole(), request, uploaded, authCalled, e);
         }
 
         return new MaterialsSaveResponse(stored, launchAnalysis(authUser, next.jobRole(), request));
     }
 
     /**
-     * 저장이 실패해 쓸 데가 없어진 새 파일을 지운다.
+     * 인증 서버 저장이 실패한 것처럼 보일 때, 실제로 저장됐는지 보고 이어 갈지 정리할지 정한다.
      *
-     * <p>인증 서버를 부르기 전이거나 4xx면 저장되지 않은 게 확실하다. 5xx·타임아웃은 인증 서버가 커밋하고 응답만 늦었을
-     * 수 있어, 다시 조회해 저장된 문서가 가리키는 파일은 남긴다. 다시 조회도 실패하면 지우지 않는다(남는 파일이 끊어진
-     * 문서보다 낫다).
+     * <p>인증 서버를 부르기 전이거나 4xx면 저장되지 않은 게 확실해 새 파일을 지우고 실패를 던진다. 5xx·타임아웃은 인증 서버가
+     * 커밋하고 응답만 늦었을 수 있어 다시 조회한다. 보낸 내용이 그대로 저장돼 있으면 저장은 끝난 것이라 그 값으로 이어 간다
+     * (사용자가 실패로 보고 다시 올리지 않게). 다르면 저장된 문서가 가리키지 않는 새 파일만 지우고 실패를 던진다. 다시 조회도
+     * 실패하면 아무것도 지우지 않는다(남는 파일이 끊어진 문서보다 낫다).
      */
-    private void discardUnsavedUploads(AuthUser authUser, List<String> uploaded, boolean authCalled, RuntimeException failure) {
-        if (uploaded.isEmpty()) {
-            return;
-        }
+    private MaterialsResponse recoverOrDiscard(AuthUser authUser, JobRole jobRole, AuthMaterialsRequest request,
+                                               List<String> uploaded, boolean authCalled, RuntimeException failure) {
         if (!authCalled || isClientError(failure)) {
             uploaded.forEach(storage::deleteQuietly);
-            return;
+            throw failure;
         }
-        Set<String> referenced;
+        MaterialsResponse rechecked;
         try {
-            referenced = MaterialsResponse.from(authServerClient.getMaterials(authUser.token())).documents().stream()
-                    .map(MaterialsResponse.MaterialDocument::fileUrl)
-                    .collect(Collectors.toSet());
+            rechecked = MaterialsResponse.from(authServerClient.getMaterials(authUser.token()));
         } catch (RuntimeException recheckFailure) {
             log.warn("자료 저장 결과를 확인하지 못해 올린 파일을 지우지 않습니다. userId={}, files={}",
                     authUser.id(), uploaded, recheckFailure);
-            return;
+            throw failure;
         }
+        if (isStored(rechecked, jobRole, request)) {
+            log.info("인증 서버 응답은 실패였지만 저장은 끝나 있어 성공으로 이어 갑니다. userId={}, 원인={}",
+                    authUser.id(), failure.getMessage());
+            return rechecked;
+        }
+        Set<String> referenced = rechecked.documents().stream()
+                .map(MaterialsResponse.MaterialDocument::fileUrl)
+                .collect(Collectors.toSet());
         uploaded.stream().filter(url -> !referenced.contains(url)).forEach(storage::deleteQuietly);
+        throw failure;
+    }
+
+    private static boolean isStored(MaterialsResponse stored, JobRole jobRole, AuthMaterialsRequest request) {
+        List<String> storedDocuments = stored.documents().stream().map(d -> d.type() + " " + d.fileUrl()).toList();
+        List<String> sentDocuments = request.documents().stream().map(d -> d.type() + " " + d.fileUrl()).toList();
+        List<MaterialsResponse.Supplement> sentSupplements = request.supplements().stream()
+                .map(s -> new MaterialsResponse.Supplement(s.title(), s.documentIndex(), s.goal(), s.role(), s.decision(), s.outcome()))
+                .toList();
+        return jobRole.name().equals(stored.jobRole())
+                && storedDocuments.equals(sentDocuments)
+                && stored.gitUrls().equals(request.gitUrls())
+                && stored.supplements().equals(sentSupplements);
     }
 
     private static boolean isClientError(RuntimeException failure) {
@@ -129,13 +146,8 @@ public class MaterialsService {
      * <p>저장은 이미 끝났으므로 분석 요청이 실패해도 저장을 되돌리지 않는다. 화면이 다시 분석하게 한다.
      */
     private Analysis launchAnalysis(AuthUser authUser, JobRole jobRole, AuthMaterialsRequest request) {
-        switch (jobRole.family()) {
-            case NON_DEV -> {
-                return new Analysis(null, MaterialsSaveResponse.ANALYSIS_SKIPPED);
-            }
-            case DEV -> {
-                // 아래에서 요청한다.
-            }
+        if (!jobRole.supportsCurrentProfileRequest()) {
+            return new Analysis(null, MaterialsSaveResponse.ANALYSIS_SKIPPED);
         }
         MetaDataResponse metaData = new MetaDataResponse(request.gitUrls(), request.documents().get(0).fileUrl());
         try {
