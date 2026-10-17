@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import repit.repit_api_server.global.client.AuthServerClient;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
+import repit.repit_api_server.domain.metadata.dto.response.MaterialsResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -56,6 +57,11 @@ public class MetaService {
     // metaData 반환. 원본은 인증 서버가 들고 있어 사용자 토큰을 그대로 넘겨 받아온다.
     public MetaDataResponse getMetaData(String token) {
         return authServerClient.getMetaData(token);
+    }
+
+    // 직무·문서·GitHub·보완 입력 반환. 옛 업로드 경로로 올린 PDF는 PORTFOLIO 문서 한 건으로 바꾼다.
+    public MaterialsResponse getMaterials(String token) {
+        return MaterialsResponse.from(authServerClient.getMaterials(token));
     }
 
     // S3 file 업로드

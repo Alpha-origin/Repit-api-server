@@ -7,6 +7,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
+import repit.repit_api_server.domain.metadata.dto.response.MaterialsResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
@@ -40,6 +41,14 @@ public class MetaDataController {
             @AuthenticationPrincipal AuthUser authUser
     ) {
         return ResponseEntity.ok(metaService.getMetaData(authUser.token()));
+    }
+
+    // 마이페이지 편집 화면이 처음 채울 저장값. 저장(PUT)은 비개발 API 명세(03 §3)를 받은 뒤 붙인다.
+    @GetMapping("/materials")
+    public ResponseEntity<MaterialsResponse> getMaterials(
+            @AuthenticationPrincipal AuthUser authUser
+    ) {
+        return ResponseEntity.ok(metaService.getMaterials(authUser.token()));
     }
 
 
