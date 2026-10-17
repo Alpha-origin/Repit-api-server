@@ -5,6 +5,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import repit.repit_api_server.domain.metadata.dto.response.MaterialsResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 import repit.repit_api_server.domain.metadata.service.MetaService;
@@ -54,5 +55,15 @@ class MetaDataControllerTest {
 
         assertThat(controller.isGit(USER).getBody()).isTrue();
         assertThat(controller.isPortfolio(USER).getBody()).isTrue();
+    }
+
+    @Test
+    void 저장된_직무와_자료를_사용자_토큰으로_받아_그대로_돌려준다() {
+        MaterialsResponse materials = new MaterialsResponse("QA_ENGINEER",
+                List.of(new MaterialsResponse.MaterialDocument(0, "TEST_PLAN", "https://s3/plan.pdf", "plan.pdf", 12)),
+                List.of(), List.of());
+        when(metaService.getMaterials("Bearer token")).thenReturn(materials);
+
+        assertThat(controller.getMaterials(USER).getBody()).isSameAs(materials);
     }
 }

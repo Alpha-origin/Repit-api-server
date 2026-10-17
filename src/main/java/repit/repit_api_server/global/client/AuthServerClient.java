@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import repit.repit_api_server.domain.metadata.dto.request.MetaDataRequest;
+import repit.repit_api_server.domain.metadata.dto.response.AuthMaterialsResponse;
 import repit.repit_api_server.global.common.ApiResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.global.response.UserResponse;
@@ -31,6 +32,15 @@ public class AuthServerClient {
     public MetaDataResponse getMetaData(String authorization) {
         ApiResponse<MetaDataResponse> response = executor.execute(SERVER_NAME,
                 () -> authServerApi.getMetaData(authorization),
+                this::resolveMessage, true);
+
+        return response == null ? null : response.getData();
+    }
+
+    // Auth 서버에서 직무·문서·GitHub·보완 입력 반환
+    public AuthMaterialsResponse getMaterials(String authorization) {
+        ApiResponse<AuthMaterialsResponse> response = executor.execute(SERVER_NAME,
+                () -> authServerApi.getMaterials(authorization),
                 this::resolveMessage, true);
 
         return response == null ? null : response.getData();
