@@ -121,4 +121,17 @@ class ChatInterviewPrepareRequestSerializationTest {
 
         assertThat(json.get("mode").asString()).isEqualTo("MULTI");
     }
+    @Test
+    void 일반_직군_직무명은_최상위에만_실린다() {
+        ChatInterviewPrepareRequest request = ChatInterviewPrepareRequest.builder()
+                .major(Major.GEN_DESIGN).jobTitle("제품 디자이너")
+                .personas(List.of(ChatInterviewPrepareRequest.Persona.builder().major(Major.GEN_DESIGN).build()))
+                .build();
+
+        JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(request));
+
+        assertThat(json.get("jobTitle").asString()).isEqualTo("제품 디자이너");
+        assertThat(json.get("personas").get(0).has("jobTitle")).isFalse();
+    }
+
 }

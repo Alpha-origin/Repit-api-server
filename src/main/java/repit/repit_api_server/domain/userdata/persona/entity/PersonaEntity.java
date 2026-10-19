@@ -15,7 +15,7 @@ import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 @Entity
 @Table(name = "persona")
 @Getter
-@Builder
+@Builder(toBuilder = true)
 @AllArgsConstructor
 @NoArgsConstructor
 public class PersonaEntity {
@@ -35,6 +35,20 @@ public class PersonaEntity {
     // 기술 면접관의 세부 전공. 인사팀·CEO에게는 해당 값이 없어 비어 있다.
     @Enumerated(EnumType.STRING)
     private Major major;
+
+    // 면접 시작 시점의 일반 직군 세부 직무명.
+    @Column(name = "job_title", length = 30)
+    private String jobTitle;
+
+    @Column(name = "interview_snapshot", nullable = false)
+    private boolean interviewSnapshot;
+
+    @Column(name = "snapshot_source_name")
+    private String snapshotSourceName;
+
+    public String getDisplayName() {
+        return interviewSnapshot && snapshotSourceName != null ? snapshotSourceName : personaName;
+    }
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

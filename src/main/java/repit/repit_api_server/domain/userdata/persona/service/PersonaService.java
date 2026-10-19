@@ -3,6 +3,7 @@ package repit.repit_api_server.domain.userdata.persona.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import repit.repit_api_server.domain.userdata.persona.dto.request.PersonaRequest;
+import repit.repit_api_server.domain.metadata.support.JobRole;
 import repit.repit_api_server.domain.userdata.persona.dto.response.PersonaResponse;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
@@ -21,7 +22,7 @@ public class PersonaService {
     /**
      * @param userMajor 로그인 사용자의 직무. 기술 면접관 전공은 요청값이 아니라 이 값으로 정한다.
      */
-    public PersonaResponse createPersona(PersonaRequest request, String userMajor) {
+    public PersonaResponse createPersona(PersonaRequest request, String userMajor, String userJobTitle) {
         // 직책과 난이도에는 기본값을 두지 않는다. 조용히 채워 넣으면 인사·CEO 면접관이
         // 기술 면접관으로 저장되고, 저장된 뒤에는 무엇이 요청값이고 무엇이 기본값인지 구분할 방법이 없다.
         if (request.getRole() == null) {
@@ -33,6 +34,9 @@ public class PersonaService {
         // 어조도 마찬가지다. 성향에서 유추해 채우면 부드럽게 묻는 꼼꼼형이 압박형으로 저장된다.
         if (request.getTone() == null) {
             throw BusinessException.unprocessable("면접관 어조(tone)를 지정해주세요.");
+        }
+        if (request.getPersonaName() != null && request.getPersonaName().startsWith("__interview_snapshot_")) {
+            throw BusinessException.unprocessable("예약된 면접관 이름입니다.");
         }
         Role role = request.getRole();
         // DB CHECK와 같은 범위. 번호와 성별의 관계는 Web과 채팅 서버의 카탈로그가 맞추므로 보지 않는다.
@@ -48,6 +52,8 @@ public class PersonaService {
                 .tone(request.getTone())
                 .level(request.getLevel())
                 .major(role == Role.TECH ? UserJobMajors.toPersonaMajor(userMajor) : null)
+                .jobTitle(role == Role.TECH && JobRole.find(UserJobMajors.normalize(userMajor))
+                        .map(JobRole::requiresJobTitle).orElse(false) ? userJobTitle : null)
                 .career(request.getCareer())
                 .gender(request.getGender())
                 .imageUrl(blankToNull(request.getImageUrl()))
@@ -62,12 +68,14 @@ public class PersonaService {
 
     public PersonaResponse getPersonaById(Long id) {
         PersonaEntity persona = personaRepository.findById(id)
+                .filter(value -> !value.isInterviewSnapshot())
                 .orElseThrow(() -> BusinessException.notFound("페르소나를 찾을 수 없습니다"));
         return PersonaResponse.from(persona);
     }
 
     public PersonaResponse getPersonaByName(String name) {
         PersonaEntity persona = personaRepository.findByPersonaName(name)
+                .filter(value -> !value.isInterviewSnapshot())
                 .orElseThrow(() -> BusinessException.notFound("페르소나를 찾을 수 없습니다: " + name));
         return PersonaResponse.from(persona);
     }
@@ -84,6 +92,7 @@ public class PersonaService {
                 : personaRepository.findAllByRole(role);
 
         return personas.stream()
+                .filter(persona -> !persona.isInterviewSnapshot())
                 .map(PersonaResponse::from)
                 .toList();
     }

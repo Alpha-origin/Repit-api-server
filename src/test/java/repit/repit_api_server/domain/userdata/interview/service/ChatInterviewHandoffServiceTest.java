@@ -184,6 +184,7 @@ class ChatInterviewHandoffServiceTest {
         assertThat(sent.getPersonality()).isEqualTo(Type.METICULOUS);
         assertThat(sent.getTone()).isEqualTo(InterviewTone.PRESSURING);
         assertThat(sent.getMajor()).isEqualTo(Major.BACKEND);
+        assertThat(sent.getJobTitle()).isNull();
         assertThat(sent.getLevel()).isEqualTo(Level.HARD);
 
         ChatInterviewPrepareRequest.Question question = sent.getQuestions().getFirst();
@@ -485,4 +486,33 @@ class ChatInterviewHandoffServiceTest {
         verify(chatServerClient).prepareInterview(sentRequest.capture());
         assertThat(JsonMapper.shared().valueToTree(sentRequest.getValue()).has("company")).isFalse();
     }
+    @Test
+    void SOLO는_대표_면접관에_저장된_직무명을_넘긴다() {
+        PersonaEntity snapshot = PersonaEntity.builder().personaId(1L).role(Role.TECH)
+                .major(Major.GEN_MARKETING).jobTitle("브랜드 마케터").build();
+        when(personaRepository.findById(1L)).thenReturn(Optional.of(snapshot));
+
+        service.deliver(tailor(true));
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        assertThat(sentRequest.getValue().getJobTitle()).isEqualTo("브랜드 마케터");
+    }
+
+    @Test
+    void MULTI는_진행순_대표_면접관의_직무명을_넘긴다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(null, InterviewMode.MULTI)));
+        PersonaEntity snapshot = PersonaEntity.builder().personaId(11L).role(Role.TECH)
+                .major(Major.GEN_DESIGN).jobTitle("제품 디자이너").build();
+        multiMembers(snapshot, hrPersona());
+        QuestionTailorEntity tailor = tailor(true);
+        tailor.setQuestions(List.of(TailoredQuestionResponse.builder().id(2).personaId(11L)
+                .question("사용자 경험 개선 사례를 알려주세요.").build()));
+
+        service.deliver(tailor);
+
+        verify(chatServerClient).prepareInterview(sentRequest.capture());
+        assertThat(sentRequest.getValue().getMajor()).isEqualTo(Major.GEN_DESIGN);
+        assertThat(sentRequest.getValue().getJobTitle()).isEqualTo("제품 디자이너");
+    }
+
 }

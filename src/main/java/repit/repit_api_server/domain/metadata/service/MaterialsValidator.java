@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 import repit.repit_api_server.domain.metadata.dto.request.MaterialsPayload;
 import repit.repit_api_server.domain.metadata.dto.request.MaterialsPayload.DocumentInput;
+import repit.repit_api_server.domain.metadata.dto.request.MaterialsPayload.CoverLetterInput;
 import repit.repit_api_server.domain.metadata.dto.request.MaterialsPayload.SupplementInput;
 import repit.repit_api_server.domain.metadata.dto.response.MaterialErrorResponse.MaterialError;
 import repit.repit_api_server.domain.metadata.dto.response.MaterialErrorResponse.Reason;
@@ -49,6 +50,11 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class MaterialsValidator {
 
+    static final int MAX_JOB_TITLE = 30;
+    static final int MAX_COVER_LETTERS = 5;
+    static final int MAX_COVER_LETTER_QUESTION = 200;
+    static final int MAX_COVER_LETTER_ANSWER = 2_000;
+    private static final Pattern CONTROL_CHARACTER = Pattern.compile("\\p{Cntrl}");
     static final int MAX_DOCUMENTS = 5;
     static final int MAX_TOTAL_PAGES = 50;
     static final long MAX_FILE_BYTES = 50L * 1024 * 1024;
@@ -79,7 +85,8 @@ public class MaterialsValidator {
 
     /** 검사를 통과한 저장 내용. 문서는 요청 순서 그대로다. 다 쓰면 {@link #deleteTempFiles()}를 부른다. */
     public record ValidatedMaterials(JobRole jobRole, List<ValidDocument> documents,
-                                     List<String> gitUrls, List<SupplementInput> supplements) {
+                                     List<String> gitUrls, List<SupplementInput> supplements,
+                                     String jobTitle, List<CoverLetterInput> coverLetters) {
 
         public void deleteTempFiles() {
             documents.forEach(document -> MaterialTempFiles.deleteQuietly(document.file()));
@@ -103,15 +110,24 @@ public class MaterialsValidator {
         List<Path> tempFiles = new ArrayList<>();
         boolean passed = false;
         try {
+            String jobTitle = validateJobTitle(job, payload.jobTitle(), errors);
+            List<MaterialError> coverLetterErrors = new ArrayList<>();
+            List<CoverLetterInput> coverLetters = validateCoverLetters(job, payload.coverLetters(), coverLetterErrors);
             List<DocumentInput> inputs = payload.documents() == null ? List.of() : payload.documents();
             List<ValidDocument> documents = validateDocuments(job, inputs, files, saved, errors, tempFiles);
+            if (job.materialRule() == JobRole.MaterialRule.NON_RESUME_OR_COVER_LETTER
+                    && inputs.stream().noneMatch(input -> input != null && !"RESUME".equals(input.type()))
+                    && coverLetters.isEmpty()) {
+                errors.add(error("materials", Reason.MATERIAL_REQUIRED, null));
+            }
             List<String> gitUrls = validateGithub(job, payload.gitUrls(), errors);
             List<SupplementInput> supplements = validateSupplements(job, payload.supplements(), inputs.size(), errors);
 
+            errors.addAll(coverLetterErrors);
             if (!errors.isEmpty()) {
                 throw new MaterialValidationException(errors);
             }
-            ValidatedMaterials validated = new ValidatedMaterials(job, documents, gitUrls, supplements);
+            ValidatedMaterials validated = new ValidatedMaterials(job, documents, gitUrls, supplements, jobTitle, coverLetters);
             passed = true;
             return validated;
         } finally {
@@ -122,10 +138,69 @@ public class MaterialsValidator {
         }
     }
 
+    private String validateJobTitle(JobRole job, String requested, List<MaterialError> errors) {
+        String title = requested == null ? null : requested.strip();
+        if (title != null && title.isEmpty()) {
+            title = null;
+        }
+        if (job.requiresJobTitle()) {
+            if (title == null) {
+                errors.add(error("jobTitle", Reason.JOB_TITLE_REQUIRED, null));
+            } else if (title.length() > MAX_JOB_TITLE || CONTROL_CHARACTER.matcher(title).find()) {
+                errors.add(error("jobTitle", Reason.JOB_TITLE_INVALID, null));
+            }
+        } else if (title != null) {
+            errors.add(error("jobTitle", Reason.JOB_TITLE_NOT_ALLOWED, null));
+        }
+        return job.requiresJobTitle() ? title : null;
+    }
+
+    private List<CoverLetterInput> validateCoverLetters(JobRole job, List<CoverLetterInput> requested,
+                                                        List<MaterialError> errors) {
+        List<CoverLetterInput> entries = new ArrayList<>();
+        List<Integer> positions = new ArrayList<>();
+        if (requested != null) {
+            for (int i = 0; i < requested.size(); i++) {
+                CoverLetterInput entry = requested.get(i);
+                String question = entry == null || entry.question() == null ? "" : entry.question().strip();
+                String answer = entry == null || entry.answer() == null ? "" : entry.answer().strip();
+                if (!question.isEmpty() || !answer.isEmpty()) {
+                    entries.add(new CoverLetterInput(question, answer));
+                    positions.add(i);
+                }
+            }
+        }
+        if (entries.isEmpty()) {
+            return List.of();
+        }
+        if (!job.coverLettersAllowed()) {
+            errors.add(error("coverLetters", Reason.COVER_LETTER_NOT_ALLOWED, null));
+            return List.of();
+        }
+        if (entries.size() > MAX_COVER_LETTERS) {
+            errors.add(error("coverLetters", Reason.COVER_LETTER_INVALID, null));
+            return List.of();
+        }
+        List<CoverLetterInput> valid = new ArrayList<>();
+        for (int i = 0; i < entries.size(); i++) {
+            CoverLetterInput entry = entries.get(i);
+            if (entry.question().isEmpty() || entry.answer().isEmpty()
+                    || entry.question().length() > MAX_COVER_LETTER_QUESTION
+                    || entry.answer().length() > MAX_COVER_LETTER_ANSWER) {
+                errors.add(error("coverLetters[" + positions.get(i) + "]", Reason.COVER_LETTER_INVALID, null));
+            } else {
+                valid.add(entry);
+            }
+        }
+        return List.copyOf(valid);
+    }
+
     private List<ValidDocument> validateDocuments(JobRole job, List<DocumentInput> inputs, Map<String, MultipartFile> files,
                                                   MaterialsResponse saved, List<MaterialError> errors, List<Path> tempFiles) {
         if (inputs.isEmpty()) {
-            errors.add(error("documents", Reason.NO_DOCUMENT, null));
+            if (job.materialRule() == JobRole.MaterialRule.REQUIRED_TYPE) {
+                errors.add(error("documents", Reason.NO_DOCUMENT, null));
+            }
             return List.of();
         }
         if (inputs.size() > MAX_DOCUMENTS) {
@@ -182,7 +257,8 @@ public class MaterialsValidator {
                 errors.add(error("documents", Reason.TOO_MANY_PAGES, String.valueOf(totalPages)));
             }
         }
-        if (inputs.stream().noneMatch(input -> job.isRequiredType(input.type()))) {
+        if (job.materialRule() == JobRole.MaterialRule.REQUIRED_TYPE
+                && inputs.stream().noneMatch(input -> job.isRequiredType(input.type()))) {
             errors.add(error("documents", Reason.REQUIRED_DOC_MISSING, String.join(",", job.requiredTypes())));
         }
         return documents;

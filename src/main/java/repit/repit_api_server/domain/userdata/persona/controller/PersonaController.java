@@ -24,7 +24,7 @@ public class PersonaController {
     public ApiResponse<PersonaResponse> savePersona(
             @AuthenticationPrincipal AuthUser authUser,
             @RequestBody PersonaRequest request) {
-        return ApiResponse.created(personaService.createPersona(request, authUser.user().getMajor()));
+        return ApiResponse.created(personaService.createPersona(request, authUser.user().getMajor(), authUser.user().getJobTitle()));
     }
 
     @GetMapping("/getById")

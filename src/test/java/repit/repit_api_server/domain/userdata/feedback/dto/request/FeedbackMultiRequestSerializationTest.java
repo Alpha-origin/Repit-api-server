@@ -73,4 +73,19 @@ class FeedbackMultiRequestSerializationTest {
             assertThat(json).doesNotContain("created_at");
         });
     }
+
+    @Test
+    void 직무와_직무명은_있을_때만_직렬화된다() {
+        contextRunner.run(context -> {
+            ObjectMapper mapper = context.getBean(ObjectMapper.class);
+            String empty = mapper.writeValueAsString(FeedbackMultiRequest.builder().build());
+            assertThat(empty).doesNotContain("jobRole", "jobTitle");
+            String it = mapper.writeValueAsString(FeedbackMultiRequest.builder().jobRole("DATA_ANALYST").build());
+            assertThat(it).contains("\"jobRole\":\"DATA_ANALYST\"").doesNotContain("jobTitle");
+            String general = mapper.writeValueAsString(FeedbackMultiRequest.builder()
+                    .jobRole("GEN_MARKETING").jobTitle("브랜드 마케터").build());
+            assertThat(general).contains("\"jobRole\":\"GEN_MARKETING\"", "\"jobTitle\":\"브랜드 마케터\"");
+        });
+    }
+
 }

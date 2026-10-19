@@ -12,10 +12,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class JobRoleTest {
 
     @Test
-    void 직무_코드는_명세의_9개다() {
+    void 직무_코드는_명세의_15개다() {
         assertThat(Arrays.stream(JobRole.values()).map(Enum::name)).containsExactly(
                 "FRONTEND", "BACKEND", "WEB_PUBLISHER",
-                "DATA_ANALYST", "DBA_INFRA", "QA_ENGINEER", "SECURITY", "PRODUCT_MANAGER", "IT_CONSULTANT");
+                "DATA_ANALYST", "DBA_INFRA", "QA_ENGINEER", "SECURITY", "PRODUCT_MANAGER", "IT_CONSULTANT",
+                "GEN_STRATEGY", "GEN_HR_ADMIN", "GEN_FINANCE", "GEN_MARKETING", "GEN_SALES", "GEN_DESIGN");
     }
 
     @Test
@@ -65,12 +66,30 @@ class JobRoleTest {
     }
 
     @Test
-    void 지금_분석_요청_모양으로_분석하는_것은_개발_직무뿐이고_직무가_없으면_백엔드로_본다() {
-        assertThat(JobRole.BACKEND.supportsCurrentProfileRequest()).isTrue();
-        assertThat(JobRole.QA_ENGINEER.supportsCurrentProfileRequest()).isFalse();
-        assertThat(JobRole.supportsCurrentProfileRequest("MAJOR_WEB_PUBLISHER")).isTrue();
-        assertThat(JobRole.supportsCurrentProfileRequest("MAJOR_PRODUCT_MANAGER")).isFalse();
-        assertThat(JobRole.supportsCurrentProfileRequest(null)).isTrue();
-        assertThat(JobRole.supportsCurrentProfileRequest("MAJOR_SOMETHING_OLD")).isTrue();
+    void 일반_6직군은_공통_4문서와_자소서를_받고_GitHub와_보완_입력은_받지_않는다() {
+        assertThat(Arrays.stream(JobRole.values()).filter(JobRole::requiresJobTitle))
+                .containsExactly(JobRole.GEN_STRATEGY, JobRole.GEN_HR_ADMIN, JobRole.GEN_FINANCE,
+                        JobRole.GEN_MARKETING, JobRole.GEN_SALES, JobRole.GEN_DESIGN)
+                .allSatisfy(job -> {
+                    assertThat(job.family()).isEqualTo(JobFamily.GENERAL);
+                    assertThat(job.githubRule()).isEqualTo(GithubRule.HIDDEN);
+                    assertThat(job.requiredTypes()).isEmpty();
+                    assertThat(job.supplementsAllowed()).isFalse();
+                    assertThat(job.coverLettersAllowed()).isTrue();
+                    assertThat(job.materialRule()).isEqualTo(JobRole.MaterialRule.NON_RESUME_OR_COVER_LETTER);
+                    assertThat(job.allowsType("RESUME")).isTrue();
+                    assertThat(job.allowsType("CAREER_DESCRIPTION")).isTrue();
+                    assertThat(job.allowsType("PORTFOLIO")).isTrue();
+                    assertThat(job.allowsType("WORK_SAMPLE")).isTrue();
+                    assertThat(job.keepsMaterialsTo(job)).isTrue();
+                });
+        assertThat(Arrays.stream(JobRole.values()).filter(job -> !job.requiresJobTitle()))
+                .allSatisfy(job -> {
+                    assertThat(job.allowsType("WORK_SAMPLE")).isFalse();
+                    assertThat(job.coverLettersAllowed()).isFalse();
+                    assertThat(job.materialRule()).isEqualTo(JobRole.MaterialRule.REQUIRED_TYPE);
+                });
+        assertThat(JobRole.GEN_MARKETING.keepsMaterialsTo(JobRole.GEN_HR_ADMIN)).isFalse();
+        assertThat(JobRole.GEN_MARKETING.keepsMaterialsTo(JobRole.BACKEND)).isFalse();
     }
 }

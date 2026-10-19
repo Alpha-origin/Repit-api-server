@@ -78,13 +78,13 @@ class MetaDataControllerTest {
     }
 
     @Test
-    void 분석할_수_없는_직무면_옛_업로드도_자료를_저장하기_전에_422() throws Exception {
-        doThrow(BusinessException.unprocessable("비개발 직무는 아직 자료 분석을 지원하지 않습니다."))
-                .when(analysisLaunchService).requireSupportedJob(any());
-
-        assertThatThrownBy(() -> controller.upload(USER,
-                new MockMultipartFile("file", "a.pdf", "application/pdf", new byte[]{1}), List.of("https://github.com/a/b")))
-                .isInstanceOf(BusinessException.class);
+    void 옛_업로드도_materials_저장과_분석을_재사용한다() throws Exception {
+        when(materialsService.replace(any(), any(), any())).thenReturn(
+                new repit.repit_api_server.domain.metadata.dto.response.MaterialsSaveResponse(
+                        MaterialsResponse.empty(), new repit.repit_api_server.domain.metadata.dto.response.MaterialsSaveResponse.Analysis("job-1", "accepted")));
+        var response = controller.upload(USER,
+                new MockMultipartFile("file", "a.pdf", "application/pdf", new byte[]{1}), List.of("https://github.com/a/b"));
+        assertThat(response.getBody().getJobId()).isEqualTo("job-1");
         verify(metaService, never()).dataUpload(any(), any(), any());
     }
 }

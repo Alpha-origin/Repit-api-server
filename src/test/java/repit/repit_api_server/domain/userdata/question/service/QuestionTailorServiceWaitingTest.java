@@ -342,4 +342,21 @@ class QuestionTailorServiceWaitingTest {
         assertThat(waiting.getQuestions()).isNull();
         verify(sseNotifier).sendFinal(eq("profile-1"), eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), any());
     }
+    @Test
+    void 일반_대기_재개는_사용자_변경값_대신_면접_스냅샷_직무명을_쓴다() {
+        var snapshot = PersonaEntity.builder().personaId(11L).role(Role.TECH).major(Major.GEN_MARKETING)
+                .jobTitle("시작 시점 마케터").interviewSnapshot(true)
+                .type(Type.REALISTIC).tone(InterviewTone.DIRECT).build();
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(snapshot));
+        var general = new QuestionPoolService.DrawnSet("profile-1", SET.questions(), null, "GEN_MARKETING");
+        when(questionPoolService.takeSet(7L, InterviewMode.SOLO, 3L)).thenReturn(WAITING, general);
+        when(questionPoolService.settled(7L, InterviewMode.SOLO)).thenReturn(true);
+        when(questionTailorRepository.claimResume(eq(1L), any())).thenReturn(1);
+        service.requestTailor(interview(), user());
+        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(sent.capture());
+        assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("GEN_MARKETING");
+        assertThat(sent.getValue().getProfile().getJobTitle()).isEqualTo("시작 시점 마케터");
+    }
+
 }

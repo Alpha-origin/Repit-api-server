@@ -105,4 +105,15 @@ class PersonaServiceLookupTest {
         assertThat(service.getAllPersona(null)).hasSize(1);
         verify(personaRepository, never()).findAllByRole(Role.HR);
     }
+    @Test
+    void 면접_전용_스냅샷은_선택_목록과_직접_조회에서_숨긴다() {
+        PersonaEntity snapshot = persona().toBuilder().personaId(99L).interviewSnapshot(true).build();
+        when(personaRepository.findAll()).thenReturn(List.of(persona(), snapshot));
+        when(personaRepository.findById(99L)).thenReturn(Optional.of(snapshot));
+        when(personaRepository.findByPersonaName("전용")).thenReturn(Optional.of(snapshot));
+        assertThat(service.getAllPersona(null)).extracting(value -> value.getPersonaId()).containsExactly(5L);
+        assertThatThrownBy(() -> service.getPersonaById(99L)).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.getPersonaByName("전용")).isInstanceOf(BusinessException.class);
+    }
+
 }

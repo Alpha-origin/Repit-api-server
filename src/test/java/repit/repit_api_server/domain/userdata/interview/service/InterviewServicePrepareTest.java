@@ -67,13 +67,15 @@ class InterviewServicePrepareTest {
     @Mock
     private CompanySnapshotFactory companySnapshotFactory;
 
+    @Mock private InterviewJobSnapshotService snapshotService;
+
     private InterviewService service;
 
     @BeforeEach
     void setUp() {
         service = new InterviewService(interviewRepository, questionRepository, chatServerClient,
                 answerRepository, personaRepository, questionTailorService,
-                interviewPersonaRepository, analysisLaunchService, companySnapshotFactory);
+                interviewPersonaRepository, analysisLaunchService, companySnapshotFactory, snapshotService);
         when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(InterviewEntity.builder()
                 .interviewId(INTERVIEW_ID).userId(USER_ID).sessionId("session-1").build()));
     }
@@ -86,34 +88,12 @@ class InterviewServicePrepareTest {
     }
 
     @Test
-    void 개발에서_비개발_직무로_바꾼_사용자는_남은_개발_분석으로_면접을_준비하지_않고_422() {
-        AuthUser pm = userWithMajor("MAJOR_PRODUCT_MANAGER");
-
-        assertThatThrownBy(() -> service.prepareInterview(pm, INTERVIEW_ID))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage(InterviewService.NON_DEV_INTERVIEW_NOT_SUPPORTED)
-                .extracting("status").hasToString("422 UNPROCESSABLE_CONTENT");
-        verify(analysisLaunchService, never()).launchIfMissing(any());
-        verify(questionTailorService, never()).requestTailor(any(), any());
-    }
-
-    @Test
-    void 비개발_직무는_면접_준비를_다시_시도해도_422() {
-        AuthUser qa = userWithMajor("MAJOR_QA_ENGINEER");
-
-        assertThatThrownBy(() -> service.retryPreparation(qa, INTERVIEW_ID))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage(InterviewService.NON_DEV_INTERVIEW_NOT_SUPPORTED);
-        verify(analysisLaunchService, never()).launchIfMissing(any());
-        verify(questionTailorService, never()).retryPreparation(any(), any());
-    }
-
-    @Test
-    void 개발_직무와_직무를_고른_적_없는_사용자는_그대로_면접을_준비한다() {
+    void 모든_직군과_직무를_고른_적_없는_사용자는_면접을_준비한다() {
         when(questionTailorService.requestTailor(any(), any())).thenReturn(QuestionTailorEntity.builder()
                 .interviewId(INTERVIEW_ID).userId(USER_ID).status(TailorStatus.WAITING).build());
 
-        for (String major : new String[]{"MAJOR_FRONTEND", null}) {
+        when(snapshotService.capture(any(), any())).thenAnswer(inv -> interviewRepository.findById(INTERVIEW_ID).orElseThrow());
+        for (String major : new String[]{"MAJOR_FRONTEND", "MAJOR_PRODUCT_MANAGER", "MAJOR_GEN_MARKETING", null}) {
             AuthUser user = userWithMajor(major);
             service.prepareInterview(user, INTERVIEW_ID);
 

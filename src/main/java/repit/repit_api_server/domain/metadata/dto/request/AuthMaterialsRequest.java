@@ -1,6 +1,7 @@
 package repit.repit_api_server.domain.metadata.dto.request;
 
 import repit.repit_api_server.domain.metadata.dto.response.AuthMaterialsResponse.DocumentEntry;
+import repit.repit_api_server.domain.metadata.dto.response.AuthMaterialsResponse.CoverLetterEntry;
 import repit.repit_api_server.domain.metadata.dto.response.AuthMaterialsResponse.SupplementEntry;
 
 import java.util.List;
@@ -14,5 +15,11 @@ public record AuthMaterialsRequest(
         String major,
         List<DocumentEntry> documents,
         List<String> gitUrls,
-        List<SupplementEntry> supplements) {
+        List<SupplementEntry> supplements,
+        String jobTitle,
+        List<CoverLetterEntry> coverLetters) {
+
+    public AuthMaterialsRequest(String major, List<DocumentEntry> documents, List<String> gitUrls, List<SupplementEntry> supplements) {
+        this(major, documents, gitUrls, supplements, null, List.of());
+    }
 }

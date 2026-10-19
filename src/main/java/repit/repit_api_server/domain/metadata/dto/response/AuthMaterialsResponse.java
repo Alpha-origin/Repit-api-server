@@ -13,7 +13,16 @@ public record AuthMaterialsResponse(
         List<DocumentEntry> documents,
         List<String> gitUrls,
         List<SupplementEntry> supplements,
-        String legacyPortfolio) {
+        String legacyPortfolio,
+        String jobTitle,
+        List<CoverLetterEntry> coverLetters) {
+
+    public AuthMaterialsResponse(String major, List<DocumentEntry> documents, List<String> gitUrls, List<SupplementEntry> supplements, String legacyPortfolio) {
+        this(major, documents, gitUrls, supplements, legacyPortfolio, null, List.of());
+    }
+
+    public record CoverLetterEntry(String question, String answer) {
+    }
 
     public record DocumentEntry(String type, String fileUrl, String fileName, Integer pageCount) {
     }

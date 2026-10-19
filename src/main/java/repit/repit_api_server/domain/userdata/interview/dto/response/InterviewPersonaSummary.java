@@ -29,7 +29,7 @@ public record InterviewPersonaSummary(
         }
         return new InterviewPersonaSummary(
                 persona.getPersonaId(),
-                persona.getPersonaName(),
+                persona.getDisplayName(),
                 persona.getRole(),
                 persona.getType(),
                 persona.getLevel(),

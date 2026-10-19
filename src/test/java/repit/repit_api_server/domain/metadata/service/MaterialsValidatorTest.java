@@ -9,6 +9,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
 import repit.repit_api_server.domain.metadata.dto.request.MaterialsPayload;
 import repit.repit_api_server.domain.metadata.dto.request.MaterialsPayload.DocumentInput;
+import repit.repit_api_server.domain.metadata.dto.request.MaterialsPayload.CoverLetterInput;
 import repit.repit_api_server.domain.metadata.dto.request.MaterialsPayload.SupplementInput;
 import repit.repit_api_server.domain.metadata.dto.response.MaterialErrorResponse.MaterialError;
 import repit.repit_api_server.domain.metadata.dto.response.MaterialErrorResponse.Reason;
@@ -465,5 +466,107 @@ class MaterialsValidatorTest {
         try (var stream = Files.list(Path.of(System.getProperty("java.io.tmpdir")))) {
             return stream.filter(path -> path.getFileName().toString().startsWith("repit-material-")).count();
         }
+    }
+    private static MaterialsPayload general(String title, List<DocumentInput> documents, List<CoverLetterInput> letters) {
+        return new MaterialsPayload("GEN_MARKETING", documents, List.of(), List.of(), title, letters);
+    }
+
+    @Test
+    void 일반_직군은_자소서만으로_저장하고_공백과_빈_항목을_정리한다() {
+        ValidatedMaterials result = validator().validate(general(" 브랜드 마케터 ", List.of(), List.of(
+                new CoverLetterInput(" ", null), new CoverLetterInput(" 동기 ", " 경험 "))), files, NOTHING_SAVED);
+
+        assertThat(result.jobTitle()).isEqualTo("브랜드 마케터");
+        assertThat(result.documents()).isEmpty();
+        assertThat(result.coverLetters()).containsExactly(new CoverLetterInput("동기", "경험"));
+    }
+
+    @Test
+    void 일반_직군은_업무_산출물이나_경력기술서만으로도_저장한다() {
+        for (String type : List.of("WORK_SAMPLE", "CAREER_DESCRIPTION")) {
+            ValidatedMaterials result = validator().validate(general("마케터",
+                    List.of(newDoc(type, "file0", TestPdfs.pdf(1, type))), List.of()), files, NOTHING_SAVED);
+            assertThat(result.documents()).extracting(MaterialsValidator.ValidDocument::type).containsExactly(type);
+            result.deleteTempFiles();
+        }
+    }
+
+    @Test
+    void 일반_직군은_이력서만_있거나_모두_비면_MATERIAL_REQUIRED만_반환한다() {
+        assertThat(errorsOf(general("마케터", List.of(), List.of()), NOTHING_SAVED))
+                .containsExactly(new MaterialError("materials", Reason.MATERIAL_REQUIRED, null));
+        assertThat(errorsOf(general("마케터", List.of(newDoc("RESUME", "file0", TestPdfs.pdf(1, "resume"))),
+                List.of()), NOTHING_SAVED))
+                .containsExactly(new MaterialError("materials", Reason.MATERIAL_REQUIRED, null));
+    }
+
+    @Test
+    void 일반_직무명은_필수이며_길이와_제어문자를_검사한다() {
+        List<CoverLetterInput> letters = List.of(new CoverLetterInput("동기", "경험"));
+        for (String title : java.util.Arrays.asList(null, "", " ")) {
+            assertThat(errorsOf(general(title, List.of(), letters), NOTHING_SAVED))
+                    .containsExactly(new MaterialError("jobTitle", Reason.JOB_TITLE_REQUIRED, null));
+        }
+        for (String title : List.of("가".repeat(31), "브랜드\n마케터", "브랜드\t마케터")) {
+            assertThat(errorsOf(general(title, List.of(), letters), NOTHING_SAVED))
+                    .containsExactly(new MaterialError("jobTitle", Reason.JOB_TITLE_INVALID, null));
+        }
+        assertThat(validator().validate(general("가".repeat(30), List.of(), letters), files, NOTHING_SAVED).jobTitle())
+                .hasSize(30);
+    }
+
+    @Test
+    void 자소서_오류는_원래_위치에_남기고_저장조건_오류_다음에_반환한다() {
+        assertThat(errorsOf(general("마케터", List.of(), List.of(new CoverLetterInput(" ", " "),
+                new CoverLetterInput(null, "답만"))), NOTHING_SAVED))
+                .containsExactly(new MaterialError("materials", Reason.MATERIAL_REQUIRED, null),
+                        new MaterialError("coverLetters[1]", Reason.COVER_LETTER_INVALID, null));
+        assertThat(errorsOf(general("마케터", List.of(), Collections.nCopies(6,
+                new CoverLetterInput("문항", "답"))), NOTHING_SAVED))
+                .containsExactly(new MaterialError("materials", Reason.MATERIAL_REQUIRED, null),
+                        new MaterialError("coverLetters", Reason.COVER_LETTER_INVALID, null));
+        for (CoverLetterInput letter : List.of(new CoverLetterInput("가".repeat(201), "답"),
+                new CoverLetterInput("문항", "가".repeat(2001)), new CoverLetterInput("문항", ""))) {
+            assertThat(errorsOf(general("마케터", List.of(), List.of(letter)), NOTHING_SAVED))
+                    .extracting(MaterialError::reason)
+                    .containsExactly(Reason.MATERIAL_REQUIRED, Reason.COVER_LETTER_INVALID);
+        }
+        assertThat(validator().validate(general("마케터", List.of(), List.of(
+                new CoverLetterInput("가".repeat(200), "가".repeat(2000)))), files, NOTHING_SAVED).coverLetters())
+                .hasSize(1);
+    }
+
+    @Test
+    void 일반_검증_오류는_직무명_문서_저장조건_GitHub_보완_자소서_순서다() {
+        MaterialsPayload request = new MaterialsPayload("GEN_MARKETING",
+                List.of(newDoc("TEST_CASE", "file0", TestPdfs.pdf(1, "a"))),
+                List.of("https://github.com/a/b"), List.of(new SupplementInput("프로젝트", null, null, null, null, null)),
+                null, List.of(new CoverLetterInput("문항", "")));
+        assertThat(errorsOf(request, NOTHING_SAVED)).extracting(MaterialError::reason)
+                .containsExactly(Reason.JOB_TITLE_REQUIRED, Reason.DOC_TYPE_NOT_ALLOWED,
+                        Reason.GITHUB_NOT_ALLOWED, Reason.SUPPLEMENT_NOT_ALLOWED, Reason.COVER_LETTER_INVALID);
+    }
+
+    @Test
+    void IT_직군은_직무명_자소서_업무산출물을_받지_않는다() {
+        MaterialsPayload request = new MaterialsPayload("QA_ENGINEER",
+                List.of(newDoc("TEST_PLAN", "file0", TestPdfs.pdf(1, "a")),
+                        newDoc("WORK_SAMPLE", "file1", TestPdfs.pdf(1, "b"))), List.of(), List.of(), "테스터",
+                List.of(new CoverLetterInput("문항", "답")));
+        assertThat(errorsOf(request, NOTHING_SAVED)).extracting(MaterialError::reason)
+                .containsExactly(Reason.JOB_TITLE_NOT_ALLOWED, Reason.DOC_TYPE_NOT_ALLOWED, Reason.COVER_LETTER_NOT_ALLOWED);
+    }
+
+    @Test
+    void 일반_대분류_변경은_기존문서를_거절하고_같은_대분류는_허용한다() {
+        MaterialsResponse saved = new MaterialsResponse("GEN_MARKETING",
+                List.of(new MaterialDocument(0, "WORK_SAMPLE", SAVED_URL, "work.pdf", 1)),
+                List.of(), List.of(), "마케터", List.of());
+        MaterialsPayload request = general("브랜드 마케터", List.of(existingDoc("WORK_SAMPLE", SAVED_URL)), List.of());
+        assertThat(validator().validate(request, files, saved).documents()).hasSize(1);
+        MaterialsPayload changed = new MaterialsPayload("GEN_HR_ADMIN", request.documents(), List.of(), List.of(),
+                "채용 담당", List.of());
+        assertThat(errorsOf(changed, saved)).extracting(MaterialError::reason)
+                .containsExactly(Reason.MATERIALS_RESET_REQUIRED);
     }
 }

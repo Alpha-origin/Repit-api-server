@@ -8,7 +8,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
-import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.domain.metadata.dto.response.MaterialsResponse;
+import java.util.List;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
 import repit.repit_api_server.domain.metadata.support.JobRole;
@@ -46,35 +47,43 @@ public class AnalysisLaunchService {
     private final AnalysisDataRepository analysisDataRepository;
     private final QuestionPoolService questionPoolService;
 
-    static final String NON_DEV_NOT_SUPPORTED = "비개발 직무는 아직 자료 분석을 지원하지 않습니다.";
-
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
 
-    /**
-     * 지금 /profile 요청 모양으로 분석할 수 있는 직무가 아니면 422로 막는다(비개발, 계약 C-3 전).
-     * 자료를 저장한 뒤 분석하는 길은 저장 전에 이것으로 먼저 막는다.
-     */
-    public void requireSupportedJob(String major) {
-        if (!JobRole.supportsCurrentProfileRequest(major)) {
-            throw BusinessException.unprocessable(NON_DEV_NOT_SUPPORTED);
+    /** 일반 직군의 자소서만 있는 요청도 지원한다. IT는 새 필드 키를 보내지 않는다. */
+    public GenerateResponse launchMaterials(Long userId, MaterialsResponse saved) {
+        JobRole job = jobOf(saved);
+        if (!canAnalyze(saved)) {
+            throw BusinessException.unprocessable("분석할 자료가 부족합니다. 직무에 필요한 자료를 저장해 주세요.");
         }
-    }
-
-    /**
-     * 종합 데이터 분석(/profile)을 시작한다. 질문은 이 결과가 도착한 뒤 사이클로 따로 만든다.
-     *
-     * @param major 사용자 전공. 분석 서버가 탐색 우선순위에만 쓰고, 없으면 비워 보낸다. 비개발 직무면 422.
-     */
-    public GenerateResponse launch(Long userId, String major, MetaDataResponse metaData) {
-        requireSupportedJob(major);
         ProfileRequest request = ProfileRequest.builder()
-                .major(major == null || major.isBlank() ? null : major)
-                .portfolioUrl(metaData.getFileUrl())
-                .githubUrls(metaData.getGitUrls())
+                .jobRole(job.name())
+                .documents(saved.documents().stream().map(d -> new ProfileRequest.Document(
+                        d.type(), d.fileUrl(), d.fileName())).toList())
+                .githubUrls(saved.gitUrls())
+                .supplements(saved.supplements().stream().map(s -> new ProfileRequest.Supplement(
+                        s.title(), s.documentIndex(), s.goal(), s.role(), s.decision(), s.outcome())).toList())
+                .jobTitle(job.requiresJobTitle() ? saved.jobTitle() : null)
+                .coverLetters(job.coverLettersAllowed() ? saved.coverLetters().stream()
+                        .map(c -> new ProfileRequest.CoverLetter(c.question(), c.answer())).toList() : List.of())
                 .callbackUrl(callbackBaseUrl + PROFILE_CALLBACK_PATH)
                 .build();
         return launch(userId, AnalysisResultType.PROFILE, () -> aiServerClient.requestProfile(request));
+    }
+
+    static boolean canAnalyze(MaterialsResponse saved) {
+        JobRole job = jobOf(saved);
+        if (job.requiresJobTitle()) {
+            return saved.jobTitle() != null && !saved.jobTitle().isBlank()
+                    && (saved.documents().stream().anyMatch(d -> !"RESUME".equals(d.type()))
+                    || !saved.coverLetters().isEmpty());
+        }
+        return saved.documents().stream().anyMatch(d -> job.isRequiredType(d.type()))
+                && (job.githubRule() != JobRole.GithubRule.REQUIRED || !saved.gitUrls().isEmpty());
+    }
+
+    private static JobRole jobOf(MaterialsResponse saved) {
+        return JobRole.find(saved.jobRole()).orElse(JobRole.BACKEND);
     }
 
     /**
@@ -97,10 +106,6 @@ public class AnalysisLaunchService {
     // ponytail: 잠근 채 인증·분석 서버를 부르므로 그동안 DB 커넥션을 붙잡는다. 사용자당 드물게 한 번 도는 길이라 감수한다.
     @Transactional
     public void launchIfMissing(AuthUser authUser) {
-        // 비개발 직무는 지금 요청 모양으로 맞는 분석이 나오지 않는다. 면접 준비는 그 전에 422로 막는다(InterviewService).
-        if (!JobRole.supportsCurrentProfileRequest(authUser.user().getMajor())) {
-            return;
-        }
         if (!needsProfile(authUser.id())) {
             return;
         }
@@ -109,12 +114,12 @@ public class AnalysisLaunchService {
             return;
         }
         // 옛 metaData의 파일 주소가 아니라 저장된 자료의 포트폴리오 문서로 요청한다. 자료 저장 뒤 분석하는 길과 같다.
-        MetaDataResponse saved = metaService.getMaterials(authUser.token()).toAnalysisInput();
-        if (saved.getFileUrl() == null || saved.getFileUrl().isBlank() || saved.getGitUrls().isEmpty()) {
+        MaterialsResponse saved = metaService.getMaterials(authUser.token());
+        if (!canAnalyze(saved)) {
             return;
         }
         log.info("쓸 수 있는 종합 데이터가 없어 저장된 자료로 분석을 요청합니다. userId={}", authUser.id());
-        launch(authUser.id(), authUser.user().getMajor(), saved);
+        launchMaterials(authUser.id(), saved);
     }
 
     private boolean needsProfile(Long userId) {
