@@ -4,13 +4,14 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode;
 
 import java.util.List;
 
 /**
  * 면접 생성 요청.
  *
- * <p>면접이 고르는 것은 면접관뿐이라 그것만 받는다. 예전에는 페르소나 등록용 DTO를 그대로 써서
+ * <p>면접관과 기업 선택, 답변 방식을 받는다. 예전에는 페르소나 등록용 DTO를 그대로 써서
  * 전공·타입·경력·성별까지 받는 것처럼 보였지만, 실제로는 이름만 쓰고 나머지는 버렸다.
  *
  * <p>{@code personaId}가 있으면 그것을 쓰고, 없으면 {@code personaName}으로 찾는다. 이름은 바뀔 수 있는
@@ -33,4 +34,10 @@ public class CreateInterviewRequest {
     // 순서를 그대로 쓴다.
     private List<Long> personaIds;
     private Long companyId;
+    // 생략한 기존 클라이언트는 null로 남긴다.
+    private AnswerMode answerMode;
+
+    public CreateInterviewRequest(Long personaId, String personaName, List<Long> personaIds, Long companyId) {
+        this(personaId, personaName, personaIds, companyId, null);
+    }
 }

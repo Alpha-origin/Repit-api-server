@@ -5,6 +5,9 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import tools.jackson.databind.ObjectMapper;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,6 +36,21 @@ class CreateInterviewRequestDeserializationTest {
 
             assertThat(request.getPersonaName()).isEqualTo("압박 면접관");
             assertThat(request.getPersonaId()).isNull();
+        });
+    }
+
+    @Test
+    void 답변방식은_문자열로_왕복하고_생략한_옛_요청은_null이다() {
+        contextRunner.run(context -> {
+            ObjectMapper mapper = context.getBean(ObjectMapper.class);
+            for (AnswerMode mode : AnswerMode.values()) {
+                CreateInterviewRequest request = mapper.readValue("{\"personaId\":1,\"answerMode\":\"" + mode + "\"}", CreateInterviewRequest.class);
+                assertThat(request.getAnswerMode()).isEqualTo(mode);
+                InterviewResponse response = InterviewResponse.from(InterviewEntity.builder().answerMode(mode).build(), java.util.List.of(), null);
+                assertThat(mapper.readTree(mapper.writeValueAsString(response)).get("answerMode").asText()).isEqualTo(mode.name());
+            }
+            assertThat(mapper.readValue("{\"personaId\":1}", CreateInterviewRequest.class).getAnswerMode()).isNull();
+            assertThat(mapper.readValue("{\"personaId\":1,\"answerMode\":null}", CreateInterviewRequest.class).getAnswerMode()).isNull();
         });
     }
 

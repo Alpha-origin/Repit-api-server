@@ -7,6 +7,7 @@ import lombok.Setter;
 import repit.repit_api_server.domain.company.dto.CompanyBadge;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 
@@ -32,6 +33,7 @@ public class InterviewResponse {
     private LocalDateTime createdAt;
     // 면접을 만들 때 고른 기업. 고르지 않았으면 비어 있다.
     private CompanyBadge company;
+    private AnswerMode answerMode;
 
     /**
      * @param personaIds N:1 면접관 목록. 1:1은 빈 목록이다.
@@ -48,7 +50,8 @@ public class InterviewResponse {
                 interview.getSessionId(),
                 interview.getStatus(),
                 interview.getCreatedAt(),
-                CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot())
+                CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot()),
+                interview.getAnswerMode()
         );
     }
 }

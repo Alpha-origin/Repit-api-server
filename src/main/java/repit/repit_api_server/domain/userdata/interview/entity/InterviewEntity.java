@@ -7,6 +7,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 
 import java.time.LocalDateTime;
@@ -34,6 +35,10 @@ public class InterviewEntity {
     @Column(nullable = false)
     @Builder.Default
     private InterviewMode mode = InterviewMode.SOLO;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 16)
+    private AnswerMode answerMode;
 
     @Column(nullable = false, unique = true, length = 64)
     private String sessionId;

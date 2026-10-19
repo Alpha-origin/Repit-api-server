@@ -35,6 +35,8 @@ final class InterviewCreateFingerprint {
             canonical.put("personaName", request.getPersonaName());
         }
         canonical.put("companyId", request.getCompanyId());
+        // 필드 없는 기존 제출의 해시는 바꾸지 않아 재전송을 보존한다.
+        if (request.getAnswerMode() != null) canonical.put("answerMode", request.getAnswerMode().name());
         return sha256(JsonMapper.shared().writeValueAsString(canonical));
     }
 
