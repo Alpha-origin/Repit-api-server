@@ -125,7 +125,7 @@ class MaterialsServiceTest {
     }
 
     @Test
-    void 새_파일은_임시_파일에서_올린_뒤_요청_순서대로_저장하고_첫_문서로_분석을_요청한다() {
+    void 새_파일은_임시_파일에서_올린_뒤_요청_순서대로_저장하고_포트폴리오로_분석을_요청한다() {
         when(authServerClient.getMaterials(TOKEN)).thenReturn(new AuthMaterialsResponse(null, List.of(), List.of(), List.of(), null));
         List<Path> uploadedFrom = new ArrayList<>();
         when(storage.upload(any())).thenAnswer(invocation -> {
@@ -158,6 +158,30 @@ class MaterialsServiceTest {
         assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis("job-2", "accepted"));
         // 올린 뒤 임시 파일은 남지 않는다.
         assertThat(uploadedFrom).hasSize(2).allSatisfy(file -> assertThat(file).doesNotExist());
+    }
+
+    @Test
+    void 이력서가_포트폴리오보다_앞에_있어도_포트폴리오로_분석을_요청한다() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
+        when(storage.upload(any())).thenReturn("https://bucket/resume.pdf");
+        authEchoesSavedRequest();
+        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_BACKEND"), any()))
+                .thenReturn(new GenerateResponse("job-3", "processing", null));
+        Map<String, MultipartFile> files = Map.of(
+                "file0", new MockMultipartFile("file0", "이력서.pdf", "application/pdf", TestPdfs.pdf(2, "resume")));
+
+        MaterialsSaveResponse response = service.replace(authUser, new MaterialsPayload("BACKEND",
+                List.of(new DocumentInput("RESUME", "NEW", "file0", null), new DocumentInput("PORTFOLIO", "EXISTING", null, SAVED_URL)),
+                List.of("https://github.com/a/api"), List.of()), files);
+
+        // 저장 순서는 요청 그대로 두고, 분석에는 종류로 찾은 포트폴리오를 보낸다.
+        ArgumentCaptor<AuthMaterialsRequest> sent = ArgumentCaptor.forClass(AuthMaterialsRequest.class);
+        verify(authServerClient).putMaterials(eq(TOKEN), sent.capture());
+        assertThat(sent.getValue().documents()).extracting(DocumentEntry::type).containsExactly("RESUME", "PORTFOLIO");
+        ArgumentCaptor<MetaDataResponse> launched = ArgumentCaptor.forClass(MetaDataResponse.class);
+        verify(analysisLaunchService).launch(eq(7L), eq("MAJOR_BACKEND"), launched.capture());
+        assertThat(launched.getValue().getFileUrl()).isEqualTo(SAVED_URL);
+        assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis("job-3", "accepted"));
     }
 
     @Test

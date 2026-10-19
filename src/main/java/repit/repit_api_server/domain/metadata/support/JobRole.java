@@ -82,7 +82,7 @@ public enum JobRole {
     }
 
     /**
-     * 지금 /profile 요청 모양(첫 문서 + GitHub)으로 맞는 분석이 나오는 직무인지.
+     * 지금 /profile 요청 모양(포트폴리오 문서 + GitHub)으로 맞는 분석이 나오는 직무인지.
      * 비개발은 분석 서버의 새 요청 모양(계약 C-3)이 붙기 전까지 분석하지 않는다. 분석을 시작하는 모든 길이 이 판단을 쓴다.
      */
     public boolean supportsCurrentProfileRequest() {

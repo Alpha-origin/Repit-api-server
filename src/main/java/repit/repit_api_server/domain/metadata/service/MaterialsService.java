@@ -41,6 +41,9 @@ public class MaterialsService {
 
     private static final Logger log = LoggerFactory.getLogger(MaterialsService.class);
 
+    /** 지금 분석 요청(portfolioUrl)에 싣는 문서 종류. */
+    private static final String PORTFOLIO_TYPE = "PORTFOLIO";
+
     private final AuthServerClient authServerClient;
     private final MaterialsValidator validator;
     private final MaterialFileStorage storage;
@@ -141,7 +144,8 @@ public class MaterialsService {
 
     /**
      * 저장한 자료로 분석을 요청한다. 분석 서버의 새 요청 모양(계약 C-3)이 붙기 전까지는 지금 요청 모양 그대로
-     * 첫 문서와 GitHub를 보낸다. 비개발 직무는 그 모양으로는 맞는 분석이 나오지 않아 요청하지 않는다.
+     * 포트폴리오 문서와 GitHub를 보낸다. 비개발 직무는 그 모양으로는 맞는 분석이 나오지 않아 요청하지 않는다.
+     * 문서 순서는 사용자가 정하므로 첫 문서가 포트폴리오라고 보지 않고 종류로 찾는다.
      *
      * <p>저장은 이미 끝났으므로 분석 요청이 실패해도 저장을 되돌리지 않는다. 화면이 다시 분석하게 한다.
      */
@@ -149,14 +153,23 @@ public class MaterialsService {
         if (!jobRole.supportsCurrentProfileRequest()) {
             return new Analysis(null, MaterialsSaveResponse.ANALYSIS_SKIPPED);
         }
-        MetaDataResponse metaData = new MetaDataResponse(request.gitUrls(), request.documents().get(0).fileUrl());
         try {
+            MetaDataResponse metaData = new MetaDataResponse(request.gitUrls(), portfolioUrl(request));
             GenerateResponse response = analysisLaunchService.launch(authUser.id(), request.major(), metaData);
             return new Analysis(response.getJobId(), MaterialsSaveResponse.ANALYSIS_ACCEPTED);
         } catch (RuntimeException e) {
             log.error("자료는 저장했지만 분석을 요청하지 못했습니다. userId={}", authUser.id(), e);
             return new Analysis(null, MaterialsSaveResponse.ANALYSIS_FAILED);
         }
+    }
+
+    /** 개발 직무는 포트폴리오가 필수라 검사를 통과했으면 늘 있다. 여러 개면 앞의 것을 보낸다. */
+    private static String portfolioUrl(AuthMaterialsRequest request) {
+        return request.documents().stream()
+                .filter(d -> PORTFOLIO_TYPE.equals(d.type()))
+                .map(DocumentEntry::fileUrl)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("분석에 보낼 포트폴리오 문서가 없습니다."));
     }
 
     private static boolean sameAsSaved(ValidatedMaterials next, MaterialsResponse saved) {
