@@ -17,7 +17,8 @@ import java.util.List;
 /**
  * 면접에서 고를 수 있는 기업. 기동할 때 기업 데이터 패키지에서 가져온다 — {@code CompanyDataImporter} 참고.
  *
- * <p>행은 지우지 않는다. 면접이 company_id로 가리키고 있어, 패키지에서 빠진 기업은 HIDDEN으로만 바꾼다.
+ * <p>행은 지우지 않는다. 면접이 company_id로 가리키고 있어, 내릴 기업은 설정(app.company.hidden-codes)으로 HIDDEN만 만든다.
+ * 목록·신규 선택에 내보내는 조건은 {@code CompanyVisibility}가 정한다.
  */
 @Entity
 @Table(name = "company")
@@ -79,6 +80,10 @@ public class CompanyEntity {
 
     @Column(nullable = false)
     private LocalDate dataAsOf;
+
+    // 출처가 모두 SAMPLE인 개발용 패키지. 허용한 환경(app.company.allow-sample)에서만 목록·면접 생성에 내보낸다.
+    @Column(nullable = false)
+    private boolean sample;
 
     @Column(length = 50)
     private String reviewedBy;

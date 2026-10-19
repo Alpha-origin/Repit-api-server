@@ -25,8 +25,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ErrorResponse> handleBusinessException(BusinessException e) {
         // 상태 코드만으로는 어느 규칙에 걸렸는지 알 수 없어 한 줄 남긴다. 예상된 흐름이라 스택트레이스는 붙이지 않는다.
-        log.warn("업무 규칙에 걸려 요청을 중단했습니다. status={}, message={}", e.getStatus(), e.getMessage());
-        return asJson(e.getStatus()).body(new ErrorResponse(e.getMessage()));
+        log.warn("업무 규칙에 걸려 요청을 중단했습니다. status={}, code={}, message={}",
+                e.getStatus(), e.getCode(), e.getMessage());
+        return asJson(e.getStatus()).body(new ErrorResponse(e.getMessage(), e.getCode()));
     }
 
     // 직무·자료 저장 규칙 위반. Web이 행·영역마다 문구를 띄우도록 사유 목록을 그대로 내보낸다.

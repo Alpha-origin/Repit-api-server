@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallbackRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
@@ -599,8 +600,12 @@ public class FeedbackService {
             feedback.setQuestionCount(counts.questionCountOr(overall.getQuestionCount(),
                     "면접 전체 문항 수", interviewId));
         }
-        // 기업 관점 코멘트. 읽지 못해도 피드백은 그대로 저장한다.
-        feedback.setCompanyFit(CompanyFitReader.read(result.getCompanyFit(), interviewId));
+        // 기업 관점 코멘트. 그 면접의 스냅샷과 답변 있는 문항에 맞지 않으면 비워 두고, 피드백은 그대로 저장한다.
+        CompanySnapshot snapshot = interviewRepository.findById(interviewId)
+                .map(InterviewEntity::getCompanySnapshot)
+                .orElse(null);
+        feedback.setCompanyFit(CompanyFitReader.read(result.getCompanyFit(), snapshot,
+                counts.answeredQuestionIds(), interviewId));
         feedback.setStatus(FeedbackStatus.SUCCEEDED);
         feedback.setErrorStatusCode(null);
         feedback.setErrorMessage(null);
@@ -815,12 +820,15 @@ public class FeedbackService {
         Map<Long, Long> personaByQuestion = new LinkedHashMap<>();
         Map<Long, Integer> questionCountByPersona = new LinkedHashMap<>();
         Map<Long, Integer> answeredCountByPersona = new LinkedHashMap<>();
+        Set<String> answeredQuestionIds = new LinkedHashSet<>();
         int answeredCount = 0;
 
         for (QuestionEntity question : questions) {
             boolean hasAnswer = answered.contains(question.getQuestionId());
             if (hasAnswer) {
                 answeredCount++;
+                // 채점 요청에 실은 문항 id와 같은 글자다(toQuestion·toMultiQuestion).
+                answeredQuestionIds.add(String.valueOf(question.getQuestionId()));
             }
 
             // 꼬리질문은 부모의 면접관을 물려받는다. 부모는 늘 먼저 저장돼 한 번 훑으면 채워진다.
@@ -840,14 +848,18 @@ public class FeedbackService {
         }
 
         return new RecordedCounts(questions.size(), answeredCount, personaByQuestion,
-                questionCountByPersona, answeredCountByPersona);
+                questionCountByPersona, answeredCountByPersona, answeredQuestionIds);
     }
 
     /** 기록으로 센 수. 분석 서버가 보낸 수와 어긋나면 기록 쪽을 쓰고 그 사실을 남긴다. */
     private record RecordedCounts(int questionCount, int answeredCount,
                                   Map<Long, Long> personaByQuestion,
                                   Map<Long, Integer> questionCountByPersona,
-                                  Map<Long, Integer> answeredCountByPersona) {
+                                  Map<Long, Integer> answeredCountByPersona,
+                                  // 기업 관점 코멘트가 근거로 댈 수 있는 문항. 채점 요청과 같은 규칙으로 면접 기록에서 다시 뽑은, 내용 있는
+                                  // 답변이 붙은 문항이다. 채팅 서버가 넘긴 기록은 다시 쓰지 않아(claimResultSave) 요청 때와 같다. 요청 뒤
+                                  // 답변 API로 답변이 더해진 문항은 여기 들어온다 — 그 작업에 보낸 목록을 따로 저장하지는 않는다.
+                                  Set<String> answeredQuestionIds) {
 
         Integer questionCountOr(Integer received, String label, Long interviewId) {
             return reconcile(questionCount, received, label, interviewId);

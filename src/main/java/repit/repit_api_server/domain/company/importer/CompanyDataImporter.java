@@ -14,10 +14,12 @@ import org.springframework.util.StringUtils;
 import repit.repit_api_server.domain.company.entity.CompanyEntity;
 import repit.repit_api_server.domain.company.entity.CompanyFactEntity;
 import repit.repit_api_server.domain.company.entity.CompanySourceEntity;
+import repit.repit_api_server.domain.company.entity.enums.CompanySourceType;
 import repit.repit_api_server.domain.company.entity.enums.CompanyStatus;
 import repit.repit_api_server.domain.company.repository.CompanyFactRepository;
 import repit.repit_api_server.domain.company.repository.CompanyRepository;
 import repit.repit_api_server.domain.company.repository.CompanySourceRepository;
+import repit.repit_api_server.domain.company.service.CompanyVisibility;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -42,7 +44,17 @@ import java.util.stream.Collectors;
  * 기동할 때 기업 데이터 패키지(JSON)를 읽어 DB에 반영한다.
  *
  * <p>기동을 실패시키지 않는다. 데이터 문제로 API 전체가 뜨지 않으면 안 된다. 문제가 있는 파일만 건너뛰고
- * 오류 로그를 남긴다. 위치를 비워 두면 아무것도 하지 않고, 공개 기업은 기존 DB 그대로다.
+ * 오류 로그를 남긴다. 위치를 비워 두면 가져오지 않고(설정한 숨김만 한다), 공개 기업은 기존 DB 그대로다.
+ *
+ * <p>숨김은 설정(app.company.hidden-codes)으로만 한다. 파일이 디렉터리에서 빠졌다고 숨기거나 지우지 않는다 — 위치를 잘못
+ * 적거나 일부 파일만 배포돼도 공개 기업이 한꺼번에 사라지지 않는다. 빠진 기업은 경고만 남긴다.
+ *
+ * <p>SAMPLE 패키지(출처가 모두 SAMPLE)는 app.company.allow-sample이 켜진 환경(개발·스테이징)에서만 가져온다.
+ *
+ * <p>기존 기업은 행을 FOR UPDATE로 잡고 고친다. 면접 생성의 스냅샷은 같은 행을 FOR SHARE로 읽으므로 반쯤 바뀐 기업을
+ * 스냅샷으로 남기지 않는다({@code CompanySnapshotFactory}).
+ *
+ * <p>로그에는 파일명·code·결과·사유만 남긴다. 파일 원문, 출처 주소, 신호 문장은 남기지 않는다.
  *
  * <p>API는 1대 전제다. 여러 대가 동시에 가져와도 code UNIQUE와 기업별 트랜잭션 때문에 데이터가 깨지지는 않는다.
  *
@@ -61,11 +73,16 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
     private final CompanyFactRepository companyFactRepository;
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
+    private final CompanyVisibility companyVisibility;
     private final ResourcePatternResolver resourceResolver = new PathMatchingResourcePatternResolver();
 
     // Spring 리소스 패턴. 예: classpath:company-data/sample/*.json
     @Value("${app.company.data-location:}")
     private String dataLocation;
+
+    // 내릴 기업의 code. 쉼표로 나눈다. 목록에서 빼면 다음 가져오기 때 다시 공개한다.
+    @Value("${app.company.hidden-codes:}")
+    private String hiddenCodes;
 
     @Override
     public void afterSingletonsInstantiated() {
@@ -77,19 +94,27 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
     }
 
     public Result importFrom(String location) throws IOException {
+        return importFrom(location, parseCodes(hiddenCodes));
+    }
+
+    public Result importFrom(String location, Set<String> hiddenCodes) throws IOException {
+        // 숨김은 파일과 상관없이 설정만 보고 한다. 위치를 비워 둔 환경에서도 내릴 기업은 내린다.
+        // 반영보다 먼저 한다 — 숨긴 기업이 들고 있던 식별자를 이번 묶음이 받을 수 있게 놓게 한 뒤 반영해야, code를 바꿔 다시 낸
+        // 기업이 DART 고유번호 UNIQUE에 걸려 끝내 들어가지 못하는 일이 없다.
+        int hidden = transactionTemplate.execute(status -> hide(hiddenCodes));
         if (location == null || location.isBlank()) {
             log.info("기업 데이터 위치가 설정되지 않아 가져오지 않습니다");
-            return Result.NONE;
+            return new Result(0, 0, 0, hidden, 0);
         }
         Resource[] resources = resourceResolver.getResources(location);
         if (resources.length == 0) {
-            // 위치를 잘못 적었을 수 있다. 여기서 숨김까지 하면 공개 기업이 모두 사라진다.
+            // 위치를 잘못 적었을 수 있다. 공개 기업은 그대로 둔다.
             log.warn("기업 데이터 파일이 없어 가져오지 않습니다. location={}", location);
-            return Result.NONE;
+            return new Result(0, 0, 0, hidden, 0);
         }
         Arrays.sort(resources, Comparator.comparing(Resource::getFilename));
 
-        // 이번에 읽은 기업. 검증에 실패한 파일도 넣어, 그 기업은 숨기지 않고 기존 상태를 둔다.
+        // 이번에 읽은 기업. 검증에 실패한 파일도 넣는다 — 모회사 파일이 실패했을 때 자회사의 기존 연결을 두는 데 쓴다.
         Set<String> readCodes = new HashSet<>();
         List<Loaded> loaded = new ArrayList<>();
         int skipped = 0;
@@ -103,7 +128,8 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
                 bytes = resource.getContentAsByteArray();
                 pkg = objectMapper.readValue(bytes, CompanyDataPackage.class);
             } catch (IOException | JacksonException e) {
-                log.error("기업 데이터 파일을 읽지 못해 건너뜁니다. file={}, 오류={}", fileName, e.getMessage());
+                // 파서 메시지는 파일 내용 일부를 담는다. 예외 종류만 남긴다.
+                log.error("기업 데이터 파일을 읽지 못해 건너뜁니다. file={}, 오류={}", fileName, e.getClass().getSimpleName());
                 skipped++;
                 continue;
             }
@@ -118,8 +144,18 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
 
             List<String> errors = CompanyDataValidator.validate(fileName, pkg);
             if (!errors.isEmpty()) {
-                log.error("기업 데이터 파일이 규칙에 맞지 않아 건너뜁니다. file={}, 오류={}", fileName, errors);
+                log.error("기업 데이터 파일이 규칙에 맞지 않아 건너뜁니다. file={}, code={}, 오류={}", fileName, pkg.code(), errors);
                 skipped++;
+                continue;
+            }
+            if (isSample(pkg) && !companyVisibility.allowsSample()) {
+                // 운영에 샘플이 공개되지 않게 한다. 검수 예외를 운영 검수 우회로 쓰지 않는다.
+                log.error("SAMPLE 기업 데이터는 이 환경에서 가져오지 않습니다. file={}, code={}", fileName, pkg.code());
+                skipped++;
+                continue;
+            }
+            if (hiddenCodes.contains(pkg.code())) {
+                log.info("숨기도록 설정한 기업이라 반영하지 않습니다. file={}, code={}", fileName, pkg.code());
                 continue;
             }
             loaded.add(new Loaded(fileName, pkg, sha256(bytes)));
@@ -128,9 +164,7 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
         List<Loaded> unique = withoutDuplicates(loaded);
         skipped += loaded.size() - unique.size();
 
-        // 숨김은 읽은 파일 목록만으로 정해지므로 반영보다 먼저 한다. 숨긴 기업이 들고 있던 식별자를 이번 묶음이 받을 수 있게
-        // 놓게 한 뒤 반영한다 — 그러지 않으면 code를 바꿔 다시 낸 기업이 DART 고유번호 UNIQUE에 걸려 끝내 들어가지 못한다.
-        int hidden = transactionTemplate.execute(status -> hideMissing(readCodes));
+        warnMissing(readCodes, hiddenCodes);
         transactionTemplate.executeWithoutResult(status -> releaseClaimedIdentifiers(unique));
 
         Map<Outcome, Integer> tally = new EnumMap<>(Outcome.class);
@@ -141,8 +175,7 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
             if (outcome == null) {
                 retry.add(each);
             } else {
-                tally.merge(outcome, 1, Integer::sum);
-                applied.add(each.pkg());
+                record(tally, applied, each, outcome);
             }
         }
         // 다른 기업이 먼저 놓아야 받을 수 있는 값(이 묶음 안에서 DART 고유번호를 옮긴 경우)은 처리 순서에 따라 처음에 막힌다.
@@ -152,8 +185,7 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
             if (outcome == null) {
                 skipped++;
             } else {
-                tally.merge(outcome, 1, Integer::sum);
-                applied.add(each.pkg());
+                record(tally, applied, each, outcome);
             }
         }
 
@@ -166,16 +198,25 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
         return result;
     }
 
+    private static void record(Map<Outcome, Integer> tally, List<CompanyDataPackage> applied, Loaded each,
+                               Outcome outcome) {
+        tally.merge(outcome, 1, Integer::sum);
+        applied.add(each.pkg());
+        log.info("기업 데이터 반영: file={}, code={}, 결과={}", each.fileName(), each.pkg().code(), outcome);
+    }
+
     /** 기업 하나 = 트랜잭션 하나. 실패하면 그 기업만 롤백하고 null을 돌려준다. */
     private Outcome applyInOwnTransaction(Loaded each, boolean firstTry) {
         try {
             return transactionTemplate.execute(status -> apply(each));
         } catch (RuntimeException e) {
+            // DB 예외 메시지는 넣으려던 값을 담는다. 예외 종류만 남긴다.
             if (firstTry) {
-                log.warn("기업 데이터를 반영하지 못해 나머지를 반영한 뒤 한 번 더 해봅니다. file={}, 오류={}",
-                        each.fileName(), e.getMessage());
+                log.warn("기업 데이터를 반영하지 못해 나머지를 반영한 뒤 한 번 더 해봅니다. file={}, code={}, 오류={}",
+                        each.fileName(), each.pkg().code(), e.getClass().getSimpleName());
             } else {
-                log.error("기업 데이터를 반영하지 못해 건너뜁니다. file={}", each.fileName(), e);
+                log.error("기업 데이터를 반영하지 못해 건너뜁니다. file={}, code={}, 오류={}",
+                        each.fileName(), each.pkg().code(), e.getClass().getSimpleName());
             }
             return null;
         }
@@ -213,7 +254,9 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
             if (duplicated.isEmpty()) {
                 unique.add(each);
             } else {
-                log.error("다른 기업 데이터 파일과 겹쳐 건너뜁니다. file={}, 겹친 값={}", each.fileName(), duplicated);
+                // 법인 식별번호 값은 남기지 않고 어느 키가 겹쳤는지만 남긴다.
+                log.error("다른 기업 데이터 파일과 겹쳐 건너뜁니다. file={}, code={}, 겹친 키={}", each.fileName(),
+                        each.pkg().code(), duplicated.stream().map(key -> key.substring(0, key.indexOf('='))).toList());
             }
         }
         return unique;
@@ -234,11 +277,12 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
     /**
      * 기업 하나를 반영한다. 내용이 그대로면 손대지 않고, 바뀌었으면 기업 컬럼을 고친 뒤 정보·출처를 지우고 다시 넣는다.
      *
-     * <p>다시 넣으면 fact_id가 바뀐다. 이미 만든 면접은 스냅샷 안의 factId를 쓰므로 영향이 없다.
+     * <p>다시 넣으면 fact_id가 바뀐다(시퀀스라 지난 id를 다시 쓰지 않는다). 이미 만든 면접은 스냅샷 안의 factId를 쓰므로
+     * 영향이 없다. 기존 기업은 행을 FOR UPDATE로 잡은 뒤 고친다 — 스냅샷이 반쯤 바뀐 기업을 읽지 못하게 한다.
      */
     private Outcome apply(Loaded loaded) {
         CompanyDataPackage pkg = loaded.pkg();
-        CompanyEntity company = companyRepository.findByCode(pkg.code()).orElse(null);
+        CompanyEntity company = companyRepository.findForUpdateByCode(pkg.code()).orElse(null);
         if (company != null && loaded.hash().equals(company.getContentHash())
                 && company.getStatus() == CompanyStatus.PUBLISHED) {
             return Outcome.UNCHANGED;
@@ -263,6 +307,7 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
         company.setDartCorpCode(pkg.dartCorpCode());
         company.setBusinessRegNo(pkg.businessRegNo());
         company.setStatus(CompanyStatus.PUBLISHED);
+        company.setSample(isSample(pkg));
         company.setInterviewerBrief(pkg.interviewerBrief());
         company.setDataAsOf(pkg.dataAsOf());
         company.setReviewedBy(pkg.review() == null ? null : pkg.review().reviewedBy());
@@ -305,20 +350,33 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
     }
 
     /**
-     * 묶음 규칙 10. 모회사는 이번 묶음에 있어야 잇는다. 묶음에 아예 없으면 연결만 빼고 경고한다.
+     * 묶음 규칙 8. 모회사는 이번 묶음에 있어야 잇는다. 묶음에 아예 없으면 연결만 빼고 경고한다.
      *
      * <p>모회사 파일이 묶음에 있는데 검증·반영에 실패했으면 그 기업 행은 기존 상태로 남는다. 그때는 연결도 지금 그대로 둔다 —
      * 모회사 파일 하나가 잠깐 틀렸다고 자회사의 연결까지 끊지 않는다.
+     *
+     * <p>자기 자신을 가리키거나 따라가다 자기에게 돌아오는 연결은 저장하지 않는다. 목록에 자기 이름이 모회사로 나가거나,
+     * 모회사를 따라가는 코드가 끝없이 돈다. 파일 자체는 반영한다.
      */
     private void linkParents(List<CompanyDataPackage> applied, Set<String> readCodes) {
-        Set<String> codes = applied.stream().map(CompanyDataPackage::code).collect(Collectors.toSet());
+        Map<String, String> intended = new HashMap<>();
+        applied.forEach(pkg -> intended.put(pkg.code(), pkg.parentCode()));
         for (CompanyDataPackage pkg : applied) {
             CompanyEntity company = companyRepository.findByCode(pkg.code()).orElseThrow();
             String parentCode = pkg.parentCode();
             if (parentCode == null) {
                 company.setParent(null);
-            } else if (codes.contains(parentCode)) {
-                company.setParent(companyRepository.findByCode(parentCode).orElseThrow());
+            } else if (parentCode.equals(pkg.code())) {
+                log.warn("모회사가 자기 자신이라 연결하지 않습니다. code={}", pkg.code());
+                company.setParent(null);
+            } else if (intended.containsKey(parentCode)) {
+                if (returnsTo(pkg.code(), intended)) {
+                    log.warn("모회사 연결이 돌고 돌아 자기에게 와서 연결하지 않습니다. code={}, parentCode={}",
+                            pkg.code(), parentCode);
+                    company.setParent(null);
+                } else {
+                    company.setParent(companyRepository.findByCode(parentCode).orElseThrow());
+                }
             } else if (readCodes.contains(parentCode)) {
                 log.warn("모회사 기업 데이터를 반영하지 못해 모회사 연결은 그대로 둡니다. code={}, parentCode={}",
                         pkg.code(), parentCode);
@@ -330,16 +388,73 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
         }
     }
 
-    /** 이번에 읽은 파일에 아예 없는 공개 기업을 숨긴다. 행은 면접이 가리키고 있어 지우지 않는다. */
-    private int hideMissing(Set<String> readCodes) {
+    /**
+     * code에서 모회사를 따라가다 code로 돌아오는지. 이번 묶음에 있는 기업은 파일의 parentCode를, 없는 기업은 DB의 연결을 따른다.
+     * 다른 데서 도는 고리에 들어가면 code로는 돌아오지 않으므로 거기서 멈춘다.
+     */
+    private boolean returnsTo(String code, Map<String, String> intended) {
+        Set<String> visited = new HashSet<>();
+        String current = intended.get(code);
+        while (current != null) {
+            if (current.equals(code)) {
+                return true;
+            }
+            if (!visited.add(current)) {
+                return false;
+            }
+            current = intended.containsKey(current)
+                    ? intended.get(current)
+                    : companyRepository.findByCode(current)
+                            .map(CompanyEntity::getParent)
+                            .map(CompanyEntity::getCode)
+                            .orElse(null);
+        }
+        return false;
+    }
+
+    /** 설정으로 내린 기업을 숨긴다. 행은 면접이 가리키고 있어 지우지 않고, 이미 만든 면접의 스냅샷도 그대로다. */
+    private int hide(Set<String> hiddenCodes) {
+        if (hiddenCodes.isEmpty()) {
+            return 0;
+        }
         int hidden = 0;
-        for (CompanyEntity company : companyRepository.findAllByStatus(CompanyStatus.PUBLISHED)) {
-            if (!readCodes.contains(company.getCode())) {
+        for (CompanyEntity company : companyRepository.findAllByCodeIn(hiddenCodes)) {
+            if (company.getStatus() != CompanyStatus.HIDDEN) {
                 company.setStatus(CompanyStatus.HIDDEN);
                 hidden++;
+                log.info("설정에 따라 기업을 숨겼습니다. code={}", company.getCode());
             }
         }
         return hidden;
+    }
+
+    /** 공개 중인데 이번에 파일이 없는 기업. 숨기지 않는다 — 내리려면 hidden-codes에 넣는다. */
+    private void warnMissing(Set<String> readCodes, Set<String> hiddenCodes) {
+        List<String> missing = companyRepository.findAllByStatus(CompanyStatus.PUBLISHED).stream()
+                .map(CompanyEntity::getCode)
+                .filter(code -> !readCodes.contains(code) && !hiddenCodes.contains(code))
+                .sorted()
+                .toList();
+        if (!missing.isEmpty()) {
+            log.warn("공개 중인 기업의 데이터 파일이 없습니다. 숨기지 않고 기존 정보로 둡니다. 내리려면 app.company.hidden-codes에 "
+                    + "넣으세요. codes={}", missing);
+        }
+    }
+
+    // 출처가 모두 SAMPLE이면 개발용 샘플이다. 검증이 실제 출처에는 검수 기록을 요구하므로 둘은 겹치지 않는다.
+    static boolean isSample(CompanyDataPackage pkg) {
+        return pkg.sources() != null && !pkg.sources().isEmpty() && pkg.sources().stream()
+                .allMatch(source -> source != null && source.sourceType() == CompanySourceType.SAMPLE);
+    }
+
+    static Set<String> parseCodes(String value) {
+        if (value == null || value.isBlank()) {
+            return Set.of();
+        }
+        return Arrays.stream(value.split(","))
+                .map(String::strip)
+                .filter(code -> !code.isEmpty())
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     private static String sha256(byte[] bytes) {
@@ -356,6 +471,5 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
     private enum Outcome { CREATED, UPDATED, UNCHANGED }
 
     public record Result(int created, int updated, int unchanged, int hidden, int skipped) {
-        static final Result NONE = new Result(0, 0, 0, 0, 0);
     }
 }

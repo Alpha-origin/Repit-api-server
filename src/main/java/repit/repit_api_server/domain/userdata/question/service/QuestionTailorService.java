@@ -8,6 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.transaction.annotation.Transactional;
+import repit.repit_api_server.domain.company.dto.CompanyBadge;
 import repit.repit_api_server.domain.metadata.dto.response.ProjectSummaryResponse;
 import repit.repit_api_server.domain.userdata.interview.MultiInterviewPanel;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
@@ -1115,14 +1116,18 @@ public class QuestionTailorService {
                 .orElse(null);
         if (tailor == null) {
             // 세트는 면접을 시작할 때 꺼낸다. 그 전에는 어느 세트가 될지 정해지지 않았다.
-            return QuestionTailorResponse.notRequested(interviewId, List.of());
+            return QuestionTailorResponse.notRequested(interviewId, List.of()).withCompany(companyBadgeOf(interview));
         }
 
         // 폴링하는 클라이언트가 PENDING에 갇히지 않도록 조회 시점에도 판정하고, 밀린 뒷단을 마저 밟는다.
         expireIfTimedOut(tailor);
         completePreparation(tailor);
 
-        return QuestionTailorResponse.of(tailor);
+        return QuestionTailorResponse.of(tailor).withCompany(companyBadgeOf(interview));
+    }
+
+    private static CompanyBadge companyBadgeOf(InterviewEntity interview) {
+        return CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot());
     }
 
     // 면접 질문은 본인만 볼 수 있어야 한다.

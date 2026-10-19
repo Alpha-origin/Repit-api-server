@@ -71,6 +71,10 @@ public class InterviewService {
     private final AnalysisLaunchService analysisLaunchService;
     private final CompanySnapshotFactory companySnapshotFactory;
 
+    /**
+     * 면접을 만든다. {@link InterviewCreateService}가 트랜잭션을 열고 부른다 — N:1 면접관 명단·기업 스냅샷·요청 키가
+     * 면접과 함께 저장되거나 함께 롤백된다.
+     */
     public InterviewResponse createInterview(Long userId, CreateInterviewRequest request) {
         if (request.getPersonaIds() != null && !request.getPersonaIds().isEmpty()) {
             return createMultiInterview(userId, request.getPersonaIds(), request.getCompanyId());
@@ -137,7 +141,10 @@ public class InterviewService {
         return InterviewResponse.from(saved, ordered.stream().map(PersonaEntity::getPersonaId).toList());
     }
 
-    /** 고른 기업을 지금 모습 그대로 복사해 둔다. 공개 기업이 아니면 404다. 고르지 않았으면 비어 있다. */
+    /**
+     * 고른 기업을 지금 모습 그대로 복사해 둔다. 고르지 않았으면 비어 있다. 공개 기업이 아니면 404 COMPANY_UNAVAILABLE,
+     * 스냅샷을 만들 수 없는 데이터면 503 COMPANY_CONTEXT_UNAVAILABLE이다 — 기업 없는 면접으로 바꿔 만들지 않는다.
+     */
     private CompanySnapshot companySnapshotOf(Long companyId) {
         return companyId == null ? null : companySnapshotFactory.create(companyId);
     }
@@ -221,7 +228,7 @@ public class InterviewService {
         analysisLaunchService.launchIfMissing(authUser);
         // N:1은 질문 재작성이 아니라 신규 생성이 섞인 multi tailor로 간다. 갈림길은 서비스 안에 있다.
         QuestionTailorEntity tailor = questionTailorService.requestTailor(interview, authUser.user());
-        return InterviewPrepareResponse.of(tailor, interview.getSessionId());
+        return InterviewPrepareResponse.of(tailor, interview);
     }
 
     /**
@@ -241,7 +248,7 @@ public class InterviewService {
         // 처음 시작할 때 종합 데이터를 요청하지 못했거나, 그 사이 분석 서버가 지금 것을 거부했으면 여기서 요청한다.
         analysisLaunchService.launchIfMissing(authUser);
         QuestionTailorEntity tailor = questionTailorService.retryPreparation(interview, authUser.user());
-        return InterviewPrepareResponse.of(tailor, interview.getSessionId());
+        return InterviewPrepareResponse.of(tailor, interview);
     }
 
     /**

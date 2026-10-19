@@ -2,3 +2,6 @@
 app:
   # 테스트는 외부 서버를 부르지 않는다. 기본값이 없어진 콜백 주소를 명시적으로 채워 기동 검사를 통과시킨다.
   callback-base-url: https://api.repit.test
+  company:
+    # 기업 테스트는 배포되는 샘플 패키지(company-data/sample)를 쓴다. 샘플을 막는 경우는 테스트가 따로 설정한다.
+    allow-sample: true

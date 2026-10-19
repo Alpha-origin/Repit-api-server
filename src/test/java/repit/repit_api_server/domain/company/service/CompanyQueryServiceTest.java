@@ -40,7 +40,7 @@ class CompanyQueryServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new CompanyQueryService(companyRepository, companyFactRepository);
+        service = new CompanyQueryService(companyRepository, companyFactRepository, new CompanyVisibility(false));
 
         CompanyEntity commerce = company(3L, "샘플커머스", CompanyCategory.CONSUMER, List.of("샘플마켓", "Sample Commerce"));
         CompanyEntity games = company(4L, "샘플게임즈", CompanyCategory.GAME, List.of("Sample Games"));
@@ -65,6 +65,8 @@ class CompanyQueryServiceTest {
                 .category(category)
                 .status(CompanyStatus.PUBLISHED)
                 .dataAsOf(LocalDate.parse("2026-10-15"))
+                .reviewedBy("검수자")
+                .reviewedAt(LocalDate.parse("2026-10-16"))
                 .build();
     }
 
@@ -154,5 +156,37 @@ class CompanyQueryServiceTest {
         when(companyRepository.findWithParentByStatus(CompanyStatus.PUBLISHED)).thenReturn(List.of(child));
 
         assertThat(service.search(null, null).getFirst().parentDisplayName()).isNull();
+    }
+
+    @Test
+    void 이름이_같으면_companyId_순이다() {
+        CompanyEntity later = company(12L, "같은이름", CompanyCategory.SECURITY, List.of());
+        CompanyEntity earlier = company(11L, "같은이름", CompanyCategory.SECURITY, List.of());
+        when(companyRepository.findWithParentByStatus(CompanyStatus.PUBLISHED)).thenReturn(List.of(later, earlier));
+
+        assertThat(service.search(null, null)).extracting(CompanySummaryResponse::companyId).containsExactly(11L, 12L);
+    }
+
+    /** 검수 기록이 없는 실제 기업과, 허용하지 않은 환경의 SAMPLE은 공개 상태여도 내보내지 않는다. */
+    @Test
+    void 검수_조건을_만족하는_기업만_내보낸다() {
+        CompanyEntity unreviewed = company(13L, "미검수", CompanyCategory.SECURITY, List.of());
+        unreviewed.setReviewedAt(null);
+        CompanyEntity sample = company(14L, "샘플보안", CompanyCategory.SECURITY, List.of());
+        sample.setSample(true);
+        sample.setReviewedBy(null);
+        sample.setReviewedAt(null);
+        when(companyRepository.findWithParentByStatus(CompanyStatus.PUBLISHED)).thenReturn(List.of(unreviewed, sample));
+
+        assertThat(service.search(null, null)).isEmpty();
+        CompanyQueryService staging = new CompanyQueryService(companyRepository, companyFactRepository,
+                new CompanyVisibility(true));
+        assertThat(names(staging.search(null, null))).containsExactly("샘플보안");
+    }
+
+    @Test
+    void 검색어의_SQL_패턴_문자는_글자_그대로_찾는다() {
+        assertThat(service.search("%%", null)).isEmpty();
+        assertThat(service.search("__", null)).isEmpty();
     }
 }

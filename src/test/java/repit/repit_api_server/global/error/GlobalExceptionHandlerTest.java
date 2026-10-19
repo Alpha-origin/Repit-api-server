@@ -44,6 +44,11 @@ class GlobalExceptionHandlerTest {
             throw BusinessException.notFound("분석 결과를 찾을 수 없습니다.");
         }
 
+        @GetMapping("/business-with-code")
+        public String businessWithCode() {
+            throw new BusinessException("선택한 기업을 찾을 수 없습니다.", HttpStatus.NOT_FOUND, ErrorCodes.COMPANY_UNAVAILABLE);
+        }
+
         @GetMapping("/external")
         public String external() {
             throw new ExternalApiException("인증 실패", HttpStatus.UNAUTHORIZED, new RuntimeException("cause"));
@@ -91,7 +96,17 @@ class GlobalExceptionHandlerTest {
     void BusinessException은_지정한_상태코드와_메시지로_응답한다() throws Exception {
         mockMvc.perform(get("/business"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.message").value("분석 결과를 찾을 수 없습니다."));
+                .andExpect(jsonPath("$.message").value("분석 결과를 찾을 수 없습니다."))
+                // code는 선택 필드다. 붙이지 않은 오류는 예전 본문 그대로다.
+                .andExpect(jsonPath("$.code").doesNotExist());
+    }
+
+    @Test
+    void 업무_예외에_code가_있으면_message와_함께_내보낸다() throws Exception {
+        mockMvc.perform(get("/business-with-code"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("선택한 기업을 찾을 수 없습니다."))
+                .andExpect(jsonPath("$.code").value("COMPANY_UNAVAILABLE"));
     }
 
     /**

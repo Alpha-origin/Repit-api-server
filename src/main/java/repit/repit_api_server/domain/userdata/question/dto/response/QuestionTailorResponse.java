@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import repit.repit_api_server.domain.company.dto.CompanyBadge;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
@@ -51,6 +52,14 @@ public class QuestionTailorResponse {
     private int questionCount;
 
     private String errorMessage;
+
+    // 면접을 만들 때 고른 기업. 고르지 않았으면 비어 있다. 면접 스냅샷에서 읽으며, 질문이 모두 기업에 맞게 바뀌었다는 뜻은 아니다.
+    private CompanyBadge company;
+
+    public QuestionTailorResponse withCompany(CompanyBadge company) {
+        this.company = company;
+        return this;
+    }
 
     public static QuestionTailorResponse of(QuestionTailorEntity tailor) {
         PreparationState state = PreparationState.of(tailor);
