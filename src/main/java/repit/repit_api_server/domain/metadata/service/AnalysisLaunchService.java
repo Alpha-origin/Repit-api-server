@@ -11,9 +11,11 @@ import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
 import repit.repit_api_server.domain.metadata.repository.AnalysisDataRepository;
+import repit.repit_api_server.domain.metadata.support.JobRole;
 import repit.repit_api_server.domain.userdata.question.service.QuestionPoolService;
 import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.client.AiServerClient;
+import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.exception.ExternalApiException;
 
 import java.time.LocalDateTime;
@@ -44,15 +46,28 @@ public class AnalysisLaunchService {
     private final AnalysisDataRepository analysisDataRepository;
     private final QuestionPoolService questionPoolService;
 
+    static final String NON_DEV_NOT_SUPPORTED = "비개발 직무는 아직 자료 분석을 지원하지 않습니다.";
+
     @Value("${app.callback-base-url}")
     private String callbackBaseUrl;
 
     /**
+     * 지금 /profile 요청 모양으로 분석할 수 있는 직무가 아니면 422로 막는다(비개발, 계약 C-3 전).
+     * 자료를 저장한 뒤 분석하는 길은 저장 전에 이것으로 먼저 막는다.
+     */
+    public void requireSupportedJob(String major) {
+        if (!JobRole.supportsCurrentProfileRequest(major)) {
+            throw BusinessException.unprocessable(NON_DEV_NOT_SUPPORTED);
+        }
+    }
+
+    /**
      * 종합 데이터 분석(/profile)을 시작한다. 질문은 이 결과가 도착한 뒤 사이클로 따로 만든다.
      *
-     * @param major 사용자 전공. 분석 서버가 탐색 우선순위에만 쓰고, 없으면 비워 보낸다.
+     * @param major 사용자 전공. 분석 서버가 탐색 우선순위에만 쓰고, 없으면 비워 보낸다. 비개발 직무면 422.
      */
     public GenerateResponse launch(Long userId, String major, MetaDataResponse metaData) {
+        requireSupportedJob(major);
         ProfileRequest request = ProfileRequest.builder()
                 .major(major == null || major.isBlank() ? null : major)
                 .portfolioUrl(metaData.getFileUrl())
@@ -82,6 +97,10 @@ public class AnalysisLaunchService {
     // ponytail: 잠근 채 인증·분석 서버를 부르므로 그동안 DB 커넥션을 붙잡는다. 사용자당 드물게 한 번 도는 길이라 감수한다.
     @Transactional
     public void launchIfMissing(AuthUser authUser) {
+        // 비개발 직무는 지금 요청 모양으로 맞는 분석이 나오지 않는다. 면접 준비는 그 전에 422로 막는다(InterviewService).
+        if (!JobRole.supportsCurrentProfileRequest(authUser.user().getMajor())) {
+            return;
+        }
         if (!needsProfile(authUser.id())) {
             return;
         }
@@ -89,9 +108,9 @@ public class AnalysisLaunchService {
         if (!needsProfile(authUser.id())) {
             return;
         }
-        MetaDataResponse saved = metaService.getMetaData(authUser.token());
-        if (saved == null || saved.getFileUrl() == null || saved.getFileUrl().isBlank()
-                || saved.getGitUrls() == null || saved.getGitUrls().isEmpty()) {
+        // 옛 metaData의 파일 주소가 아니라 저장된 자료의 포트폴리오 문서로 요청한다. 자료 저장 뒤 분석하는 길과 같다.
+        MetaDataResponse saved = metaService.getMaterials(authUser.token()).toAnalysisInput();
+        if (saved.getFileUrl() == null || saved.getFileUrl().isBlank() || saved.getGitUrls().isEmpty()) {
             return;
         }
         log.info("쓸 수 있는 종합 데이터가 없어 저장된 자료로 분석을 요청합니다. userId={}", authUser.id());

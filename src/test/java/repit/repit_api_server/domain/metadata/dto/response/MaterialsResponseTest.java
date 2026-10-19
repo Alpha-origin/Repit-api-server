@@ -72,4 +72,34 @@ class MaterialsResponseTest {
     void 인증_서버가_빈_응답을_주면_빈_자료다() {
         assertThat(MaterialsResponse.from(null)).isEqualTo(MaterialsResponse.empty());
     }
+
+    @Test
+    void 분석에는_첫_문서가_아니라_앞의_포트폴리오_문서와_GitHub를_싣는다() {
+        AuthMaterialsResponse auth = new AuthMaterialsResponse("MAJOR_BACKEND",
+                List.of(new DocumentEntry("RESUME", "https://s3/resume.pdf", "이력서.pdf", 2),
+                        new DocumentEntry("PORTFOLIO", "https://s3/portfolio.pdf", "포트폴리오.pdf", 9),
+                        new DocumentEntry("PORTFOLIO", "https://s3/portfolio-2.pdf", "포트폴리오2.pdf", 4)),
+                List.of("https://github.com/a/api"), List.of(), null);
+
+        MetaDataResponse input = MaterialsResponse.from(auth).toAnalysisInput();
+
+        assertThat(input.getFileUrl()).isEqualTo("https://s3/portfolio.pdf");
+        assertThat(input.getGitUrls()).containsExactly("https://github.com/a/api");
+    }
+
+    @Test
+    void 옛_사용자의_PDF도_포트폴리오로_분석에_싣는다() {
+        AuthMaterialsResponse auth = new AuthMaterialsResponse(
+                null, List.of(), List.of("https://github.com/a/repo"), List.of(), "https://s3/legacy.pdf");
+
+        assertThat(MaterialsResponse.from(auth).toAnalysisInput().getFileUrl()).isEqualTo("https://s3/legacy.pdf");
+    }
+
+    @Test
+    void 포트폴리오_문서가_없으면_분석에_실을_파일_주소는_null이다() {
+        AuthMaterialsResponse auth = new AuthMaterialsResponse("MAJOR_QA_ENGINEER",
+                List.of(new DocumentEntry("TEST_PLAN", "https://s3/plan.pdf", "plan.pdf", 3)), List.of(), List.of(), null);
+
+        assertThat(MaterialsResponse.from(auth).toAnalysisInput().getFileUrl()).isNull();
+    }
 }

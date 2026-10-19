@@ -131,11 +131,12 @@ public class AiMetaDataController {
 
 
     // 이미 올려둔 자료로 분석만 다시 요청한다. 자료를 올리는 길과 같은 접수를 거친다.
+    // 옛 metaData의 파일 주소가 아니라 저장된 자료의 포트폴리오 문서로 요청한다.
     @PostMapping("/generate")
     public ResponseEntity<GenerateResponse> generate(
             @AuthenticationPrincipal AuthUser authUser
     ) {
-        MetaDataResponse forRequest = metaService.getMetaData(authUser.token());
+        MetaDataResponse forRequest = metaService.getMaterials(authUser.token()).toAnalysisInput();
         return ResponseEntity.ok(analysisLaunchService.launch(authUser.id(), authUser.user().getMajor(), forRequest));
     }
 
