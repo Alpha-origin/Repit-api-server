@@ -138,6 +138,8 @@ public class CompanyDataImporter implements SmartInitializingSingleton {
                 skipped++;
                 continue;
             }
+            // 검증과 저장이 같은 값을 보도록 앞뒤 공백을 먼저 뺀다. 내용이 같은지는 파일 바이트의 해시로 본다.
+            pkg = pkg.normalized();
             if (pkg.code() != null) {
                 readCodes.add(pkg.code());
             }

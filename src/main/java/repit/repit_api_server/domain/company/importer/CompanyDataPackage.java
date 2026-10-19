@@ -37,6 +37,30 @@ public record CompanyDataPackage(
         aliases = aliases == null ? List.of() : aliases;
     }
 
+    /**
+     * 글 필드의 앞뒤 공백을 뺀 사본. 검증과 저장이 같은 값을 보게 한다 — 검증은 공백을 뺀 길이로 상한을 보는데(00 §2) 저장이
+     * 공백 붙은 원래 값을 넣으면, 검증을 통과한 파일이 VARCHAR 길이에 걸려 저장 단계에서 실패한다.
+     *
+     * <p>내용은 자르지 않는다. code·parentCode·법인 식별번호·주소는 형식 규칙으로 보는 값이라 그대로 둔다. 빈 항목(null)은
+     * 검증이 잡도록 그대로 남긴다.
+     */
+    public CompanyDataPackage normalized() {
+        return new CompanyDataPackage(schemaVersion, code, strip(displayName), strip(legalName), stripAll(aliases),
+                parentCode, category, legalSize, strip(legalSizeSource), dartCorpCode, businessRegNo, dataAsOf,
+                sources == null ? null : sources.stream().map(source -> source == null ? null : source.normalized()).toList(),
+                facts == null ? null : facts.stream().map(fact -> fact == null ? null : fact.normalized()).toList(),
+                strip(interviewerBrief),
+                review == null ? null : new Review(strip(review.reviewedBy()), review.reviewedAt()));
+    }
+
+    private static String strip(String value) {
+        return value == null ? null : value.strip();
+    }
+
+    private static List<String> stripAll(List<String> values) {
+        return values == null ? null : values.stream().map(CompanyDataPackage::strip).toList();
+    }
+
     public record Source(
             String sourceKey,
             CompanySourceType sourceType,
@@ -45,6 +69,10 @@ public record CompanyDataPackage(
             String scope,
             LocalDate publishedAt,
             LocalDate collectedAt) {
+
+        Source normalized() {
+            return new Source(strip(sourceKey), sourceType, url, strip(title), strip(scope), publishedAt, collectedAt);
+        }
     }
 
     public record Fact(
@@ -63,6 +91,11 @@ public record CompanyDataPackage(
 
         boolean hasSignals() {
             return !positiveSignals.isEmpty() || !concernSignals.isEmpty();
+        }
+
+        Fact normalized() {
+            return new Fact(kind, strip(title), strip(content), strip(sourceKey), stripAll(positiveSignals),
+                    stripAll(concernSignals), signalsOrigin);
         }
     }
 

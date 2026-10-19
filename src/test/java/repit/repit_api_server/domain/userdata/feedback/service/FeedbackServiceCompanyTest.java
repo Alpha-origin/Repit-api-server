@@ -386,6 +386,53 @@ class FeedbackServiceCompanyTest {
         assertThat(saved.getRequestedQuestionIds()).containsExactly(answeredQuestionId);
     }
 
+    /**
+     * 재채점 결과가 접수 응답보다 먼저 와도 지난 작업의 행에 쓰지 않는다. 쓰면 곧이어 접수 응답이 만드는 PENDING 행이 최신이
+     * 되어 결과를 가린다. 이 작업의 행을 새로 만들고, 접수 응답은 그 행을 찾아 덧붙이지 않는다.
+     */
+    @Test
+    void 재채점_결과가_접수_응답보다_먼저_와도_지난_작업의_행에_쓰지_않는다() {
+        InterviewEntity interview = givenFinishedInterview(SNAPSHOT);
+        String oldJobId = "old-" + UUID.randomUUID();
+        Long oldFeedbackId = feedbackRepository.save(FeedbackEntity.builder()
+                .interviewId(interview.getInterviewId())
+                .userId(USER_ID)
+                .sessionId(sessionId)
+                .jobId(oldJobId)
+                .status(FeedbackStatus.FAILED)
+                .errorMessage("지난 채점 실패")
+                .build()).getFeedbackId();
+        JsonNode companyFit = json("""
+                {
+                  "comment": "오너십 관점에서 원인을 끝까지 따라간 설명이 보였습니다.",
+                  "matchedFocus": [ { "factId": "23", "evidence": "원인을 직접 추적했습니다.", "questionIds": ["%s"] } ]
+                }""".formatted(answeredQuestionId));
+        when(aiServerClient.requestSoloFeedback(any())).thenAnswer(invocation -> {
+            feedbackService.handleCallback(succeeded(companyFit));
+            return new FeedbackAcceptedResponse(jobId, sessionId, "accepted", null);
+        });
+
+        feedbackService.requestFeedback(USER_ID, interview.getInterviewId());
+        entityManager.flush();
+        entityManager.clear();
+
+        FeedbackEntity old = feedbackRepository.findById(oldFeedbackId).orElseThrow();
+        assertThat(old.getStatus()).isEqualTo(FeedbackStatus.FAILED);
+        assertThat(old.getJobId()).isEqualTo(oldJobId);
+        assertThat(old.getTotalScore()).isNull();
+
+        FeedbackEntity latest = feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(interview.getInterviewId())
+                .orElseThrow();
+        assertThat(latest.getJobId()).isEqualTo(jobId);
+        assertThat(latest.getStatus()).isEqualTo(FeedbackStatus.SUCCEEDED);
+        assertThat(latest.getTotalScore()).isEqualTo(72);
+        assertThat(latest.getRequestedQuestionIds()).containsExactly(answeredQuestionId);
+        assertThat(latest.getCompanyFit().matchedFocus()).hasSize(1);
+        assertThat(feedbackRepository.findAll()).filteredOn(row -> row.getInterviewId().equals(interview.getInterviewId()))
+                .hasSize(2);
+        assertThat(feedbackService.getFeedback(USER_ID, interview.getInterviewId()).getTotalScore()).isEqualTo(72);
+    }
+
     /** 문항 목록을 남기기 전에 보낸 요청의 콜백은 어느 문항도 근거로 인정하지 않는다. 총평만 있는 코멘트는 둔다. */
     @Test
     void 보낸_문항_목록이_없으면_근거_있는_항목을_인정하지_않는다() {

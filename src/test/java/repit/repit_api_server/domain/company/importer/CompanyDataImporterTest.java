@@ -26,9 +26,11 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
@@ -323,6 +325,60 @@ class CompanyDataImporterTest {
         assertThat(parentOf("sample-commerce").getCode()).isEqualTo("sample-pay");
         assertThat(parentOf("sample-pay")).isNull();
         assertThat(parentOf("sample-games")).isNull();
+    }
+
+    /**
+     * 길이 상한은 앞뒤 공백을 뺀 값으로 본다. 저장도 공백을 뺀 값으로 해야, 공백 때문에 VARCHAR 길이를 넘는 파일이 검증은
+     * 통과하고 저장에서 실패하는 일이 없다.
+     */
+    @Test
+    void 앞뒤_공백이_붙은_값은_공백을_빼고_저장한다() throws IOException {
+        String padding = " ".repeat(30);
+        rewrite("sample-commerce.json", "\"displayName\": \"샘플커머스\"",
+                "\"displayName\": \"" + padding + "샘플커머스" + padding + "\"");
+        rewrite("sample-commerce.json", "\"title\": \"샘플마켓\"", "\"title\": \"샘플마켓" + padding + "\"");
+        rewrite("sample-commerce.json", "\"sourceKey\": \"about\",\n      \"sourceType\"",
+                "\"sourceKey\": \" about \",\n      \"sourceType\"");
+
+        assertThat(importer.importFrom(location())).isEqualTo(new Result(3, 0, 0, 0, 0));
+        entityManager.flush();
+        entityManager.clear();
+
+        CompanyEntity commerce = company("sample-commerce");
+        assertThat(commerce.getDisplayName()).isEqualTo("샘플커머스");
+        assertThat(companyFactRepository.findAllByCompanyIdOrderBySortOrder(commerce.getCompanyId()).getFirst().getTitle())
+                .isEqualTo("샘플마켓");
+        // 출처 키도 같은 규칙으로 맞춰 fact가 그 출처를 그대로 가리킨다.
+        assertThat(companySourceRepository.findAll()).filteredOn(source -> source.getCompanyId().equals(commerce.getCompanyId()))
+                .singleElement().extracting(CompanySourceEntity::getSourceKey).isEqualTo("about");
+    }
+
+    /** V38은 출처가 없는 기업을 SAMPLE에서 뺀다. 출처가 모두 SAMPLE인 기업만 SAMPLE이다(가져오기 판정과 같다). */
+    @Test
+    void V38은_출처가_있고_모두_SAMPLE인_기업만_SAMPLE로_둔다() throws IOException {
+        importer.importFrom(location());
+        CompanyEntity orphan = companyRepository.save(CompanyEntity.builder()
+                .code("no-source")
+                .displayName("출처없음")
+                .legalName("출처없음 주식회사")
+                .aliases(List.of())
+                .category(CompanyCategory.SECURITY)
+                .status(CompanyStatus.PUBLISHED)
+                .interviewerBrief("출처가 없는 기업이다.")
+                .dataAsOf(LocalDate.parse("2026-10-15"))
+                .contentHash("0".repeat(64))
+                .build());
+        entityManager.flush();
+        // V35가 남긴 상태를 만든다.
+        entityManager.createNativeQuery("update company set sample = true").executeUpdate();
+
+        String sql = new ClassPathResource("db/migration/V38__company_sample_requires_source.sql")
+                .getContentAsString(StandardCharsets.UTF_8);
+        entityManager.createNativeQuery(sql).executeUpdate();
+        entityManager.clear();
+
+        assertThat(companyRepository.findById(orphan.getCompanyId()).orElseThrow().isSample()).isFalse();
+        assertThat(company("sample-commerce").isSample()).isTrue();
     }
 
     @Test
