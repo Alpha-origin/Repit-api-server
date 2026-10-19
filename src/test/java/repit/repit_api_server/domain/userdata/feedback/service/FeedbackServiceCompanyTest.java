@@ -2,6 +2,7 @@ package repit.repit_api_server.domain.userdata.feedback.service;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -169,23 +170,33 @@ class FeedbackServiceCompanyTest {
         return String.valueOf(question.getQuestionId());
     }
 
-    private FeedbackSoloRequest requested(CompanySnapshot snapshot) {
+    /** 끝난 면접의 채점을 요청해 접수까지 마친다. 기업 관점 코멘트의 근거는 이때 보낸 문항으로 정해진다. */
+    private InterviewEntity givenRequested(CompanySnapshot snapshot) {
         InterviewEntity interview = givenFinishedInterview(snapshot);
         when(aiServerClient.requestSoloFeedback(any()))
                 .thenReturn(new FeedbackAcceptedResponse(jobId, sessionId, "accepted", null));
 
         feedbackService.requestFeedback(USER_ID, interview.getInterviewId());
+        return interview;
+    }
+
+    private FeedbackSoloRequest requested(CompanySnapshot snapshot) {
+        givenRequested(snapshot);
 
         ArgumentCaptor<FeedbackSoloRequest> sent = ArgumentCaptor.forClass(FeedbackSoloRequest.class);
         verify(aiServerClient).requestSoloFeedback(sent.capture());
         return sent.getValue();
     }
 
-    private FeedbackEntity callback(JsonNode companyFit) {
+    private FeedbackCallbackRequest succeeded(JsonNode companyFit) {
         FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
                 72, 80, 61, "근거를 수치로 설명했습니다.", List.of(), List.of(), List.of(), 1, 1, null);
-        feedbackService.handleCallback(new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
-                new FeedbackCallbackRequest.Result(overall, null, List.of(), companyFit), null));
+        return new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
+                new FeedbackCallbackRequest.Result(overall, null, List.of(), companyFit), null);
+    }
+
+    private FeedbackEntity callback(JsonNode companyFit) {
+        feedbackService.handleCallback(succeeded(companyFit));
         entityManager.flush();
         entityManager.clear();
         return feedbackRepository.findByJobId(jobId).orElseThrow();
@@ -215,7 +226,7 @@ class FeedbackServiceCompanyTest {
 
     @Test
     void 콜백의_기업_관점_코멘트를_저장하고_조회에_싣는다() {
-        InterviewEntity interview = givenFinishedInterview(SNAPSHOT);
+        InterviewEntity interview = givenRequested(SNAPSHOT);
 
         FeedbackEntity saved = callback(json("""
                 {
@@ -263,7 +274,7 @@ class FeedbackServiceCompanyTest {
      */
     @Test
     void 이_면접의_답변_있는_문항만_근거로_남긴다() {
-        givenFinishedInterview(SNAPSHOT);
+        givenRequested(SNAPSHOT);
         String otherQuestionId = otherInterviewQuestionId();
 
         FeedbackEntity saved = callback(json("""
@@ -293,7 +304,7 @@ class FeedbackServiceCompanyTest {
     /** 항목이 있었는데 모두 근거가 맞지 않으면 총평만 살리지 않는다. 기본 피드백은 저장한다. */
     @Test
     void 항목이_모두_빠지면_기업_관점_코멘트는_비운다() {
-        givenFinishedInterview(SNAPSHOT);
+        givenRequested(SNAPSHOT);
 
         FeedbackEntity saved = callback(json("""
                 {
@@ -308,6 +319,89 @@ class FeedbackServiceCompanyTest {
         assertThat(saved.getStatus()).isEqualTo(FeedbackStatus.SUCCEEDED);
         assertThat(saved.getTotalScore()).isEqualTo(72);
         assertThat(saved.getCompanyFit()).isNull();
+    }
+
+    /**
+     * 채점을 요청한 뒤 콜백이 오기 전에 답변 API로 답변이 더해져도, 그 문항은 이 작업이 보낸 것이 아니라 근거가 되지 않는다.
+     * 근거는 요청할 때 남긴 문항 목록으로 가린다.
+     */
+    @Test
+    void 요청_뒤에_더해진_답변의_문항은_근거로_인정하지_않는다() {
+        InterviewEntity interview = givenRequested(SNAPSHOT);
+        answerRepository.save(AnswerEntity.builder()
+                .interviewId(interview.getInterviewId())
+                .questionId(Long.valueOf(unansweredQuestionId))
+                .userId(USER_ID)
+                .responseTime(30)
+                .content("요청 뒤에 저장한 답변")
+                .createdAt(LocalDateTime.now())
+                .build());
+
+        FeedbackEntity saved = callback(json("""
+                {
+                  "comment": "오너십 관점에서 원인을 끝까지 따라간 설명이 보였습니다.",
+                  "matchedFocus": [
+                    { "factId": "23", "evidence": "원인을 직접 추적했습니다.", "questionIds": ["%1$s", "%2$s"] }
+                  ],
+                  "gaps": [
+                    { "factId": "21", "suggestion": "요청 뒤 답변만 댔습니다.", "questionIds": ["%2$s"] }
+                  ]
+                }""".formatted(answeredQuestionId, unansweredQuestionId)));
+
+        assertThat(saved.getRequestedQuestionIds()).containsExactly(answeredQuestionId);
+        assertThat(saved.getCompanyFit().matchedFocus()).singleElement()
+                .extracting(CompanyFitResponse.Item::questionIds).asInstanceOf(InstanceOfAssertFactories.LIST)
+                .containsExactly(answeredQuestionId);
+        assertThat(saved.getCompanyFit().gaps()).isEmpty();
+    }
+
+    /**
+     * 콜백이 접수 응답보다 먼저 와 작업 행이 없어도, 보내기 직전에 남긴 목록으로 근거를 가린다. 늦게 온 접수 응답은 그 행에
+     * 이 작업의 목록을 채운다.
+     */
+    @Test
+    void 콜백이_접수_응답보다_먼저_와도_보낸_목록으로_근거를_가린다() {
+        InterviewEntity interview = givenFinishedInterview(SNAPSHOT);
+        JsonNode companyFit = json("""
+                {
+                  "comment": "오너십 관점에서 원인을 끝까지 따라간 설명이 보였습니다.",
+                  "matchedFocus": [
+                    { "factId": "23", "evidence": "원인을 직접 추적했습니다.", "questionIds": ["%1$s", "%2$s"] }
+                  ]
+                }""".formatted(answeredQuestionId, unansweredQuestionId));
+        when(aiServerClient.requestSoloFeedback(any())).thenAnswer(invocation -> {
+            feedbackService.handleCallback(succeeded(companyFit));
+            return new FeedbackAcceptedResponse(jobId, sessionId, "accepted", null);
+        });
+
+        feedbackService.requestFeedback(USER_ID, interview.getInterviewId());
+        entityManager.flush();
+        entityManager.clear();
+
+        FeedbackEntity saved = feedbackRepository.findByJobId(jobId).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(FeedbackStatus.SUCCEEDED);
+        assertThat(saved.getCompanyFit().matchedFocus()).singleElement()
+                .extracting(CompanyFitResponse.Item::questionIds).asInstanceOf(InstanceOfAssertFactories.LIST)
+                .containsExactly(answeredQuestionId);
+        assertThat(saved.getRequestedQuestionIds()).containsExactly(answeredQuestionId);
+    }
+
+    /** 문항 목록을 남기기 전에 보낸 요청의 콜백은 어느 문항도 근거로 인정하지 않는다. 총평만 있는 코멘트는 둔다. */
+    @Test
+    void 보낸_문항_목록이_없으면_근거_있는_항목을_인정하지_않는다() {
+        givenFinishedInterview(SNAPSHOT);
+
+        FeedbackEntity withItems = callback(json("""
+                {
+                  "comment": "오너십이 잘 드러났습니다.",
+                  "matchedFocus": [ { "factId": "23", "evidence": "근거", "questionIds": ["%s"] } ]
+                }""".formatted(answeredQuestionId)));
+        assertThat(withItems.getStatus()).isEqualTo(FeedbackStatus.SUCCEEDED);
+        assertThat(withItems.getCompanyFit()).isNull();
+
+        FeedbackEntity commentOnly = callback(json("""
+                { "comment": "이번 답변에서는 관찰할 기회가 없었습니다.", "matchedFocus": [], "gaps": [] }"""));
+        assertThat(commentOnly.getCompanyFit().comment()).isEqualTo("이번 답변에서는 관찰할 기회가 없었습니다.");
     }
 
     /** 기업을 고르지 않은 면접에 코멘트가 와도 잇지 않는다. */
