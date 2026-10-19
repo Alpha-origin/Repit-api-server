@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+import repit.repit_api_server.domain.company.dto.CompanySummaryResponse;
 import repit.repit_api_server.domain.company.entity.CompanyEntity;
 import repit.repit_api_server.domain.company.entity.CompanyFactEntity;
 import repit.repit_api_server.domain.company.entity.CompanySourceEntity;
@@ -19,13 +21,17 @@ import repit.repit_api_server.domain.company.repository.CompanyFactRepository;
 import repit.repit_api_server.domain.company.repository.CompanyRepository;
 import repit.repit_api_server.domain.company.repository.CompanySourceRepository;
 import repit.repit_api_server.domain.company.service.CompanyQueryService;
+import repit.repit_api_server.domain.company.service.CompanyVisibility;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,6 +58,10 @@ class CompanyDataImporterTest {
     private CompanySourceRepository companySourceRepository;
     @Autowired
     private CompanyQueryService companyQueryService;
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -156,17 +166,73 @@ class CompanyDataImporterTest {
                 .getFirst().getContent()).isEqualTo("여러 이용자가 실시간으로 대전하는 모바일 대전 게임");
     }
 
+    /** 파일이 빠졌다고 숨기거나 지우지 않는다(02 §3-3). 일부 파일만 배포돼도 공개 기업이 사라지지 않는다. */
     @Test
-    void 파일이_빠진_기업은_숨기고_돌아오면_다시_공개한다() throws IOException {
+    void 파일이_빠진_기업은_숨기지_않고_기존_정보로_둔다() throws IOException {
         importer.importFrom(location());
+        List<Long> gamesFacts = factIds("sample-games");
         Files.delete(dir.resolve("sample-games.json"));
 
-        assertThat(importer.importFrom(location())).isEqualTo(new Result(0, 0, 2, 1, 0));
-        assertThat(company("sample-games").getStatus()).isEqualTo(CompanyStatus.HIDDEN);
+        assertThat(importer.importFrom(location())).isEqualTo(new Result(0, 0, 2, 0, 0));
+        assertThat(company("sample-games").getStatus()).isEqualTo(CompanyStatus.PUBLISHED);
+        assertThat(factIds("sample-games")).isEqualTo(gamesFacts);
+    }
 
-        copy("sample-games.json", dir.resolve("sample-games.json"));
+    /** 숨김은 설정으로만 한다. 파일이 있어도 반영하지 않고, 설정에서 빼면 다음에 다시 공개한다. */
+    @Test
+    void 설정으로_숨긴_기업은_파일이_있어도_숨기고_빼면_다시_공개한다() throws IOException {
+        importer.importFrom(location());
+        Long gamesId = company("sample-games").getCompanyId();
+
+        assertThat(importer.importFrom(location(), Set.of("sample-games"))).isEqualTo(new Result(0, 0, 2, 1, 0));
+        assertThat(company("sample-games").getStatus()).isEqualTo(CompanyStatus.HIDDEN);
+        assertThat(companyQueryService.search(null, null)).extracting(CompanySummaryResponse::companyId)
+                .doesNotContain(gamesId);
+        // 이미 숨긴 기업을 다시 숨기지는 않는다.
+        assertThat(importer.importFrom(location(), Set.of("sample-games"))).isEqualTo(new Result(0, 0, 2, 0, 0));
+
         assertThat(importer.importFrom(location())).isEqualTo(new Result(0, 1, 2, 0, 0));
         assertThat(company("sample-games").getStatus()).isEqualTo(CompanyStatus.PUBLISHED);
+        assertThat(company("sample-games").getCompanyId()).isEqualTo(gamesId);
+    }
+
+    /** 위치를 비운 환경에서도 내릴 기업은 내린다. */
+    @Test
+    void 위치가_비어도_설정으로_숨긴다() throws IOException {
+        importer.importFrom(location());
+
+        assertThat(importer.importFrom("", Set.of("sample-pay"))).isEqualTo(new Result(0, 0, 0, 1, 0));
+        assertThat(company("sample-pay").getStatus()).isEqualTo(CompanyStatus.HIDDEN);
+    }
+
+    /** 운영처럼 SAMPLE을 허용하지 않는 환경은 샘플 패키지를 가져오지 않고, 이미 들어온 샘플도 목록에 내보내지 않는다. */
+    @Test
+    void SAMPLE을_막은_환경은_샘플을_가져오지도_내보내지도_않는다() throws IOException {
+        CompanyVisibility production = new CompanyVisibility(false);
+        CompanyDataImporter productionImporter = new CompanyDataImporter(companyRepository, companySourceRepository,
+                companyFactRepository, transactionTemplate, objectMapper, production);
+
+        assertThat(productionImporter.importFrom(location(), Set.of())).isEqualTo(new Result(0, 0, 0, 0, 3));
+        assertThat(companyRepository.findAll()).isEmpty();
+
+        // 허용하던 때 들어온 샘플이 남아 있어도 운영 목록에는 나가지 않는다.
+        importer.importFrom(location());
+        assertThat(company("sample-commerce").isSample()).isTrue();
+        assertThat(new CompanyQueryService(companyRepository, companyFactRepository, production).search(null, null))
+                .isEmpty();
+        assertThat(companyQueryService.search(null, null)).hasSize(3);
+    }
+
+    /** 검수하지 않은 실제 기업이 DB에 들어와 있어도 목록에 내보내지 않는다. 가져오기는 검수 기록 없는 실제 기업을 막는다. */
+    @Test
+    void 검수_기록이_없는_실제_기업은_목록에_나가지_않는다() throws IOException {
+        importer.importFrom(location());
+        entityManager.createNativeQuery("update company set sample = false where code = 'sample-pay'").executeUpdate();
+        entityManager.clear();
+
+        assertThat(companyQueryService.search(null, null)).extracting(CompanySummaryResponse::displayName)
+                .doesNotContain("샘플페이")
+                .hasSize(2);
     }
 
     @Test
@@ -200,10 +266,11 @@ class CompanyDataImporterTest {
         importer.importFrom(location());
         Path empty = Files.createDirectory(dir.resolve("empty"));
 
-        assertThat(importer.importFrom("")).isEqualTo(Result.NONE);
-        assertThat(importer.importFrom(null)).isEqualTo(Result.NONE);
+        Result none = new Result(0, 0, 0, 0, 0);
+        assertThat(importer.importFrom("")).isEqualTo(none);
+        assertThat(importer.importFrom(null)).isEqualTo(none);
         // 위치를 잘못 적었을 수 있다. 숨기지도 않는다.
-        assertThat(importer.importFrom("file:" + empty.toAbsolutePath() + "/*.json")).isEqualTo(Result.NONE);
+        assertThat(importer.importFrom("file:" + empty.toAbsolutePath() + "/*.json")).isEqualTo(none);
         assertThat(companyRepository.findAllByStatus(CompanyStatus.PUBLISHED)).hasSize(3);
     }
 
@@ -230,5 +297,40 @@ class CompanyDataImporterTest {
         Files.delete(dir.resolve("sample-pay.json"));
         importer.importFrom(location());
         assertThat(parentOf("sample-commerce")).isNull();
+    }
+
+    /** 자기 자신이나 돌고 돌아 자기에게 오는 모회사는 연결하지 않는다. 파일은 반영한다(02 §3-2 규칙 8). */
+    @Test
+    void 자기_참조와_순환_모회사는_연결하지_않고_파일은_반영한다() throws IOException {
+        rewrite("sample-commerce.json", "\"parentCode\": null", "\"parentCode\": \"sample-commerce\"");
+        rewrite("sample-pay.json", "\"parentCode\": null", "\"parentCode\": \"sample-games\"");
+        rewrite("sample-games.json", "\"parentCode\": null", "\"parentCode\": \"sample-pay\"");
+
+        assertThat(importer.importFrom(location())).isEqualTo(new Result(3, 0, 0, 0, 0));
+        assertThat(parentOf("sample-commerce")).isNull();
+        assertThat(parentOf("sample-pay")).isNull();
+        assertThat(parentOf("sample-games")).isNull();
+    }
+
+    /** 고리에 들어가기만 하는 기업은 연결한다. 고리 안의 기업만 끊는다. */
+    @Test
+    void 고리_밖에서_고리로_이어지는_연결은_둔다() throws IOException {
+        rewrite("sample-commerce.json", "\"parentCode\": null", "\"parentCode\": \"sample-pay\"");
+        rewrite("sample-pay.json", "\"parentCode\": null", "\"parentCode\": \"sample-games\"");
+        rewrite("sample-games.json", "\"parentCode\": null", "\"parentCode\": \"sample-pay\"");
+
+        importer.importFrom(location());
+        assertThat(parentOf("sample-commerce").getCode()).isEqualTo("sample-pay");
+        assertThat(parentOf("sample-pay")).isNull();
+        assertThat(parentOf("sample-games")).isNull();
+    }
+
+    @Test
+    void 샘플_패키지는_SAMPLE로_표시하고_정렬은_분류_이름_id_순이다() throws IOException {
+        importer.importFrom(location());
+
+        assertThat(companyRepository.findAll()).allMatch(CompanyEntity::isSample);
+        assertThat(companyQueryService.search(null, null)).extracting(CompanySummaryResponse::category)
+                .isSortedAccordingTo(Comparator.naturalOrder());
     }
 }

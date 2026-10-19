@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallbackRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackSoloRequest;
@@ -35,6 +36,9 @@ import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -152,14 +156,42 @@ public class FeedbackService {
 
     /** 분석 서버에 채점을 맡기고 접수 사실을 남긴다. 웹이 부르는 길과 채팅 서버가 부르는 길이 함께 쓴다. */
     private FeedbackAcceptedResponse startFeedback(InterviewEntity interview) {
+        Transcript transcript = loadTranscript(interview);
         // N:1은 면접관별 평가까지 받아야 해서 엔드포인트가 다르다. 1:1 채점에 태우면
         // 질문이 누구 것인지 잃고 personas 블록도 오지 않는다.
-        FeedbackAcceptedResponse accepted = interview.getMode() == InterviewMode.MULTI
-                ? aiServerClient.requestMultiFeedback(toMultiRequest(interview))
-                : aiServerClient.requestSoloFeedback(toSoloRequest(interview));
+        FeedbackMultiRequest multi = interview.getMode() == InterviewMode.MULTI ? toMultiRequest(interview, transcript) : null;
+        FeedbackSoloRequest solo = multi == null ? toSoloRequest(interview, transcript) : null;
 
-        saveAccepted(interview, accepted == null ? null : accepted.getJobId());
+        // 기업 관점 코멘트의 근거는 이 요청에 실은 답변 있는 문항뿐이다. 콜백은 접수 응답보다 먼저 올 수 있어 보내기 전에 남긴다.
+        List<String> requestedQuestionIds = answeredQuestionIds(transcript);
+        interviewRepository.recordLastFeedbackQuestionIds(interview.getInterviewId(), toJson(requestedQuestionIds));
+
+        FeedbackAcceptedResponse accepted = multi != null
+                ? aiServerClient.requestMultiFeedback(multi)
+                : aiServerClient.requestSoloFeedback(solo);
+
+        saveAccepted(interview, accepted == null ? null : accepted.getJobId(), requestedQuestionIds);
         return accepted;
+    }
+
+    /**
+     * 채점 요청에 실은 문항 가운데 내용 있는 답변이 붙은 것의 id. 요청에 실은 문자열 그대로이고 면접 진행 순서다.
+     * 기업 관점 코멘트는 이 목록에 있는 문항만 근거로 댈 수 있다.
+     */
+    private static List<String> answeredQuestionIds(Transcript transcript) {
+        Set<Long> answered = transcript.answers().stream()
+                .filter(answer -> answer.getContent() != null && !answer.getContent().isBlank())
+                .map(AnswerEntity::getQuestionId)
+                .collect(Collectors.toSet());
+        return transcript.questions().stream()
+                .map(QuestionEntity::getQuestionId)
+                .filter(answered::contains)
+                .map(String::valueOf)
+                .toList();
+    }
+
+    private static String toJson(List<String> questionIds) {
+        return JsonMapper.shared().writeValueAsString(questionIds);
     }
 
     /**
@@ -173,10 +205,13 @@ public class FeedbackService {
      * 없었더라도 결과가 빈 PENDING 행이 최신이 되어, 조회가 그것을 집어 들고 이미 받아둔 결과를
      * 가린다. 그래서 같은 작업의 행이 이미 있으면 그대로 둔다.
      */
-    private void saveAccepted(InterviewEntity interview, String jobId) {
-        if (jobId != null && feedbackRepository.findByJobId(jobId).isPresent()) {
+    private void saveAccepted(InterviewEntity interview, String jobId, List<String> requestedQuestionIds) {
+        FeedbackEntity early = jobId == null ? null : feedbackRepository.findByJobId(jobId).orElse(null);
+        if (early != null) {
             log.info("채점 결과가 접수 응답보다 먼저 도착해 이미 기록돼 있습니다. interviewId={}, jobId={}",
                     interview.getInterviewId(), jobId);
+            // 그 콜백은 보내기 전에 남긴 같은 목록으로 근거를 가렸다. 같은 콜백이 다시 와도 이 작업의 목록을 쓰도록 채워 둔다.
+            feedbackRepository.recordRequestedQuestionIds(early.getFeedbackId(), toJson(requestedQuestionIds));
             return;
         }
 
@@ -187,6 +222,7 @@ public class FeedbackService {
                     .sessionId(interview.getSessionId())
                     .jobId(jobId)
                     .status(FeedbackStatus.PENDING)
+                    .requestedQuestionIds(requestedQuestionIds)
                     .build());
         } catch (DataIntegrityViolationException e) {
             // 확인과 저장 사이에 콜백이 끼어든 경우다. 결과는 콜백이 이미 남겼으니 접수만 넘어간다.
@@ -251,8 +287,7 @@ public class FeedbackService {
         return new Transcript(questions, answers, questionIds);
     }
 
-    private FeedbackSoloRequest toSoloRequest(InterviewEntity interview) {
-        Transcript transcript = loadTranscript(interview);
+    private FeedbackSoloRequest toSoloRequest(InterviewEntity interview, Transcript transcript) {
         PersonaEntity persona = soloPersonaOf(interview);
 
         return FeedbackSoloRequest.builder()
@@ -284,8 +319,7 @@ public class FeedbackService {
      * 명단이 있어야 담당 문항이 없는 면접관도 결과에 자리를 얻고, 질문별 면접관이 있어야
      * 면접관별 평가가 나뉜다.
      */
-    private FeedbackMultiRequest toMultiRequest(InterviewEntity interview) {
-        Transcript transcript = loadTranscript(interview);
+    private FeedbackMultiRequest toMultiRequest(InterviewEntity interview, Transcript transcript) {
         List<PersonaEntity> members = orderedPersonas(interview.getInterviewId());
         Map<Long, Long> personaByQuestion = resolveQuestionPersonas(transcript, members.getFirst().getPersonaId());
 
@@ -507,7 +541,7 @@ public class FeedbackService {
         }
 
         if (STATUS_SUCCEEDED.equalsIgnoreCase(request.getStatus()) && request.getResult() != null) {
-            applySuccess(feedback, request.getResult());
+            applySuccess(feedback, request.getResult(), request.getJobId());
         } else {
             applyFailure(feedback, request.getError());
         }
@@ -569,7 +603,7 @@ public class FeedbackService {
      * 시도한 뒤 결과를 영구 폐기하고, 사용자는 면접을 다 보고도 채점을 영영 받지 못한다.
      * 어긋난 사실은 로그로 남겨 원인을 좇는다.
      */
-    private void applySuccess(FeedbackEntity feedback, FeedbackCallbackRequest.Result result) {
+    private void applySuccess(FeedbackEntity feedback, FeedbackCallbackRequest.Result result, String callbackJobId) {
         Long interviewId = feedback.getInterviewId();
         RecordedCounts counts = recordedCounts(interviewId);
         Set<Long> members = interviewMembers(interviewId);
@@ -599,8 +633,12 @@ public class FeedbackService {
             feedback.setQuestionCount(counts.questionCountOr(overall.getQuestionCount(),
                     "면접 전체 문항 수", interviewId));
         }
-        // 기업 관점 코멘트. 읽지 못해도 피드백은 그대로 저장한다.
-        feedback.setCompanyFit(CompanyFitReader.read(result.getCompanyFit(), interviewId));
+        // 기업 관점 코멘트. 그 면접의 스냅샷과 이 작업에 보낸 답변 있는 문항에 맞지 않으면 비워 두고, 피드백은 그대로 저장한다.
+        CompanySnapshot snapshot = interviewRepository.findById(interviewId)
+                .map(InterviewEntity::getCompanySnapshot)
+                .orElse(null);
+        feedback.setCompanyFit(CompanyFitReader.read(result.getCompanyFit(), snapshot,
+                requestedQuestionIds(feedback, callbackJobId), interviewId));
         feedback.setStatus(FeedbackStatus.SUCCEEDED);
         feedback.setErrorStatusCode(null);
         feedback.setErrorMessage(null);
@@ -611,6 +649,35 @@ public class FeedbackService {
 
         feedbackPersonaRepository.saveAll(personaRows);
         feedbackItemRepository.saveAll(itemRows);
+    }
+
+    /**
+     * 이 콜백의 기업 관점 코멘트가 근거로 댈 수 있는 문항. 콜백 시점의 면접 기록에서 다시 뽑지 않는다 — 요청 뒤 답변 API로
+     * 더해진 답변의 문항이 근거로 통과한다.
+     *
+     * <ol>
+     *   <li>이 작업의 접수 행이면 접수할 때 남긴 목록이다.</li>
+     *   <li>콜백이 접수 응답보다 먼저 와 행에 이 작업의 목록이 없으면, 보내기 직전에 면접에 남긴 목록이다.</li>
+     *   <li>둘 다 없으면(목록을 남기기 전에 보낸 요청) 어느 문항도 근거로 인정하지 않는다.</li>
+     * </ol>
+     */
+    private Set<String> requestedQuestionIds(FeedbackEntity feedback, String callbackJobId) {
+        if (feedback.getRequestedQuestionIds() != null && Objects.equals(feedback.getJobId(), callbackJobId)) {
+            return new LinkedHashSet<>(feedback.getRequestedQuestionIds());
+        }
+        String latest = interviewRepository.findLastFeedbackQuestionIds(feedback.getInterviewId()).orElse(null);
+        if (latest == null) {
+            log.warn("채점 요청에 보낸 문항 목록이 없어 기업 관점 코멘트의 근거를 인정하지 않습니다. interviewId={}, jobId={}",
+                    feedback.getInterviewId(), callbackJobId);
+            return Set.of();
+        }
+        try {
+            return new LinkedHashSet<>(JsonMapper.shared().readValue(latest, new TypeReference<List<String>>() { }));
+        } catch (JacksonException e) {
+            log.warn("채점 요청에 보낸 문항 목록을 읽지 못해 기업 관점 코멘트의 근거를 인정하지 않습니다. interviewId={}",
+                    feedback.getInterviewId());
+            return Set.of();
+        }
     }
 
     /** 이 면접에 실제로 앉아 있던 면접관. 1:1은 명단이 없어 비어 있다. */

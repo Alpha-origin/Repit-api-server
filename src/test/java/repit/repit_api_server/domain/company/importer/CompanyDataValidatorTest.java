@@ -177,9 +177,28 @@ class CompanyDataValidatorTest {
                 .put("reviewedBy", "검수자").put("reviewedAt", "2026-10-15")))).isEmpty();
     }
 
+    /** 자기 참조는 파일을 막지 않는다. 가져오기가 관계만 저장하지 않는다(02 §3-2 규칙 8). */
     @Test
-    void 자기_자신을_모회사로_두면_오류다() {
-        assertThat(violate(node -> node.put("parentCode", "sample-commerce"))).anyMatch(e -> e.startsWith("parentCode"));
+    void 자기_자신을_모회사로_둬도_파일_오류는_아니다() {
+        assertThat(violate(node -> node.put("parentCode", "sample-commerce"))).isEmpty();
+    }
+
+    /** 오류 문구는 로그에 남는다. 출처 주소·법인 식별번호 같은 파일 값은 싣지 않는다. */
+    @Test
+    void 오류_문구에_파일_값을_싣지_않는다() {
+        List<String> errors = violate(node -> {
+            ((ObjectNode) node.get("sources").get(0)).put("url", "http://secret.example/path");
+            node.put("dartCorpCode", "12AB");
+        });
+
+        assertThat(errors).isNotEmpty().noneMatch(e -> e.contains("secret.example") || e.contains("12AB"));
+    }
+
+    /** 실행 입력은 앞뒤 공백을 뺀 뒤 센다. */
+    @Test
+    void 길이는_앞뒤_공백을_빼고_센다() {
+        assertThat(violate(node -> fact(node, 0).put("title", "  " + "가".repeat(20) + "  "))).isEmpty();
+        assertThat(violate(node -> fact(node, 0).put("title", "가".repeat(21)))).anyMatch(e -> e.startsWith("facts[0].title"));
     }
 
     @Test

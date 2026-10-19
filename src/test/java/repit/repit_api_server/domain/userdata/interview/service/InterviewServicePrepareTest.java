@@ -8,6 +8,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
+import repit.repit_api_server.domain.company.dto.CompanyBadge;
+import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 import repit.repit_api_server.domain.company.service.CompanySnapshotFactory;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
@@ -24,8 +26,10 @@ import repit.repit_api_server.global.client.ChatServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.response.UserResponse;
 
+import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
@@ -117,5 +121,28 @@ class InterviewServicePrepareTest {
             verify(questionTailorService).requestTailor(any(), any());
             clearInvocations(analysisLaunchService, questionTailorService);
         }
+    }
+
+    /** 준비 응답의 기업 배지는 면접 스냅샷에서 읽는다. 기업을 고르지 않은 면접은 비어 있다. */
+    @Test
+    void 준비_응답과_재시도_응답에_면접의_기업_배지를_싣는다() {
+        when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(InterviewEntity.builder()
+                .interviewId(INTERVIEW_ID).userId(USER_ID).sessionId("session-1").companyId(12L)
+                .companySnapshot(new CompanySnapshot("12", "샘플커머스", "CONSUMER", List.of(), "요약"))
+                .build()));
+        QuestionTailorEntity tailor = QuestionTailorEntity.builder()
+                .interviewId(INTERVIEW_ID).userId(USER_ID).status(TailorStatus.PENDING).build();
+        when(questionTailorService.requestTailor(any(), any())).thenReturn(tailor);
+        when(questionTailorService.retryPreparation(any(), any())).thenReturn(tailor);
+        AuthUser user = userWithMajor("MAJOR_FRONTEND");
+
+        assertThat(service.prepareInterview(user, INTERVIEW_ID).getCompany())
+                .isEqualTo(new CompanyBadge(12L, "샘플커머스"));
+        assertThat(service.retryPreparation(user, INTERVIEW_ID).getCompany())
+                .isEqualTo(new CompanyBadge(12L, "샘플커머스"));
+
+        when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(InterviewEntity.builder()
+                .interviewId(INTERVIEW_ID).userId(USER_ID).sessionId("session-1").build()));
+        assertThat(service.prepareInterview(user, INTERVIEW_ID).getCompany()).isNull();
     }
 }

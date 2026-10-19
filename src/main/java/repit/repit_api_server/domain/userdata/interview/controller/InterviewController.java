@@ -9,6 +9,7 @@ import repit.repit_api_server.domain.userdata.interview.dto.response.ChatIntervi
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewPrepareResponse;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.service.ChatInterviewResultService;
+import repit.repit_api_server.domain.userdata.interview.service.InterviewCreateService;
 import repit.repit_api_server.domain.userdata.interview.service.InterviewService;
 import repit.repit_api_server.domain.userdata.answer.service.AnswerService;
 import repit.repit_api_server.global.auth.AuthUser;
@@ -21,14 +22,21 @@ import java.util.List;
 @RequiredArgsConstructor
 public class InterviewController {
     private final InterviewService interviewService;
+    private final InterviewCreateService interviewCreateService;
     private final ChatInterviewResultService chatInterviewResultService;
     private final AnswerService answerService;
 
+    /**
+     * 최종 면접 생성. 기업을 골랐으면 companyId를 싣는다. 준비는 만들지 않는다 — 웹이 이어서 면접 시작을 부른다.
+     *
+     * <p>선택 헤더 Idempotency-Key(UUID)를 보내면 같은 키의 재전송에 처음 만든 면접을 돌려준다.
+     */
     @PostMapping("/create")
     public ApiResponse<InterviewResponse> createInterview(
             @AuthenticationPrincipal AuthUser authUser,
+            @RequestHeader(value = InterviewCreateService.IDEMPOTENCY_KEY_HEADER, required = false) String idempotencyKey,
             @RequestBody CreateInterviewRequest request) {
-        return ApiResponse.created(interviewService.createInterview(authUser.id(), request));
+        return ApiResponse.created(interviewCreateService.create(authUser.id(), idempotencyKey, request));
     }
 
     // 면접 시작. 질문 재작성을 접수만 하고, 준비가 끝나면 채팅 서버로 면접 데이터가 넘어간다.

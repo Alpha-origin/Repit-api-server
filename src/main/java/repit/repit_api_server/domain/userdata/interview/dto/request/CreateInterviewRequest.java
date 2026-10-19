@@ -18,7 +18,8 @@ import java.util.List;
  *
  * <p>N:1 면접은 면접관이 여럿이라 {@code personaIds}로 보낸다. 이 값이 있으면 위 두 값은 보지 않는다.
  *
- * <p>{@code companyId}는 선택이다. 고르면 그 기업 정보를 면접에 스냅샷으로 남긴다. 1:1·N:1 모두 받는다.
+ * <p>{@code companyId}는 선택이다. 고르면 그 기업 정보를 면접에 스냅샷으로 남긴다. 1:1·N:1 모두 받는다. 기업 정보 자체
+ * (facts·요약·표시명·검수 상태)는 받지 않는다 — 서버가 companyId로 다시 읽어 만든다. 본문에 실려 와도 버린다.
  */
 @Getter
 @Setter

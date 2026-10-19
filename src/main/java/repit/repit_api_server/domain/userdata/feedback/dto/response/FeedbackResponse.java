@@ -81,6 +81,9 @@ public class FeedbackResponse {
                                       PersonaEntity persona,
                                       List<FeedbackPersonaEntity> personas,
                                       List<FeedbackItemEntity> items) {
+        CompanyBadge company = interview == null
+                ? null
+                : CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot());
         return FeedbackResponse.builder()
                 .feedbackId(feedback.getFeedbackId())
                 .interviewId(feedback.getInterviewId())
@@ -103,8 +106,9 @@ public class FeedbackResponse {
                 .personas(personas.stream().map(FeedbackPersonaResponse::from).toList())
                 .feedbacks(items.stream().map(FeedbackItemResponse::from).toList())
                 .createdAt(feedback.getCreatedAt())
-                .company(interview == null ? null : CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot()))
-                .companyFit(feedback.getCompanyFit())
+                .company(company)
+                // 기업을 고르지 않은 면접에는 기업 코멘트를 잇지 않는다. 배지와 코멘트는 함께 있거나 함께 비어 있다.
+                .companyFit(company == null ? null : feedback.getCompanyFit())
                 .build();
     }
 }
