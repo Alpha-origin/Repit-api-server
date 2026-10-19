@@ -4,6 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import repit.repit_api_server.domain.company.dto.CompanyBadge;
+import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
 import repit.repit_api_server.domain.userdata.question.preparation.FailureStage;
@@ -38,12 +40,15 @@ public class InterviewPrepareResponse {
     // 채팅 서버까지 데이터가 넘어갔는지. PREPARING 동안은 false다.
     private boolean chatDelivered;
     private String message;
+    // 면접을 만들 때 고른 기업. 고르지 않았으면 비어 있다. 면접 스냅샷에서 읽는다.
+    private CompanyBadge company;
 
-    public static InterviewPrepareResponse of(QuestionTailorEntity tailor, String sessionId) {
+    public static InterviewPrepareResponse of(QuestionTailorEntity tailor, InterviewEntity interview) {
         PreparationState state = PreparationState.of(tailor);
         return InterviewPrepareResponse.builder()
                 .interviewId(tailor.getInterviewId())
-                .sessionId(sessionId)
+                .sessionId(interview.getSessionId())
+                .company(CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot()))
                 .jobId(tailor.getJobId())
                 .analysisJobId(tailor.getAnalysisJobId())
                 .preparationStatus(state.status())

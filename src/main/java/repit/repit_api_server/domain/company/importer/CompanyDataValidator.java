@@ -15,10 +15,13 @@ import java.util.regex.Pattern;
 import static repit.repit_api_server.domain.company.CompanyLimits.length;
 
 /**
- * 패키지 파일 하나에 적용하는 검증(01 §3 규칙 1~7, 9). 하나라도 어기면 그 파일만 건너뛴다.
+ * 패키지 파일 하나에 적용하는 검증(02 §3-2 규칙 1~5, 7). 하나라도 어기면 그 파일만 건너뛴다.
  *
- * <p>묶음 전체를 봐야 하는 규칙(8 유일성, 10 모회사)은 모든 파일을 읽은 뒤 가져오기가 본다.
+ * <p>묶음 전체를 봐야 하는 규칙(6 유일성, 8 모회사)은 모든 파일을 읽은 뒤 가져오기가 본다. 모회사를 자기 자신으로 둔
+ * 파일도 여기서 막지 않는다 — 관계만 저장하지 않으면 되는 일이라 가져오기가 연결을 빼고 경고한다.
  * 여기를 통과한 데이터는 분석 서버에서 422가 나지 않는다 — 상한이 분석 서버 계약과 같다.
+ *
+ * <p>오류 문구는 로그에 남는다. 파일의 값(주소·법인 식별번호·문장)은 싣지 않고 어느 필드가 어떤 규칙을 어겼는지만 쓴다.
  */
 public final class CompanyDataValidator {
 
@@ -43,7 +46,7 @@ public final class CompanyDataValidator {
 
         // 1. 필수 필드와 길이·개수 상한
         if (pkg.code() == null || !CODE.matcher(pkg.code()).matches()) {
-            errors.add("code는 소문자·숫자·하이픈 2~40자여야 합니다: " + pkg.code());
+            errors.add("code는 소문자·숫자·하이픈 2~40자여야 합니다.");
         }
         text(errors, "displayName", pkg.displayName(), CompanyLimits.DISPLAY_NAME, true);
         text(errors, "legalName", pkg.legalName(), 100, true);
@@ -55,10 +58,6 @@ public final class CompanyDataValidator {
         pattern(errors, "dartCorpCode", pkg.dartCorpCode(), DART_CORP_CODE, "8자리 숫자");
         pattern(errors, "businessRegNo", pkg.businessRegNo(), BUSINESS_REG_NO, "10자리 숫자");
         required(errors, "dataAsOf", pkg.dataAsOf());
-        // 자기 자신을 모회사로 두면 목록에 자기 이름이 모회사로 나가고, 모회사를 따라가는 코드가 생기면 끝없이 돈다.
-        if (pkg.parentCode() != null && pkg.parentCode().equals(pkg.code())) {
-            errors.add("parentCode가 자기 code와 같습니다: " + pkg.code());
-        }
         if (pkg.review() != null) {
             // 컬럼이 VARCHAR(50)이다. 넘으면 검증 오류 대신 저장 단계의 예외로만 드러난다.
             text(errors, "review.reviewedBy", pkg.review().reviewedBy(), 50, false);
@@ -72,7 +71,7 @@ public final class CompanyDataValidator {
             text(errors, at + "sourceKey", source.sourceKey(), 40, true);
             required(errors, at + "sourceType", source.sourceType());
             if (source.url() == null || !source.url().startsWith("https://")) {
-                errors.add(at + "url은 https:// 주소여야 합니다: " + source.url());
+                errors.add(at + "url은 https:// 주소여야 합니다.");
             }
             text(errors, at + "title", source.title(), 200, false);
             text(errors, at + "scope", source.scope(), 100, false);
@@ -108,15 +107,16 @@ public final class CompanyDataValidator {
 
         // 4. 출처 연결
         Set<String> sourceKeys = new HashSet<>();
-        for (CompanyDataPackage.Source source : sources) {
-            if (source.sourceKey() != null && !sourceKeys.add(source.sourceKey())) {
-                errors.add("sourceKey가 겹칩니다: " + source.sourceKey());
+        for (int i = 0; i < sources.size(); i++) {
+            String sourceKey = sources.get(i).sourceKey();
+            if (sourceKey != null && !sourceKeys.add(sourceKey)) {
+                errors.add("sourceKey가 겹칩니다: sources[" + i + "]");
             }
         }
         for (int i = 0; i < facts.size(); i++) {
             String sourceKey = facts.get(i).sourceKey();
             if (sourceKey != null && !sourceKeys.contains(sourceKey)) {
-                errors.add("facts[" + i + "].sourceKey가 sources에 없습니다: " + sourceKey);
+                errors.add("facts[" + i + "].sourceKey가 sources에 없습니다.");
             }
         }
 
@@ -176,6 +176,7 @@ public final class CompanyDataValidator {
         }
     }
 
+    // 실행 입력은 앞뒤 공백을 뺀 뒤 센다(00 §2). 스냅샷도 같은 값을 싣는다.
     private static void text(List<String> errors, String field, String value, int max, boolean required) {
         if (isBlank(value)) {
             if (required) {
@@ -183,8 +184,8 @@ public final class CompanyDataValidator {
             }
             return;
         }
-        if (length(value) > max) {
-            errors.add(field + "는 " + max + "자 이하여야 합니다: " + length(value) + "자");
+        if (length(value.strip()) > max) {
+            errors.add(field + "는 " + max + "자 이하여야 합니다: " + length(value.strip()) + "자");
         }
     }
 
@@ -202,7 +203,7 @@ public final class CompanyDataValidator {
 
     private static void pattern(List<String> errors, String field, String value, Pattern pattern, String rule) {
         if (value != null && !pattern.matcher(value).matches()) {
-            errors.add(field + "는 " + rule + "여야 합니다: " + value);
+            errors.add(field + "는 " + rule + "여야 합니다.");
         }
     }
 

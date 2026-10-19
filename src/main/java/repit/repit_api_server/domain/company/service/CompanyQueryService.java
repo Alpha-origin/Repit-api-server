@@ -24,7 +24,11 @@ import java.util.stream.Stream;
 /**
  * 공개 기업 목록·검색.
  *
- * <p>공개 기업이 30개 안팎이라 요청마다 전부 읽어 메모리에서 거른다. 캐시는 두지 않는다.
+ * <p>공개 기업이 30개 안팎이라 요청마다 전부 읽어 메모리에서 거른다. 캐시는 두지 않는다. 검색어를 SQL 패턴으로 넘기지 않으므로
+ * {@code %}·{@code _}도 글자 그대로 찾는다.
+ *
+ * <p>내보내는 기업은 {@link CompanyVisibility} 조건을 지킨다. 공개 기업이 없으면 빈 목록이고, 조회 장애는 예외(5xx)로 나가
+ * 빈 목록과 구분된다.
  */
 @Service
 @RequiredArgsConstructor
@@ -37,6 +41,7 @@ public class CompanyQueryService {
 
     private final CompanyRepository companyRepository;
     private final CompanyFactRepository companyFactRepository;
+    private final CompanyVisibility companyVisibility;
 
     @Transactional(readOnly = true)
     public List<CompanySummaryResponse> search(String q, CompanyCategory category) {
@@ -46,11 +51,14 @@ public class CompanyQueryService {
                     "검색어는 " + QUERY_MIN_LENGTH + "~" + QUERY_MAX_LENGTH + "자로 입력해주세요.");
         }
 
+        // 정렬은 분류 선언 순서, 이름, companyId 순으로 고정한다. 이름이 같아도 요청마다 순서가 바뀌지 않는다.
         List<CompanyEntity> companies = companyRepository.findWithParentByStatus(CompanyStatus.PUBLISHED).stream()
+                .filter(companyVisibility::isSelectable)
                 .filter(company -> category == null || company.getCategory() == category)
                 .filter(company -> query.isEmpty() || matches(company, query))
                 .sorted(Comparator.comparing(CompanyEntity::getCategory)
-                        .thenComparing(CompanyEntity::getDisplayName))
+                        .thenComparing(CompanyEntity::getDisplayName)
+                        .thenComparing(CompanyEntity::getCompanyId))
                 .toList();
         if (companies.isEmpty()) {
             return List.of();
@@ -76,10 +84,10 @@ public class CompanyQueryService {
                 .toList();
     }
 
-    // 숨긴 모회사의 이름은 내보내지 않는다. 정보 수정·삭제 요청으로 내린 기업 이름이 계열사 카드에 계속 남는다.
-    private static String parentDisplayName(CompanyEntity company) {
+    // 내보낼 수 없는 모회사의 이름은 싣지 않는다. 정보 수정·삭제 요청으로 내린 기업 이름이 계열사 카드에 계속 남는다.
+    private String parentDisplayName(CompanyEntity company) {
         CompanyEntity parent = company.getParent();
-        return parent == null || parent.getStatus() != CompanyStatus.PUBLISHED ? null : parent.getDisplayName();
+        return companyVisibility.isSelectable(parent) ? parent.getDisplayName() : null;
     }
 
     /** 보이는 이름, 법인 이름, 별칭 가운데 하나라도 검색어를 품으면 맞다. 공백·대소문자는 보지 않는다. */

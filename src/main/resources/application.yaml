@@ -154,7 +154,14 @@ app:
     # 나가지 않는다. 분석·채팅 서버는 모르는 필드를 조용히 버리므로, 두 서버가 company를 받도록 배포된 뒤에 채운다.
     # 개발·스테이징: classpath:company-data/sample/*.json
     # 운영: 실제 데이터가 준비되면 classpath:company-data/prod/*.json
+    # 파일이 빠졌다고 기업을 숨기지 않는다. 내릴 기업은 아래 hidden-codes에 넣는다.
     data-location: ${COMPANY_DATA_LOCATION:}
+    # 출처가 모두 SAMPLE인 개발용 패키지를 가져오고 목록·면접 생성에 내보낼지. 개발·스테이징만 true로 켠다.
+    # 운영은 기본값(false) 그대로 둔다 — 위치를 샘플 폴더로 잘못 적어도 샘플이 공개되지 않는다.
+    allow-sample: ${COMPANY_ALLOW_SAMPLE:false}
+    # 목록·신규 선택에서 내릴 기업의 code. 쉼표로 나눈다. 기동할 때 HIDDEN으로 바꾸고, 이미 만든 면접의 스냅샷은 그대로 둔다.
+    # 목록에서 빼면 다음 기동 때 다시 공개한다. 법적 사유의 긴급 삭제는 이 설정으로 대신하지 않는다.
+    hidden-codes: ${COMPANY_HIDDEN_CODES:}
   question-pool:
     # 이 시간이 지나도록 콜백이 오지 않은 사이클 생성 요청은 잃어버린 것으로 보고, 면접을 시작할 때 다시 요청한다.
     generating-timeout: 5m

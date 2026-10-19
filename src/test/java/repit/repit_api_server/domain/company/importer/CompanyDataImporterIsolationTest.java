@@ -19,10 +19,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -30,8 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 가져오기를 실제 트랜잭션 경계 그대로 돌린다(04 §3-4 "기업 하나 = 트랜잭션 하나").
  *
  * <p>테스트 트랜잭션으로 감싸면 가져오기가 그 트랜잭션에 합류해, 한 기업의 DB 오류가 트랜잭션 전체를 망가뜨린다. 그래서
- * 감싸지 않는다. 가져오기는 이번 파일에 없는 공개 기업을 숨기므로, 시작할 때 공개였던 기업은 끝나고 다시 공개로 돌리고
- * 이 테스트가 만든 기업은 지운다.
+ * 감싸지 않는다. 숨김은 이 테스트가 넘긴 code에만 하지만, 혹시 다른 공개 기업이 바뀌어도 남지 않도록 시작할 때 공개였던
+ * 기업은 끝나고 다시 공개로 돌리고 이 테스트가 만든 기업은 지운다.
  */
 @SpringBootTest
 class CompanyDataImporterIsolationTest {
@@ -100,6 +102,11 @@ class CompanyDataImporterIsolationTest {
         return importer.importFrom("file:" + dir.toAbsolutePath() + "/*.json");
     }
 
+    private Result importAllHiding(String... names) throws IOException {
+        return importer.importFrom("file:" + dir.toAbsolutePath() + "/*.json",
+                Arrays.stream(names).map(this::code).collect(Collectors.toSet()));
+    }
+
     private CompanyEntity company(String name) {
         return companyRepository.findByCode(code(name)).orElseThrow();
     }
@@ -121,7 +128,7 @@ class CompanyDataImporterIsolationTest {
         assertThat(company("b").getDartCorpCode()).isNull();
     }
 
-    /** 같은 법인을 다른 code로 다시 냈다. 숨긴 옛 기업이 식별자를 놓아 새 기업이 들어간다. */
+    /** 같은 법인을 다른 code로 다시 냈다. 설정으로 숨긴 옛 기업이 식별자를 놓아 새 기업이 들어간다. */
     @Test
     void 숨긴_기업이_들고_있던_식별자는_새_기업이_받는다() throws IOException {
         writePackage("old", dartCorpCode);
@@ -129,7 +136,7 @@ class CompanyDataImporterIsolationTest {
 
         Files.delete(dir.resolve(code("old") + ".json"));
         writePackage("new", dartCorpCode);
-        Result result = importAll();
+        Result result = importAllHiding("old");
 
         assertThat(result.created()).isEqualTo(1);
         assertThat(result.hidden()).isEqualTo(1);
