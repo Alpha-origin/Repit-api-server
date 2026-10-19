@@ -40,6 +40,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -203,7 +204,7 @@ class MaterialsServiceTest {
     }
 
     @Test
-    void 인증_서버가_4xx로_거절하면_저장되지_않은_게_확실해_올린_파일을_지운다() {
+    void 인증_서버가_4xx로_거절하고_다시_조회해도_저장되지_않았으면_올린_파일을_지운다() {
         when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
         when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
         ExternalApiException failure = new ExternalApiException("인증 서버 요청이 올바르지 않습니다. (400)", HttpStatus.BAD_REQUEST, null);
@@ -211,8 +212,42 @@ class MaterialsServiceTest {
 
         assertThatThrownBy(() -> service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio())).isSameAs(failure);
 
+        verify(authServerClient, times(2)).getMaterials(TOKEN);
         verify(storage).deleteQuietly("https://bucket/new.pdf");
         verifyNoInteractions(analysisLaunchService);
+    }
+
+    /** 저장 호출은 재시도한다. 앞 시도가 커밋하고 응답만 늦은 뒤 다음 시도가 4xx를 받으면, 4xx만 보고 파일을 지우면 안 된다. */
+    @Test
+    void 재시도에서_4xx를_받아도_앞_시도가_저장해_두었으면_파일을_지우지_않고_성공으로_이어_간다() {
+        AuthMaterialsResponse committed = new AuthMaterialsResponse("MAJOR_BACKEND",
+                List.of(new DocumentEntry("PORTFOLIO", "https://bucket/new.pdf", "new.pdf", 2)),
+                List.of("https://github.com/a/api"), List.of(), null);
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend(), committed);
+        when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
+        when(authServerClient.putMaterials(eq(TOKEN), any()))
+                .thenThrow(new ExternalApiException("요청이 너무 많습니다. (429)", HttpStatus.TOO_MANY_REQUESTS, null));
+        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_BACKEND"), any()))
+                .thenReturn(new GenerateResponse("job-4", "processing", null));
+
+        MaterialsSaveResponse response = service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio());
+
+        assertThat(response.materials().documents()).extracting("fileUrl").containsExactly("https://bucket/new.pdf");
+        assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis("job-4", "accepted"));
+        verify(storage, never()).deleteQuietly(anyString());
+    }
+
+    @Test
+    void 인증_서버가_저장값을_돌려주지_않으면_포트폴리오가_없어_분석은_failed() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
+        when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
+        when(authServerClient.putMaterials(eq(TOKEN), any())).thenReturn(null);
+
+        MaterialsSaveResponse response = service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio());
+
+        assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis(null, "failed"));
+        verifyNoInteractions(analysisLaunchService);
+        verify(storage, never()).deleteQuietly(anyString());
     }
 
     @Test

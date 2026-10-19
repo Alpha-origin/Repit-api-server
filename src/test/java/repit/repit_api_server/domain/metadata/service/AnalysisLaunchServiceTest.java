@@ -12,6 +12,8 @@ import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.metadata.dto.request.ProfileRequest;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
+import repit.repit_api_server.domain.metadata.dto.response.MaterialsResponse;
+import repit.repit_api_server.domain.metadata.dto.response.MaterialsResponse.MaterialDocument;
 import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
 import repit.repit_api_server.domain.metadata.entity.AnalysisDataEntity;
 import repit.repit_api_server.domain.metadata.entity.enums.AnalysisResultType;
@@ -82,6 +84,14 @@ class AnalysisLaunchServiceTest {
                 .build();
     }
 
+    /** 저장된 자료. 사용자가 이력서를 포트폴리오보다 앞에 두었다. */
+    private MaterialsResponse savedMaterials() {
+        return new MaterialsResponse("BACKEND",
+                List.of(new MaterialDocument(0, "RESUME", "https://s3/resume.pdf", "이력서.pdf", 2),
+                        new MaterialDocument(1, "PORTFOLIO", "https://s3/portfolio.pdf", "포트폴리오.pdf", 9)),
+                List.of("https://github.com/user/repo"), List.of());
+    }
+
     /** 가장 나중에 요청한 종합 데이터. null이면 한 번도 요청한 적이 없다. */
     private void givenLatestProfile(AnalysisDataEntity latest) {
         when(analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(OWNER_ID, AnalysisResultType.PROFILE))
@@ -106,15 +116,18 @@ class AnalysisLaunchServiceTest {
     }
 
     @Test
-    void 종합_데이터가_없는_사용자는_저장된_자료로_분석을_요청한다() {
+    void 종합_데이터가_없는_사용자는_저장된_자료의_포트폴리오로_분석을_요청한다() {
         givenLatestProfile(null);
-        when(metaService.getMetaData("token-1")).thenReturn(metaData());
+        when(metaService.getMaterials("token-1")).thenReturn(savedMaterials());
 
         service.launchIfMissing(authUser());
 
+        // 첫 문서(이력서)가 아니라 포트폴리오를 보낸다. 옛 metaData의 파일 주소는 보지 않는다.
         ArgumentCaptor<ProfileRequest> sent = ArgumentCaptor.forClass(ProfileRequest.class);
         verify(aiServerClient).requestProfile(sent.capture());
         assertThat(sent.getValue().getPortfolioUrl()).isEqualTo("https://s3/portfolio.pdf");
+        assertThat(sent.getValue().getGithubUrls()).containsExactly("https://github.com/user/repo");
+        verify(metaService, never()).getMetaData(any());
         verify(aiMetaDataService).registerJob(eq("job-1"), eq(OWNER_ID), any(LocalDateTime.class), eq(AnalysisResultType.PROFILE));
     }
 
@@ -124,7 +137,7 @@ class AnalysisLaunchServiceTest {
 
         service.launchIfMissing(authUser());
 
-        verify(metaService, never()).getMetaData(any());
+        verify(metaService, never()).getMaterials(any());
         verify(aiServerClient, never()).requestProfile(any());
     }
 
@@ -133,7 +146,7 @@ class AnalysisLaunchServiceTest {
     void 쓰던_종합_데이터가_거부됐으면_저장된_자료로_다시_요청한다() {
         givenLatestProfile(completedProfile());
         when(questionPoolService.needsReanalysis("profile-1")).thenReturn(true);
-        when(metaService.getMetaData("token-1")).thenReturn(metaData());
+        when(metaService.getMaterials("token-1")).thenReturn(savedMaterials());
 
         service.launchIfMissing(authUser());
 
@@ -163,17 +176,28 @@ class AnalysisLaunchServiceTest {
         InOrder order = inOrder(analysisDataRepository);
         order.verify(analysisDataRepository).lockProfileLaunch(OWNER_ID);
         order.verify(analysisDataRepository).findTopByUserIdAndResultTypeOrderByCreatedAtDesc(OWNER_ID, AnalysisResultType.PROFILE);
-        verify(metaService, never()).getMetaData(any());
+        verify(metaService, never()).getMaterials(any());
         verify(aiServerClient, never()).requestProfile(any());
     }
 
     @Test
-    void 저장된_자료가_모자라면_요청하지_않는다() {
+    void 저장된_자료에_GitHub가_없으면_요청하지_않는다() {
         givenLatestProfile(null);
-        when(metaService.getMetaData("token-1")).thenReturn(MetaDataResponse.builder()
-                .fileUrl("https://s3/portfolio.pdf")
-                .gitUrls(List.of())
-                .build());
+        when(metaService.getMaterials("token-1")).thenReturn(new MaterialsResponse("BACKEND",
+                List.of(new MaterialDocument(0, "PORTFOLIO", "https://s3/portfolio.pdf", "포트폴리오.pdf", 9)),
+                List.of(), List.of()));
+
+        service.launchIfMissing(authUser());
+
+        verify(aiServerClient, never()).requestProfile(any());
+    }
+
+    @Test
+    void 저장된_자료에_포트폴리오가_없으면_요청하지_않는다() {
+        givenLatestProfile(null);
+        when(metaService.getMaterials("token-1")).thenReturn(new MaterialsResponse("BACKEND",
+                List.of(new MaterialDocument(0, "RESUME", "https://s3/resume.pdf", "이력서.pdf", 2)),
+                List.of("https://github.com/user/repo"), List.of()));
 
         service.launchIfMissing(authUser());
 
@@ -261,7 +285,7 @@ class AnalysisLaunchServiceTest {
         when(user.getId()).thenReturn(OWNER_ID);
         when(user.getMajor()).thenReturn("MAJOR_QA_ENGINEER");
         givenLatestProfile(null);
-        when(metaService.getMetaData("token-1")).thenReturn(metaData());
+        when(metaService.getMaterials("token-1")).thenReturn(savedMaterials());
 
         service.launchIfMissing(new AuthUser(user, "token-1"));
 

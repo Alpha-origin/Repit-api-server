@@ -108,9 +108,9 @@ public class AnalysisLaunchService {
         if (!needsProfile(authUser.id())) {
             return;
         }
-        MetaDataResponse saved = metaService.getMetaData(authUser.token());
-        if (saved == null || saved.getFileUrl() == null || saved.getFileUrl().isBlank()
-                || saved.getGitUrls() == null || saved.getGitUrls().isEmpty()) {
+        // 옛 metaData의 파일 주소가 아니라 저장된 자료의 포트폴리오 문서로 요청한다. 자료 저장 뒤 분석하는 길과 같다.
+        MetaDataResponse saved = metaService.getMaterials(authUser.token()).toAnalysisInput();
+        if (saved.getFileUrl() == null || saved.getFileUrl().isBlank() || saved.getGitUrls().isEmpty()) {
             return;
         }
         log.info("쓸 수 있는 종합 데이터가 없어 저장된 자료로 분석을 요청합니다. userId={}", authUser.id());
