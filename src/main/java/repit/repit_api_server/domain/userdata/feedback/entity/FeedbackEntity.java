@@ -81,6 +81,12 @@ public class FeedbackEntity {
     @Column(columnDefinition = "jsonb")
     private CompanyFitResponse companyFit;
 
+    // 이 채점 작업에 실어 보낸 문항 가운데 답변이 있는 것의 id. 기업 관점 코멘트가 근거로 댈 수 있는 목록이다.
+    // 접수할 때 한 번 넣고 엔티티 저장으로는 바꾸지 않는다. 콜백이 먼저 와 만든 행은 FeedbackRepository가 채운다.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb", updatable = false)
+    private List<String> requestedQuestionIds;
+
     private Integer answeredCount;
 
     private Integer questionCount;
