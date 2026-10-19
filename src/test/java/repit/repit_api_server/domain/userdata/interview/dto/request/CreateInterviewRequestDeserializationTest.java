@@ -46,7 +46,7 @@ class CreateInterviewRequestDeserializationTest {
             for (AnswerMode mode : AnswerMode.values()) {
                 CreateInterviewRequest request = mapper.readValue("{\"personaId\":1,\"answerMode\":\"" + mode + "\"}", CreateInterviewRequest.class);
                 assertThat(request.getAnswerMode()).isEqualTo(mode);
-                InterviewResponse response = InterviewResponse.from(InterviewEntity.builder().answerMode(mode).build());
+                InterviewResponse response = InterviewResponse.from(InterviewEntity.builder().answerMode(mode).build(), java.util.List.of(), null);
                 assertThat(mapper.readTree(mapper.writeValueAsString(response)).get("answerMode").asText()).isEqualTo(mode.name());
             }
             assertThat(mapper.readValue("{\"personaId\":1}", CreateInterviewRequest.class).getAnswerMode()).isNull();
