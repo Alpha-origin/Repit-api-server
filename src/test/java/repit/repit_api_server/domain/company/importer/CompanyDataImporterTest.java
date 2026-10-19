@@ -353,9 +353,9 @@ class CompanyDataImporterTest {
                 .singleElement().extracting(CompanySourceEntity::getSourceKey).isEqualTo("about");
     }
 
-    /** V37은 출처가 없는 기업을 SAMPLE에서 뺀다. 출처가 모두 SAMPLE인 기업만 SAMPLE이다(가져오기 판정과 같다). */
+    /** V38은 출처가 없는 기업을 SAMPLE에서 뺀다. 출처가 모두 SAMPLE인 기업만 SAMPLE이다(가져오기 판정과 같다). */
     @Test
-    void V37은_출처가_있고_모두_SAMPLE인_기업만_SAMPLE로_둔다() throws IOException {
+    void V38은_출처가_있고_모두_SAMPLE인_기업만_SAMPLE로_둔다() throws IOException {
         importer.importFrom(location());
         CompanyEntity orphan = companyRepository.save(CompanyEntity.builder()
                 .code("no-source")
@@ -372,7 +372,7 @@ class CompanyDataImporterTest {
         // V35가 남긴 상태를 만든다.
         entityManager.createNativeQuery("update company set sample = true").executeUpdate();
 
-        String sql = new ClassPathResource("db/migration/V37__company_sample_requires_source.sql")
+        String sql = new ClassPathResource("db/migration/V38__company_sample_requires_source.sql")
                 .getContentAsString(StandardCharsets.UTF_8);
         entityManager.createNativeQuery(sql).executeUpdate();
         entityManager.clear();
