@@ -23,6 +23,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.InterviewPersonaE
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
@@ -77,7 +78,7 @@ public class InterviewService {
      */
     public InterviewResponse createInterview(Long userId, CreateInterviewRequest request) {
         if (request.getPersonaIds() != null && !request.getPersonaIds().isEmpty()) {
-            return createMultiInterview(userId, request.getPersonaIds(), request.getCompanyId());
+            return createMultiInterview(userId, request.getPersonaIds(), request.getCompanyId(), request.getAnswerMode());
         }
 
         PersonaEntity persona = findPersona(request);
@@ -85,6 +86,7 @@ public class InterviewService {
         InterviewEntity interview = InterviewEntity.builder()
                 .userId(userId)
                 .mode(InterviewMode.SOLO)
+                .answerMode(request.getAnswerMode())
                 .personaId(persona.getPersonaId())
                 .status(Status.IN_PROGRESS)
                 .sessionId(UUID.randomUUID().toString())
@@ -103,7 +105,7 @@ public class InterviewService {
      * 이 순서를 따르고, 꼬리질문이 부모 질문 바로 뒤에 삽입되므로 한 면접관의 질문 묶음이 끝나야
      * 다음 면접관으로 넘어간다.
      */
-    private InterviewResponse createMultiInterview(Long userId, List<Long> requestedIds, Long companyId) {
+    private InterviewResponse createMultiInterview(Long userId, List<Long> requestedIds, Long companyId, AnswerMode answerMode) {
         List<Long> personaIds = new ArrayList<>(new LinkedHashSet<>(requestedIds));
         if (personaIds.size() != requestedIds.size()) {
             throw BusinessException.unprocessable("같은 면접관을 두 번 지정할 수 없습니다.");
@@ -122,6 +124,7 @@ public class InterviewService {
         InterviewEntity saved = interviewRepository.save(InterviewEntity.builder()
                 .userId(userId)
                 .mode(InterviewMode.MULTI)
+                .answerMode(answerMode)
                 .status(Status.IN_PROGRESS)
                 .sessionId(UUID.randomUUID().toString())
                 .companyId(companyId)

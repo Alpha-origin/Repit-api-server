@@ -22,6 +22,8 @@ import repit.repit_api_server.domain.company.repository.CompanyRepository;
 import repit.repit_api_server.domain.company.repository.CompanySourceRepository;
 import repit.repit_api_server.domain.company.service.CompanySnapshotFactory;
 import repit.repit_api_server.domain.userdata.interview.dto.request.CreateInterviewRequest;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.dto.response.InterviewResponse;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
@@ -60,6 +62,8 @@ class InterviewCreateIdempotencyTest {
 
     @Autowired
     private InterviewCreateService createService;
+    @Autowired
+    private InterviewService interviewService;
     @Autowired
     private CompanySnapshotFactory companySnapshotFactory;
     @Autowired
@@ -193,6 +197,56 @@ class InterviewCreateIdempotencyTest {
                     assertThat(((BusinessException) e).getStatus()).isEqualTo(status);
                     assertThat(((BusinessException) e).getCode()).isEqualTo(code);
                 });
+    }
+
+    @Test
+    void 두_면접유형의_답변방식이_생성_재전송_완료후_단건_목록에_보존된다() {
+        for (boolean multiMode : List.of(false, true)) {
+            for (AnswerMode mode : AnswerMode.values()) {
+                CreateInterviewRequest request = multiMode ? multi(null) : solo(null);
+                request.setAnswerMode(mode);
+                String key = UUID.randomUUID().toString();
+                InterviewResponse created = createService.create(userId, key, request);
+                assertThat(created.getAnswerMode()).isEqualTo(mode);
+                assertThat(createService.create(userId, key, request).getInterviewId()).isEqualTo(created.getInterviewId());
+                assertThat(createService.create(userId, key, request).getAnswerMode()).isEqualTo(mode);
+                assertThat(jdbcTemplate.queryForObject("select answer_mode from interview where interview_id = ?",
+                        String.class, created.getInterviewId())).isEqualTo(mode.name());
+                jdbcTemplate.update("update interview set status = 'COMPLETED' where interview_id = ?", created.getInterviewId());
+                InterviewResponse loaded = interviewService.getInterviewById(userId, created.getInterviewId());
+                assertThat(loaded.getAnswerMode()).isEqualTo(mode);
+                assertThat(loaded.getStatus()).isEqualTo(Status.COMPLETED);
+                assertThat(interviewService.getAllInterviewsByUserId(userId)).anySatisfy(item -> {
+                    assertThat(item.getInterviewId()).isEqualTo(created.getInterviewId());
+                    assertThat(item.getAnswerMode()).isEqualTo(mode);
+                });
+                request.setAnswerMode(mode == AnswerMode.TEXT ? AnswerMode.VOICE : AnswerMode.TEXT);
+                assertError(() -> createService.create(userId, key, request),
+                        HttpStatus.CONFLICT, ErrorCodes.IDEMPOTENCY_KEY_REUSED);
+            }
+        }
+    }
+
+    @Test
+    void 이전_답변방식_없는_요청키의_해시와_null_기록을_유지한다() {
+        CreateInterviewRequest request = solo(null);
+        String key = UUID.randomUUID().toString();
+        // 새 필드가 생기기 전 canonical 본문으로 저장한 요청 키도 같은 면접을 복구해야 한다.
+        String canonical = "{\"companyId\":null,\"mode\":\"SOLO\",\"personaId\":" + techId + "}";
+        String oldHash;
+        try {
+            oldHash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new AssertionError(e);
+        }
+        InterviewResponse created = createService.create(userId, key, request);
+        jdbcTemplate.update("update interview_create_request set request_hash = ? where user_id = ? and idempotency_key = ?::uuid",
+                oldHash, userId, key);
+        assertThat(createService.create(userId, key, request).getInterviewId()).isEqualTo(created.getInterviewId());
+        assertThat(interviewService.getInterviewById(userId, created.getInterviewId()).getAnswerMode()).isNull();
+        request.setAnswerMode(AnswerMode.TEXT);
+        assertError(() -> createService.create(userId, key, request), HttpStatus.CONFLICT, ErrorCodes.IDEMPOTENCY_KEY_REUSED);
     }
 
     @Test

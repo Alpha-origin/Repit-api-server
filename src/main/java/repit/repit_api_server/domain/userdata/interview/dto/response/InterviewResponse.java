@@ -7,6 +7,7 @@ import lombok.Setter;
 import repit.repit_api_server.domain.company.dto.CompanyBadge;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMode;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode;
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 
 import java.time.LocalDateTime;
@@ -29,6 +30,7 @@ public class InterviewResponse {
     private LocalDateTime createdAt;
     // 면접을 만들 때 고른 기업. 고르지 않았으면 비어 있다.
     private CompanyBadge company;
+    private AnswerMode answerMode;
 
     public static InterviewResponse from(InterviewEntity interview) {
         return from(interview, List.of());
@@ -44,7 +46,8 @@ public class InterviewResponse {
                 interview.getSessionId(),
                 interview.getStatus(),
                 interview.getCreatedAt(),
-                CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot())
+                CompanyBadge.of(interview.getCompanyId(), interview.getCompanySnapshot()),
+                interview.getAnswerMode()
         );
     }
 }

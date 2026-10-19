@@ -97,7 +97,19 @@ class InterviewControllerCreateTest {
 
     private static InterviewResponse response(Long interviewId) {
         return new InterviewResponse(interviewId, USER_ID, InterviewMode.SOLO, 1L, List.of(), "session",
-                Status.IN_PROGRESS, LocalDateTime.now(), new CompanyBadge(12L, "샘플커머스"));
+                Status.IN_PROGRESS, LocalDateTime.now(), new CompanyBadge(12L, "샘플커머스"), null);
+    }
+
+    @Test
+    void 답변방식_enum을_받고_잘못된_값은_거절한다() throws Exception {
+        for (String mode : List.of("TEXT", "VOICE")) {
+            mockMvc.perform(create("{\"personaId\":1,\"answerMode\":\"" + mode + "\"}"))
+                    .andExpect(status().isOk());
+        }
+        mockMvc.perform(create("{\"personaId\":1,\"answerMode\":null}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(create("{\"personaId\":1,\"answerMode\":\"INVALID\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     private static MockHttpServletRequestBuilder create(String body) {
