@@ -45,4 +45,15 @@ class PdfInspectorTest {
             assertThat(inspector.inspect(pdf).status()).isEqualTo(Status.BROKEN);
         }
     }
+
+    /** 객체를 끝없이 겹친 PDF는 파서의 재귀를 넘친다. 500이 아니라 손상으로 본다. */
+    @Test
+    void 파서가_스택을_넘쳐도_손상으로_본다() throws Exception {
+        Path pdf = write("nested.pdf", TestPdfs.pdf(1, "nested"));
+        try (MockedStatic<Loader> loader = mockStatic(Loader.class)) {
+            loader.when(() -> Loader.loadPDF(any(File.class))).thenThrow(new StackOverflowError());
+
+            assertThat(inspector.inspect(pdf).status()).isEqualTo(Status.BROKEN);
+        }
+    }
 }

@@ -4,7 +4,9 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import repit.repit_api_server.global.exception.ExternalApiException;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -13,7 +15,9 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -62,7 +66,9 @@ public class MaterialFileStorage {
     /**
      * 저장된 PDF를 임시 파일로 받는다. 옛 업로드 경로는 1GB까지 받았으므로, 크기를 먼저 보고 maxBytes를 넘으면 받지 않는다.
      * 크기를 본 뒤 다른 파일로 바뀌었을 수도 있어 받는 동안에도 maxBytes에서 끊는다.
-     * 이 버킷의 주소가 아니거나 읽지 못하면 NOT_FOUND다.
+     *
+     * <p>이 버킷의 주소가 아니거나 S3에 파일이 없으면 NOT_FOUND다. 연결 끊김·S3 오류처럼 잠깐의 장애는 파일이 없는 것과
+     * 다르다. 없다고 답하면 사용자가 멀쩡한 문서를 지우거나 다시 올리므로, 다시 시도하라는 503으로 던진다.
      */
     public Download download(String fileUrl, long maxBytes) {
         String key = keyOf(fileUrl);
@@ -86,11 +92,28 @@ public class MaterialFileStorage {
                 }
             }
             return new Download(DownloadStatus.OK, file);
+        } catch (S3Exception e) {
+            MaterialTempFiles.deleteQuietly(file);
+            if (isMissing(e)) {
+                log.warn("저장된 자료 PDF가 S3에 없습니다. key={}, 원인={}", key, e.getMessage());
+                return new Download(DownloadStatus.NOT_FOUND, null);
+            }
+            throw unavailable(key, e);
         } catch (SdkException | IOException e) {
             MaterialTempFiles.deleteQuietly(file);
-            log.warn("저장된 자료 PDF를 읽지 못했습니다. key={}, 원인={}", key, e.getMessage());
-            return new Download(DownloadStatus.NOT_FOUND, null);
+            throw unavailable(key, e);
         }
+    }
+
+    /** 버킷 목록 권한(s3:ListBucket)이 없으면 S3는 없는 키에도 404 대신 403을 준다. 둘 다 없는 파일로 본다. */
+    private static boolean isMissing(S3Exception e) {
+        return e instanceof NoSuchKeyException || e.statusCode() == 404 || e.statusCode() == 403;
+    }
+
+    private static ExternalApiException unavailable(String key, Exception cause) {
+        log.warn("저장된 자료 PDF를 잠시 읽지 못했습니다. key={}, 원인={}", key, cause.getMessage());
+        return new ExternalApiException("저장된 자료를 잠시 읽지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                HttpStatus.SERVICE_UNAVAILABLE, cause);
     }
 
     /** 저장이 끝나지 않아 쓸 데가 없어진 파일을 지운다. 실패해도 원래 오류를 가리지 않게 로그만 남긴다. */

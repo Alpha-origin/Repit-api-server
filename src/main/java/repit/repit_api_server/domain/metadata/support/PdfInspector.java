@@ -36,6 +36,9 @@ public class PdfInspector {
         } catch (IOException | RuntimeException e) {
             // 깨진 PDF는 IOException 말고도 IllegalArgumentException·ClassCastException 같은 런타임 예외로 터진다.
             return new Result(Status.BROKEN, 0);
+        } catch (StackOverflowError e) {
+            // 객체를 끝없이 겹친 PDF는 파서의 재귀를 넘친다. 스택은 여기까지 풀렸으므로 손상으로 보고 이어 간다.
+            return new Result(Status.BROKEN, 0);
         }
     }
 }

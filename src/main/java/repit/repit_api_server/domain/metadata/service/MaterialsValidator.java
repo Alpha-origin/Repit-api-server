@@ -101,6 +101,7 @@ public class MaterialsValidator {
 
         List<MaterialError> errors = new ArrayList<>();
         List<Path> tempFiles = new ArrayList<>();
+        boolean passed = false;
         try {
             List<DocumentInput> inputs = payload.documents() == null ? List.of() : payload.documents();
             List<ValidDocument> documents = validateDocuments(job, inputs, files, saved, errors, tempFiles);
@@ -110,10 +111,14 @@ public class MaterialsValidator {
             if (!errors.isEmpty()) {
                 throw new MaterialValidationException(errors);
             }
-            return new ValidatedMaterials(job, documents, gitUrls, supplements);
-        } catch (RuntimeException e) {
-            tempFiles.forEach(MaterialTempFiles::deleteQuietly);
-            throw e;
+            ValidatedMaterials validated = new ValidatedMaterials(job, documents, gitUrls, supplements);
+            passed = true;
+            return validated;
+        } finally {
+            // 예외만이 아니라 Error(메모리 부족 등)로 끝나도 임시 파일을 남기지 않는다.
+            if (!passed) {
+                tempFiles.forEach(MaterialTempFiles::deleteQuietly);
+            }
         }
     }
 
@@ -257,11 +262,16 @@ public class MaterialsValidator {
                                       Set<String> newFileHashes, List<MaterialError> errors, List<Path> tempFiles) {
         MultipartFile file = input.fileKey() == null || !FILE_KEY.matcher(input.fileKey()).matches()
                 ? null : files.get(input.fileKey());
-        if (file == null || file.isEmpty()) {
+        if (file == null) {
             throw new BusinessException(field + "의 파일(" + input.fileKey() + ")이 요청에 없습니다.", HttpStatus.BAD_REQUEST);
         }
         if (!looksLikePdf(file)) {
             errors.add(error(field, Reason.NOT_PDF, null));
+            return null;
+        }
+        // 빈 파일은 요청이 틀린 게 아니라 파일이 읽을 수 없는 것이다. 그 행에 사유를 단다.
+        if (file.isEmpty()) {
+            errors.add(error(field, Reason.BROKEN_PDF, null));
             return null;
         }
         if (file.getSize() > MAX_FILE_BYTES) {

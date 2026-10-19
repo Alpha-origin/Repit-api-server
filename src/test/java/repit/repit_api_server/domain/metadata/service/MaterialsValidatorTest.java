@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
 import repit.repit_api_server.domain.metadata.dto.request.MaterialsPayload;
@@ -22,6 +23,7 @@ import repit.repit_api_server.domain.metadata.support.MaterialFileStorage.Downlo
 import repit.repit_api_server.domain.metadata.support.PdfInspector;
 import repit.repit_api_server.domain.metadata.support.TestPdfs;
 import repit.repit_api_server.global.exception.BusinessException;
+import repit.repit_api_server.global.exception.ExternalApiException;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -156,6 +158,47 @@ class MaterialsValidatorTest {
                 tuple("documents[0]", Reason.NOT_PDF),
                 tuple("documents[1]", Reason.BROKEN_PDF),
                 tuple("documents[2]", Reason.ENCRYPTED_PDF));
+    }
+
+    @Test
+    void 빈_PDF는_400이_아니라_그_행에_BROKEN_PDF를_달고_다른_행도_검사한다() {
+        files.put("file0", new MockMultipartFile("file0", "empty.pdf", "application/pdf", new byte[0]));
+        files.put("file1", new MockMultipartFile("file1", "case.txt", "text/plain", "hello".getBytes()));
+
+        List<MaterialError> errors = errorsOf(payload("QA_ENGINEER", List.of(
+                new DocumentInput("TEST_PLAN", "NEW", "file0", null),
+                new DocumentInput("TEST_CASE", "NEW", "file1", null)), List.of(), List.of()), NOTHING_SAVED);
+
+        assertThat(errors).extracting(MaterialError::field, MaterialError::reason).containsExactly(
+                tuple("documents[0]", Reason.BROKEN_PDF),
+                tuple("documents[1]", Reason.NOT_PDF));
+    }
+
+    @Test
+    void PDF를_읽다_Error가_나도_만든_임시_파일을_남기지_않는다() throws Exception {
+        long before = countMaterialTempFiles();
+        PdfInspector exploding = mock(PdfInspector.class);
+        OutOfMemoryError failure = new OutOfMemoryError("PDF가 너무 복잡하다");
+        when(exploding.inspect(any())).thenThrow(failure);
+        newDoc("TEST_PLAN", "file0", TestPdfs.pdf(2, "plan"));
+
+        assertThatThrownBy(() -> new MaterialsValidator(exploding, storage).validate(payload("QA_ENGINEER",
+                List.of(new DocumentInput("TEST_PLAN", "NEW", "file0", null)), List.of(), List.of()), files, NOTHING_SAVED))
+                .isSameAs(failure);
+        assertThat(countMaterialTempFiles()).isEqualTo(before);
+    }
+
+    /** 잠깐의 S3 장애를 "저장된 문서 없음"으로 답하면 사용자가 멀쩡한 문서를 지운다. 장애는 그대로 올려 503으로 나가게 한다. */
+    @Test
+    void 쪽수를_세려고_옛_PDF를_받다가_S3가_잠깐_실패하면_EXISTING_NOT_FOUND가_아니라_그_장애를_던진다() {
+        ExternalApiException unavailable = new ExternalApiException("저장된 자료를 잠시 읽지 못했습니다.",
+                HttpStatus.SERVICE_UNAVAILABLE, null);
+        when(storage.download(SAVED_URL, MaterialsValidator.MAX_FILE_BYTES)).thenThrow(unavailable);
+
+        assertThatThrownBy(() -> validator().validate(payload("BACKEND",
+                List.of(existingDoc("PORTFOLIO", SAVED_URL)), List.of("https://github.com/a/b"), List.of()),
+                files, saved(null, null)))
+                .isSameAs(unavailable);
     }
 
     @Test

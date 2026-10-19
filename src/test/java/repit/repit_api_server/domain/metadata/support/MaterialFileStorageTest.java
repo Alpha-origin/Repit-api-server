@@ -6,9 +6,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.metadata.support.MaterialFileStorage.DownloadStatus;
+import repit.repit_api_server.global.exception.ExternalApiException;
 import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.http.AbortableInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -18,12 +21,14 @@ import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -98,6 +103,48 @@ class MaterialFileStorageTest {
 
         when(s3Client.headObject(any(HeadObjectRequest.class))).thenThrow(NoSuchKeyException.builder().message("no").build());
         assertThat(storage.download(BASE_URL + "/gone.pdf", MAX).status()).isEqualTo(DownloadStatus.NOT_FOUND);
+    }
+
+    /** 버킷 목록 권한이 없으면 S3는 없는 키에도 403을 준다. */
+    @Test
+    void S3가_없는_키에_403을_줘도_NOT_FOUND() {
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenThrow(S3Exception.builder().statusCode(403).message("Access Denied").build());
+
+        assertThat(storage.download(BASE_URL + "/gone.pdf", MAX).status()).isEqualTo(DownloadStatus.NOT_FOUND);
+    }
+
+    /** 잠깐의 장애를 없는 파일로 답하면 사용자가 멀쩡한 문서를 지우거나 다시 올린다. */
+    @Test
+    void 연결이_끊기거나_S3가_5xx를_주면_없는_파일이_아니라_다시_시도하라는_503() {
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenThrow(SdkClientException.create("Unable to execute HTTP request"))
+                .thenThrow(S3Exception.builder().statusCode(503).message("Slow Down").build());
+
+        for (int i = 0; i < 2; i++) {
+            assertThatThrownBy(() -> storage.download(BASE_URL + "/ok.pdf", MAX))
+                    .isInstanceOf(ExternalApiException.class)
+                    .extracting("statusCode").isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        }
+    }
+
+    @Test
+    void 받는_도중에_끊기면_만든_임시_파일을_지우고_503() throws Exception {
+        long before = countMaterialTempFiles();
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().contentLength(3L).build());
+        when(s3Client.getObject(any(GetObjectRequest.class))).thenThrow(SdkClientException.create("Connection reset"));
+
+        assertThatThrownBy(() -> storage.download(BASE_URL + "/ok.pdf", MAX))
+                .isInstanceOf(ExternalApiException.class)
+                .extracting("statusCode").isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        assertThat(countMaterialTempFiles()).isEqualTo(before);
+    }
+
+    private static long countMaterialTempFiles() throws Exception {
+        try (var stream = Files.list(Path.of(System.getProperty("java.io.tmpdir")))) {
+            return stream.filter(path -> path.getFileName().toString().startsWith("repit-material-")).count();
+        }
     }
 
     @Test
