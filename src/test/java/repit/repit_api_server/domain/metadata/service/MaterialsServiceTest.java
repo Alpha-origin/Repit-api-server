@@ -203,8 +203,9 @@ class MaterialsServiceTest {
         verifyNoInteractions(analysisLaunchService);
     }
 
+    /** 재시도 중 앞 시도가 커밋했을 수 있어 4xx도 저장되지 않았다고 확정하지 않는다. */
     @Test
-    void 인증_서버가_4xx로_거절하고_다시_조회해도_저장되지_않았으면_올린_파일을_지운다() {
+    void 인증_서버가_4xx로_거절하고_다시_조회해도_저장되지_않았으면_실패를_던지되_올린_파일은_남긴다() {
         when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
         when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
         ExternalApiException failure = new ExternalApiException("인증 서버 요청이 올바르지 않습니다. (400)", HttpStatus.BAD_REQUEST, null);
@@ -213,7 +214,7 @@ class MaterialsServiceTest {
         assertThatThrownBy(() -> service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio())).isSameAs(failure);
 
         verify(authServerClient, times(2)).getMaterials(TOKEN);
-        verify(storage).deleteQuietly("https://bucket/new.pdf");
+        verify(storage, never()).deleteQuietly(anyString());
         verifyNoInteractions(analysisLaunchService);
     }
 
@@ -269,8 +270,25 @@ class MaterialsServiceTest {
         verify(storage, never()).deleteQuietly(anyString());
     }
 
+    /**
+     * 타임아웃 직후 다시 조회하면, 인증 서버가 아직 처리 중인 PUT을 커밋하기 전의 옛 값이 보일 수 있다.
+     * 여기서 파일을 지우면 늦게 커밋된 문서가 지운 파일을 가리킨다.
+     */
     @Test
-    void 서버_오류이고_다시_조회해도_저장되지_않았으면_올린_파일을_지운다() {
+    void 타임아웃_직후_다시_조회에_옛_값이_보여도_늦게_커밋될_수_있어_올린_파일을_남긴다() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
+        when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
+        ExternalApiException timeout = new ExternalApiException("인증 서버와 연결할 수 없습니다.", null, null);
+        when(authServerClient.putMaterials(eq(TOKEN), any())).thenThrow(timeout);
+
+        assertThatThrownBy(() -> service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio())).isSameAs(timeout);
+
+        verify(authServerClient, times(2)).getMaterials(TOKEN);
+        verify(storage, never()).deleteQuietly(anyString());
+    }
+
+    @Test
+    void 서버_오류이고_다시_조회해도_저장되지_않았으면_실패를_던지되_올린_파일은_남긴다() {
         when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
         when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
         ExternalApiException failure = new ExternalApiException("인증 서버에 오류가 발생했습니다.", HttpStatus.BAD_GATEWAY, null);
@@ -278,7 +296,7 @@ class MaterialsServiceTest {
 
         assertThatThrownBy(() -> service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio())).isSameAs(failure);
 
-        verify(storage).deleteQuietly("https://bucket/new.pdf");
+        verify(storage, never()).deleteQuietly(anyString());
     }
 
     @Test

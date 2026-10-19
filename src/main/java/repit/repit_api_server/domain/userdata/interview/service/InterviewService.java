@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 import repit.repit_api_server.domain.company.service.CompanySnapshotFactory;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
+import repit.repit_api_server.domain.metadata.support.JobRole;
 import repit.repit_api_server.domain.userdata.interview.dto.request.CreateInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatAnswerResponse;
@@ -57,6 +58,8 @@ import java.util.stream.Collectors;
 public class InterviewService {
 
     private static final Logger log = LoggerFactory.getLogger(InterviewService.class);
+
+    static final String NON_DEV_INTERVIEW_NOT_SUPPORTED = "비개발 직무는 아직 면접을 준비할 수 없습니다.";
 
     private final InterviewRepository interviewRepository;
     private final QuestionRepository questionRepository;
@@ -212,6 +215,7 @@ public class InterviewService {
         if (!authUser.id().equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 시작할 수 있습니다.");
         }
+        requireSupportedJob(authUser);
         // 쓸 수 있는 종합 데이터가 없으면(예전 분석만 있거나, 분석 서버가 지금 것을 거부했으면) 종합 데이터부터 요청한다.
         // 질문 준비는 그 분석을 기다린다.
         analysisLaunchService.launchIfMissing(authUser);
@@ -232,11 +236,22 @@ public class InterviewService {
         if (!authUser.id().equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 다시 준비할 수 있습니다.");
         }
+        requireSupportedJob(authUser);
 
         // 처음 시작할 때 종합 데이터를 요청하지 못했거나, 그 사이 분석 서버가 지금 것을 거부했으면 여기서 요청한다.
         analysisLaunchService.launchIfMissing(authUser);
         QuestionTailorEntity tailor = questionTailorService.retryPreparation(interview, authUser.user());
         return InterviewPrepareResponse.of(tailor, interview.getSessionId());
+    }
+
+    /**
+     * 비개발 직무면 면접 준비를 422로 막는다. 지금 직무에 맞는 분석은 아직 만들 수 없고(분석 서버 새 요청 모양 C-3 전),
+     * 막지 않으면 개발 직무였을 때 남은 분석으로 개발 질문을 준비한다.
+     */
+    private static void requireSupportedJob(AuthUser authUser) {
+        if (!JobRole.supportsCurrentProfileRequest(authUser.user().getMajor())) {
+            throw BusinessException.unprocessable(NON_DEV_INTERVIEW_NOT_SUPPORTED);
+        }
     }
 
     public List<InterviewResponse> getAllInterviewsByUserId(Long userId) {

@@ -97,7 +97,7 @@ public class AnalysisLaunchService {
     // ponytail: 잠근 채 인증·분석 서버를 부르므로 그동안 DB 커넥션을 붙잡는다. 사용자당 드물게 한 번 도는 길이라 감수한다.
     @Transactional
     public void launchIfMissing(AuthUser authUser) {
-        // 비개발 직무는 지금 요청 모양으로 맞는 분석이 나오지 않는다. 면접 준비가 분석부터 하라고 알린다.
+        // 비개발 직무는 지금 요청 모양으로 맞는 분석이 나오지 않는다. 면접 준비는 그 전에 422로 막는다(InterviewService).
         if (!JobRole.supportsCurrentProfileRequest(authUser.user().getMajor())) {
             return;
         }

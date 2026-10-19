@@ -25,14 +25,13 @@ import repit.repit_api_server.global.client.AuthServerClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * 마이페이지의 직무·문서·GitHub·보완 입력을 한 번에 저장하고 분석을 다시 요청한다(계약 C-1).
  *
  * <p>저장 전에는 서버의 기존 값을 바꾸지 않는다. 검사를 모두 통과한 뒤에야 새 파일을 올리고,
- * 인증 서버 저장이 실패하면 방금 올린 파일을 지운다. 교체된 옛 파일은 지우지 않는다(옛 업로드 경로와 같다).
+ * 인증 서버를 부르기 전에 실패하면 방금 올린 파일을 지운다. 부른 뒤의 실패는 결과가 확실하지 않아 파일을 남긴다.
+ * 교체된 옛 파일은 지우지 않는다(옛 업로드 경로와 같다).
  */
 @Service
 @RequiredArgsConstructor
@@ -89,11 +88,11 @@ public class MaterialsService {
     /**
      * 인증 서버 저장이 실패한 것처럼 보일 때, 실제로 저장됐는지 보고 이어 갈지 정리할지 정한다.
      *
-     * <p>인증 서버를 부르기 전이면 저장되지 않은 게 확실해 새 파일을 지우고 실패를 던진다. 부른 뒤에는 4xx여도 확실하지 않다.
-     * 저장 호출은 재시도하므로, 앞 시도가 커밋하고 응답만 늦은 뒤(타임아웃) 다음 시도가 4xx를 받을 수 있다. 그래서 실패 종류와
-     * 상관없이 다시 조회한다. 보낸 내용이 그대로 저장돼 있으면 저장은 끝난 것이라 그 값으로 이어 간다(사용자가 실패로 보고 다시
-     * 올리지 않게). 다르면 저장된 문서가 가리키지 않는 새 파일만 지우고 실패를 던진다. 다시 조회도 실패하면 아무것도 지우지
-     * 않는다(남는 파일이 끊어진 문서보다 낫다).
+     * <p>인증 서버를 부르기 전이면 저장되지 않은 게 확실해 새 파일을 지우고 실패를 던진다. 부른 뒤에는 어떤 실패든 결과가
+     * 확실하지 않다. 저장 호출은 재시도하므로 앞 시도가 커밋하고 응답만 늦은 뒤 다음 시도가 4xx를 받을 수 있고, 타임아웃 직후
+     * 다시 조회하면 아직 처리 중인 PUT이 커밋되기 전의 옛 값이 보일 수 있다. 그래서 다시 조회해 보낸 내용이 그대로 저장돼 있으면
+     * 저장은 끝난 것이라 그 값으로 이어 가고(사용자가 실패로 보고 다시 올리지 않게), 아니면 올린 파일을 지우지 않고 실패를 던진다.
+     * 조회에 안 보인다고 지우면 나중에 커밋된 문서가 지운 파일을 가리킨다. 남는 파일이 끊어진 문서보다 낫다.
      */
     private MaterialsResponse recoverOrDiscard(AuthUser authUser, JobRole jobRole, AuthMaterialsRequest request,
                                                List<String> uploaded, boolean authCalled, RuntimeException failure) {
@@ -105,7 +104,7 @@ public class MaterialsService {
         try {
             rechecked = MaterialsResponse.from(authServerClient.getMaterials(authUser.token()));
         } catch (RuntimeException recheckFailure) {
-            log.warn("자료 저장 결과를 확인하지 못해 올린 파일을 지우지 않습니다. userId={}, files={}",
+            log.warn("자료 저장 결과를 확인하지 못했습니다. 결과가 불확실해 올린 파일을 남깁니다. userId={}, files={}",
                     authUser.id(), uploaded, recheckFailure);
             throw failure;
         }
@@ -114,10 +113,9 @@ public class MaterialsService {
                     authUser.id(), failure.getMessage());
             return rechecked;
         }
-        Set<String> referenced = rechecked.documents().stream()
-                .map(MaterialsResponse.MaterialDocument::fileUrl)
-                .collect(Collectors.toSet());
-        uploaded.stream().filter(url -> !referenced.contains(url)).forEach(storage::deleteQuietly);
+        // 정리는 나중에 어느 문서도 가리키지 않는 파일을 찾아 한다. 그때 찾을 수 있게 주소를 남긴다.
+        log.warn("자료 저장이 실패한 것으로 보이지만 늦게 커밋될 수 있어 올린 파일을 남깁니다. userId={}, files={}, 원인={}",
+                authUser.id(), uploaded, failure.getMessage());
         throw failure;
     }
 
