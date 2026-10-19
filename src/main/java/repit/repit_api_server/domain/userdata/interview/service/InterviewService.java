@@ -93,7 +93,7 @@ public class InterviewService {
                 .build();
 
         InterviewEntity saved = interviewRepository.save(interview);
-        return InterviewResponse.from(saved);
+        return InterviewResponse.from(saved, List.of(), persona);
     }
 
     /**
@@ -138,7 +138,9 @@ public class InterviewService {
         }
         interviewPersonaRepository.saveAll(members);
 
-        return InterviewResponse.from(saved, ordered.stream().map(PersonaEntity::getPersonaId).toList());
+        // 대표 면접관은 진행 순서 맨 앞이다. 조회 응답과 같은 규칙이다.
+        return InterviewResponse.from(saved, ordered.stream().map(PersonaEntity::getPersonaId).toList(),
+                ordered.getFirst());
     }
 
     /**
@@ -261,9 +263,47 @@ public class InterviewService {
         }
     }
 
+    /**
+     * 사용자의 면접 목록. 면접마다 대표 면접관을 붙인다.
+     *
+     * <p>N:1 면접관 명단과 면접관은 면접마다 따로 읽지 않고 한 번에 읽어 면접별로 나눈다.
+     * 그러지 않으면 목록이 길어지는 만큼 쿼리가 늘어난다.
+     */
     public List<InterviewResponse> getAllInterviewsByUserId(Long userId) {
-        return interviewRepository.findAllByUserId(userId).stream()
-                .map(interview -> InterviewResponse.from(interview, personaIdsOf(interview)))
+        List<InterviewEntity> interviews = interviewRepository.findAllByUserId(userId);
+
+        List<Long> multiInterviewIds = interviews.stream()
+                .filter(interview -> interview.getMode() == InterviewMode.MULTI)
+                .map(InterviewEntity::getInterviewId)
+                .toList();
+        Map<Long, List<Long>> personaIdsByInterview = multiInterviewIds.isEmpty()
+                ? Map.of()
+                : interviewPersonaRepository
+                        .findAllByInterviewIdInOrderByInterviewIdAscPersonaOrderAsc(multiInterviewIds).stream()
+                        .collect(Collectors.groupingBy(InterviewPersonaEntity::getInterviewId,
+                                Collectors.mapping(InterviewPersonaEntity::getPersonaId, Collectors.toList())));
+
+        Map<Long, Long> representativeIdByInterview = new HashMap<>();
+        for (InterviewEntity interview : interviews) {
+            Long personaId = representativePersonaId(interview,
+                    personaIdsByInterview.getOrDefault(interview.getInterviewId(), List.of()));
+            if (personaId != null) {
+                representativeIdByInterview.put(interview.getInterviewId(), personaId);
+            }
+        }
+        Map<Long, PersonaEntity> personaById = representativeIdByInterview.isEmpty()
+                ? Map.of()
+                : personaRepository.findAllById(new LinkedHashSet<>(representativeIdByInterview.values())).stream()
+                        .collect(Collectors.toMap(PersonaEntity::getPersonaId, Function.identity()));
+
+        return interviews.stream()
+                .map(interview -> {
+                    Long representativeId = representativeIdByInterview.get(interview.getInterviewId());
+                    return InterviewResponse.from(
+                            interview,
+                            personaIdsByInterview.getOrDefault(interview.getInterviewId(), List.of()),
+                            representativeId == null ? null : personaById.get(representativeId));
+                })
                 .toList();
     }
 
@@ -271,7 +311,25 @@ public class InterviewService {
         InterviewEntity interview = interviewRepository.findById(interviewId)
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
         verifyOwner(interview, userId);
-        return InterviewResponse.from(interview, personaIdsOf(interview));
+        List<Long> personaIds = personaIdsOf(interview);
+        Long representativeId = representativePersonaId(interview, personaIds);
+        PersonaEntity persona = representativeId == null
+                ? null
+                : personaRepository.findById(representativeId).orElse(null);
+        return InterviewResponse.from(interview, personaIds, persona);
+    }
+
+    /**
+     * 면접을 대표하는 면접관 id. 1:1은 그 면접의 면접관, N:1은 진행 순서 맨 앞 면접관이다.
+     * 피드백 응답이 성향·난이도를 대표 한 명으로 읽는 것과 같은 규칙이다. 걸린 면접관이 없으면 null이다.
+     *
+     * @param multiPersonaIds 진행 순서대로 정렬된 N:1 면접관 명단. 1:1은 빈 목록이다.
+     */
+    private static Long representativePersonaId(InterviewEntity interview, List<Long> multiPersonaIds) {
+        if (interview.getMode() == InterviewMode.MULTI) {
+            return multiPersonaIds.isEmpty() ? null : multiPersonaIds.getFirst();
+        }
+        return interview.getPersonaId();
     }
 
     /**

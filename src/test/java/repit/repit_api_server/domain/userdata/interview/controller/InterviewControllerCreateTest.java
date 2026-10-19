@@ -96,7 +96,7 @@ class InterviewControllerCreateTest {
     }
 
     private static InterviewResponse response(Long interviewId) {
-        return new InterviewResponse(interviewId, USER_ID, InterviewMode.SOLO, 1L, List.of(), "session",
+        return new InterviewResponse(interviewId, USER_ID, InterviewMode.SOLO, 1L, List.of(), null, "session",
                 Status.IN_PROGRESS, LocalDateTime.now(), new CompanyBadge(12L, "샘플커머스"));
     }
 
