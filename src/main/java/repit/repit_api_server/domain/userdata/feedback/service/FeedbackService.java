@@ -562,7 +562,10 @@ public class FeedbackService {
 
         FeedbackEntity bySession =
                 feedbackRepository.findTopBySessionIdOrderByCreatedAtDesc(request.getSessionId()).orElse(null);
-        if (bySession != null) {
+        // 다른 작업의 행에는 쓰지 않는다. 재채점 결과가 접수 응답보다 먼저 오면 세션의 최신 행은 지난 작업(FAILED 등)의 것이다.
+        // 거기에 쓰면 곧이어 접수 응답이 이 작업의 PENDING 행을 새로 만들어 결과를 가린다. 그때는 이 작업의 행을 새로 만들고,
+        // 늦게 온 접수 응답은 jobId로 그 행을 찾아 덧붙이지 않는다(saveAccepted).
+        if (bySession != null && (request.getJobId() == null || bySession.getJobId() == null)) {
             return bySession;
         }
         return createFromSession(request.getSessionId());
@@ -575,10 +578,10 @@ public class FeedbackService {
      * 기록을 {@code POST /api/interviews/result}로 넘길 뿐 분석 서버를 부르지 않는다.
      * 그러니 정상적인 흐름이라면 콜백에 대응하는 행이 이미 있다.
      *
-     * <p>없을 수 있는 경우는 하나다 — 접수는 됐는데 202 응답을 우리가 못 받은 때. 그러면
-     * 요청은 예외로 끝나 행이 남지 않지만 채점은 그대로 돌아 콜백이 온다. 여기서 받아두지
+     * <p>없을 수 있는 경우는 둘이다 — 접수는 됐는데 202 응답을 우리가 못 받은 때, 그리고 결과가 202 응답보다 먼저 온 때.
+     * 앞의 경우 요청은 예외로 끝나 행이 남지 않지만 채점은 그대로 돌아 콜백이 온다. 여기서 받아두지
      * 않으면 분석 서버는 두 번 시도한 뒤 결과를 영구 폐기하고, 사용자는 채점이 끝났는데도
-     * 아무것도 보지 못한다.
+     * 아무것도 보지 못한다. 세션에 지난 작업의 행만 있어도 이 작업의 행을 새로 만든다.
      */
     private FeedbackEntity createFromSession(String sessionId) {
         InterviewEntity interview = interviewRepository.findBySessionId(sessionId).orElse(null);
