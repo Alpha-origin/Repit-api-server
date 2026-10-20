@@ -12,6 +12,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
+import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackMultiRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackAcceptedResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStatus;
@@ -187,12 +188,39 @@ class FeedbackServiceFinishedInterviewTest {
     }
 
     @Test
-    void 중단된_면접도_답한_데까지는_채점한다() {
-        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.ABANDONED, 5L)));
+    void N대1_채점_요청에도_면접_상태를_싣는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.COMPLETED, null)));
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(5L).personaOrder(0).build()));
+        when(personaRepository.findAllById(List.of(5L))).thenReturn(List.of(persona()));
 
         service.requestFeedbackForFinishedInterview(3L);
 
-        verify(aiServerClient).requestSoloFeedback(any());
+        ArgumentCaptor<FeedbackMultiRequest> sent = ArgumentCaptor.forClass(FeedbackMultiRequest.class);
+        verify(aiServerClient).requestMultiFeedback(sent.capture());
+        assertThat(sent.getValue().getInterviewStatus()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void 중단된_면접은_자동_채점하지_않는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.ABANDONED, 5L)));
+
+        assertThatCode(() -> service.requestFeedbackForFinishedInterview(3L)).doesNotThrowAnyException();
+
+        verify(aiServerClient, never()).requestSoloFeedback(any());
+        verify(aiServerClient, never()).requestMultiFeedback(any());
+        verify(feedbackRepository, never()).save(any());
+    }
+
+    @Test
+    void 진행_중인_면접은_자동_채점하지_않는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.IN_PROGRESS, 5L)));
+
+        assertThatCode(() -> service.requestFeedbackForFinishedInterview(3L)).doesNotThrowAnyException();
+
+        verify(aiServerClient, never()).requestSoloFeedback(any());
+        verify(aiServerClient, never()).requestMultiFeedback(any());
+        verify(feedbackRepository, never()).save(any());
     }
 
     @Test

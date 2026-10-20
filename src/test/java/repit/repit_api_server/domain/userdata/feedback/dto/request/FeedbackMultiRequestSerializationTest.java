@@ -21,6 +21,7 @@ class FeedbackMultiRequestSerializationTest {
 
     private FeedbackMultiRequest request() {
         return FeedbackMultiRequest.builder()
+                .interviewStatus("COMPLETED")
                 .sessionId("sess-1")
                 .interviewId("3")
                 .userId("7")
@@ -71,6 +72,17 @@ class FeedbackMultiRequestSerializationTest {
 
             assertThat(json).contains("\"createdAt\":\"2026-08-26T10:00:00Z\"");
             assertThat(json).doesNotContain("created_at");
+        });
+    }
+
+    @Test
+    void 면접_상태는_interviewStatus_키로_직렬화된다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+
+            JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(request()));
+
+            assertThat(json.get("interviewStatus").stringValue()).isEqualTo("COMPLETED");
         });
     }
 }

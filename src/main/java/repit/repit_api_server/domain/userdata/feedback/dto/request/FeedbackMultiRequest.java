@@ -22,6 +22,9 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class FeedbackMultiRequest {
+    // API가 저장한 면접 상태. 분석 서버는 "COMPLETED"만 받고 나머지는 422로 거부한다.
+    // 웹 입력을 옮기지 않고, 채점 직전에 검사한 DB 값을 그대로 싣는다.
+    private String interviewStatus;
     private String sessionId;
     private String interviewId;
     private String userId;
