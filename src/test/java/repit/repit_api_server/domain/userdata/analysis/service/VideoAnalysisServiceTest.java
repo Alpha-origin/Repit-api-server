@@ -19,6 +19,8 @@ import repit.repit_api_server.domain.userdata.analysis.entity.enums.VideoAnalysi
 import repit.repit_api_server.domain.userdata.analysis.entity.enums.VideoAnalysisStatus;
 import repit.repit_api_server.domain.userdata.analysis.repository.VideoAnalysisRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode;
+import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordingEntity;
 import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
@@ -30,6 +32,9 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDateTime;
@@ -74,6 +79,8 @@ class VideoAnalysisServiceTest {
     private VideoAnalysisCallbackHandler callbackHandler;
     @Mock
     private AiServerClient aiServerClient;
+    @Mock
+    private PlatformTransactionManager transactionManager;
 
     private S3Presigner presigner;
     private VideoAnalysisService service;
@@ -88,8 +95,11 @@ class VideoAnalysisServiceTest {
                 .region(Region.AP_NORTHEAST_2)
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
                 .build();
+        // 잠금·트랜잭션은 영속성 테스트가 실제 DB로 본다. 여기서는 트랜잭션 경계만 흉내 낸다.
+        when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         service = new VideoAnalysisService(analysisRepository, interviewRepository, recordingRepository,
-                callbackHandler, aiServerClient, presigner, JsonMapper.builder().build());
+                callbackHandler, aiServerClient, presigner, JsonMapper.builder().build(),
+                new TransactionTemplate(transactionManager));
         ReflectionTestUtils.setField(service, "enabled", true);
         ReflectionTestUtils.setField(service, "internalAuthToken", "secret");
         ReflectionTestUtils.setField(service, "videoApiToken", "video-secret");
@@ -99,6 +109,7 @@ class VideoAnalysisServiceTest {
         ReflectionTestUtils.setField(service, "bucketName", "repit-bucket");
 
         when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(interview("b1c2d3")));
+        when(interviewRepository.lockById(INTERVIEW_ID)).thenAnswer(i -> interviewRepository.findById(INTERVIEW_ID));
         when(recordingRepository.findFirstByInterviewIdAndKindOrderByRecordingIdDesc(INTERVIEW_ID, RecordingKind.FULL_INTERVIEW))
                 .thenAnswer(i -> Optional.of(video(LocalDateTime.now().minusDays(1))));
         when(analysisRepository.findAllByRecordingIdOrderByAnalysisIdAsc(RECORDING_ID)).thenAnswer(i -> List.copyOf(analyses));
@@ -310,12 +321,12 @@ class VideoAnalysisServiceTest {
     void 끝난_작업의_결과는_콜백과_같은_검증을_거쳐_저장하고_통과하지_못하면_닫는다() {
         Map<String, Object> result = Map.of("status", "ready");
         when(aiServerClient.getVideoAnalysisJob("job-1")).thenReturn(new VideoAnalysisJobResponse("job-1", "completed", result, null));
-        when(callbackHandler.applyRecovered(ANALYSIS_ID, result)).thenReturn(true);
+        when(callbackHandler.applyRecovered(ANALYSIS_ID, result)).thenReturn(VideoAnalysisCallbackHandler.Outcome.APPLIED);
 
         service.check(pending("job-1", 1, LocalDateTime.now().minusMinutes(30)));
         verify(analysisRepository, never()).fail(any(), any(), any(), any(), any());
 
-        when(callbackHandler.applyRecovered(ANALYSIS_ID, result)).thenReturn(false);
+        when(callbackHandler.applyRecovered(ANALYSIS_ID, result)).thenReturn(VideoAnalysisCallbackHandler.Outcome.INVALID);
         service.check(pending("job-1", 1, LocalDateTime.now().minusMinutes(30)));
         verify(analysisRepository).fail(eq(ANALYSIS_ID), eq("INVALID_RESULT"), isNull(), anyString(), any());
     }
@@ -519,23 +530,68 @@ class VideoAnalysisServiceTest {
         assertThat(service.get(USER_ID, INTERVIEW_ID).status()).isEqualTo(VideoAnalysisResponse.Status.WAITING);
     }
 
+    /** 끄는 것은 새 작업을 막는 것이지 맡긴 작업을 버리는 것이 아니다. 끄는 순간 기다리던 요청이 영영 "분석 중"으로 남지 않게 한다. */
     @Test
-    void 꺼져_있으면_스윕이_아무것도_하지_않는다() {
+    void 꺼져_있으면_새_요청과_자동_재분석은_만들지_않고_맡긴_요청만_끝까지_본다() {
         ReflectionTestUtils.setField(service, "enabled", false);
+        VideoAnalysisEntity pending = pending("job-1", 1, LocalDateTime.now().minusMinutes(30));
+        when(analysisRepository.findDueChecks(any(), any())).thenReturn(List.of(pending));
+        when(aiServerClient.getVideoAnalysisJob("job-1")).thenReturn(new VideoAnalysisJobResponse("job-1", "processing", null, null));
 
         service.sweep();
 
         verify(analysisRepository, never()).findVideosToStart(any(), any(), any());
-        verify(analysisRepository, never()).findDueChecks(any(), any());
+        verify(analysisRepository, never()).findReanalysisCandidates(any(), any(Long.class), any());
+        verify(aiServerClient).getVideoAnalysisJob("job-1");
+        verify(analysisRepository, never()).save(any());
     }
 
     @Test
-    void 분석이_꺼져_있고_요청이_없는_영상은_WAITING이며_재분석할_수_없다() {
+    void 꺼진_채_요청_인증값도_없으면_남은_요청을_실패로_닫지_않고_미룬다() {
+        ReflectionTestUtils.setField(service, "enabled", false);
+        ReflectionTestUtils.setField(service, "videoApiToken", "");
+        when(analysisRepository.findDueChecks(any(), any())).thenReturn(List.of(pending(null, 0, LocalDateTime.now())));
+
+        service.sweep();
+
+        verify(aiServerClient, never()).requestVideoAnalysis(any());
+        verify(analysisRepository, never()).fail(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void 꺼져_있어도_맡긴_요청은_분석_중이고_저장된_결과는_보이되_재분석은_막힌다() {
+        ReflectionTestUtils.setField(service, "enabled", false);
+        analyses.add(done(1L, "chain-a", VideoAnalysisRequestedBy.AUTO, VideoAnalysisStatus.PENDING, null, null));
+        assertThat(service.get(USER_ID, INTERVIEW_ID).status()).isEqualTo(VideoAnalysisResponse.Status.ANALYZING);
+
+        analyses.clear();
+        analyses.add(done(1L, "chain-a", VideoAnalysisRequestedBy.AUTO, VideoAnalysisStatus.PARTIAL, null, Map.of("v", 1)));
+        VideoAnalysisResponse partial = service.get(USER_ID, INTERVIEW_ID);
+        assertThat(partial.status()).isEqualTo(VideoAnalysisResponse.Status.PARTIAL);
+        assertThat(partial.canRetry()).isFalse();
+    }
+
+    /** 꺼져 있으면 자동 재분석을 만들지 않는다. "분석 중"으로 보이면 오지 않을 재분석을 기다린다. */
+    @Test
+    void 꺼져_있으면_재시도할_만한_실패도_자동_재분석_대기가_아니라_실패다() {
+        analyses.add(done(1L, "chain-a", VideoAnalysisRequestedBy.AUTO, VideoAnalysisStatus.FAILED, true, null));
+        assertThat(service.get(USER_ID, INTERVIEW_ID).status()).isEqualTo(VideoAnalysisResponse.Status.ANALYZING);
+
+        ReflectionTestUtils.setField(service, "enabled", false);
+        VideoAnalysisResponse response = service.get(USER_ID, INTERVIEW_ID);
+
+        assertThat(response.status()).isEqualTo(VideoAnalysisResponse.Status.FAILED);
+        assertThat(response.canRetry()).isFalse();
+    }
+
+    @Test
+    void 분석이_꺼져_있고_요청이_없는_영상은_NONE이며_재분석할_수_없다() {
         ReflectionTestUtils.setField(service, "enabled", false);
 
         VideoAnalysisResponse response = service.get(USER_ID, INTERVIEW_ID);
 
-        assertThat(response.status()).isEqualTo(VideoAnalysisResponse.Status.WAITING);
+        assertThat(response.status()).isEqualTo(VideoAnalysisResponse.Status.NONE);
+        assertThat(response.reasonCode()).isEqualTo("SERVICE_DISABLED");
         assertThat(response.result()).isNull();
         assertThat(response.canRetry()).isFalse();
         assertThatThrownBy(() -> service.retry(USER_ID, INTERVIEW_ID))
@@ -545,10 +601,152 @@ class VideoAnalysisServiceTest {
         verify(aiServerClient, never()).requestVideoAnalysis(any());
     }
 
+    // ---- 면접 자격 ----
+
+    @Test
+    void 정상_완료되지_않은_면접은_조회와_재분석이_409다() {
+        for (Status status : List.of(Status.ABANDONED, Status.IN_PROGRESS)) {
+            when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(interview("b1c2d3", status, null)));
+
+            assertThatThrownBy(() -> service.get(USER_ID, INTERVIEW_ID))
+                    .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT));
+            assertThatThrownBy(() -> service.retry(USER_ID, INTERVIEW_ID))
+                    .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        }
+        verify(analysisRepository, never()).save(any());
+    }
+
+    /** 권한·존재 오류는 정책 409보다 먼저다. 남의 중단 면접에 409를 주면 그 면접의 상태가 드러난다. */
+    @Test
+    void 남의_중단_면접은_409가_아니라_403이다() {
+        when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(interview("b1c2d3", Status.ABANDONED, null)));
+
+        assertThatThrownBy(() -> service.get(USER_ID + 1, INTERVIEW_ID))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+    }
+
+    @Test
+    void 텍스트_면접은_녹화가_있어도_행동_분석을_보이지도_하지도_않는다() {
+        when(interviewRepository.findById(INTERVIEW_ID))
+                .thenReturn(Optional.of(interview("b1c2d3", Status.COMPLETED, AnswerMode.TEXT)));
+        analyses.add(done(1L, "chain-a", VideoAnalysisRequestedBy.AUTO, VideoAnalysisStatus.PARTIAL, null, Map.of("v", 1)));
+
+        VideoAnalysisResponse response = service.get(USER_ID, INTERVIEW_ID);
+
+        assertThat(response.status()).isEqualTo(VideoAnalysisResponse.Status.NONE);
+        assertThat(response.reasonCode()).isEqualTo("TEXT_INTERVIEW");
+        assertThat(response.result()).isNull();
+        assertThat(response.behavior()).isNull();
+        assertThatThrownBy(() -> service.retry(USER_ID, INTERVIEW_ID))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT));
+    }
+
+    @Test
+    void 중단_면접의_대기_요청은_분석_서버를_부르지_않고_정책_사유로_닫는다() {
+        when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(interview("b1c2d3", Status.ABANDONED, null)));
+
+        service.check(pending(null, 0, LocalDateTime.now()));
+        service.check(pending("job-1", 1, LocalDateTime.now().minusMinutes(30)));
+
+        verify(aiServerClient, never()).requestVideoAnalysis(any());
+        verify(aiServerClient, never()).getVideoAnalysisJob(any());
+        verify(analysisRepository, org.mockito.Mockito.times(2))
+                .fail(eq(ANALYSIS_ID), eq("INTERVIEW_ABANDONED"), eq(false), anyString(), any());
+    }
+
+    /** 진행 중인 면접의 요청은 닫지 않는다. 완료로 확정되면 이어서 확인한다. */
+    @Test
+    void 진행_중인_면접의_대기_요청은_닫지_않고_미룬다() {
+        when(interviewRepository.findById(INTERVIEW_ID)).thenReturn(Optional.of(interview("b1c2d3", Status.IN_PROGRESS, null)));
+
+        service.check(pending("job-1", 1, LocalDateTime.now().minusHours(7)));
+
+        verify(aiServerClient, never()).getVideoAnalysisJob(any());
+        verify(analysisRepository, never()).fail(any(), any(), any(), any(), any());
+        ArgumentCaptor<LocalDateTime> next = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(analysisRepository).postpone(eq(ANALYSIS_ID), next.capture(), anyString(), any());
+        assertThat(next.getValue()).isAfter(LocalDateTime.now().plusMinutes(9));
+    }
+
+    @Test
+    void 잠근_뒤_면접이_중단으로_확정됐으면_첫_요청을_만들지_않는다() {
+        when(interviewRepository.lockById(INTERVIEW_ID)).thenReturn(Optional.of(interview("b1c2d3", Status.ABANDONED, null)));
+
+        assertThat(service.openFirst(video(LocalDateTime.now().minusMinutes(5)))).isNull();
+        verify(analysisRepository, never()).save(any());
+    }
+
+    @Test
+    void 잠근_뒤_이미_요청이_있거나_새_영상이_올라왔으면_첫_요청을_만들지_않는다() {
+        analyses.add(done(1L, "chain-a", VideoAnalysisRequestedBy.AUTO, VideoAnalysisStatus.FAILED, null, null));
+        assertThat(service.openFirst(video(LocalDateTime.now().minusMinutes(5)))).isNull();
+
+        analyses.clear();
+        InterviewRecordingEntity stale = InterviewRecordingEntity.builder()
+                .recordingId(RECORDING_ID - 1).interviewId(INTERVIEW_ID).userId(USER_ID).kind(RecordingKind.FULL_INTERVIEW)
+                .contentType("video/webm").s3Key("k").fileSize(10L).createdAt(LocalDateTime.now().minusMinutes(5)).build();
+        assertThat(service.openFirst(stale)).isNull();
+
+        assertThat(service.openFirst(video(LocalDateTime.now().minusMinutes(5)))).isNotNull();
+    }
+
+    @Test
+    void 결과_문서_없이_실패만_온_작업의_오류도_공개_오류_계약을_따른다() {
+        when(aiServerClient.getVideoAnalysisJob("job-1")).thenReturn(new VideoAnalysisJobResponse("job-1", "failed", null,
+                Map.of("code", "BEHAVIOR_NOT_MEASURABLE", "message", "부족", "retryable", "false")));
+
+        service.check(pending("job-1", 1, LocalDateTime.now().minusMinutes(30)));
+
+        verify(analysisRepository).fail(eq(ANALYSIS_ID), eq("INVALID_RESULT"), isNull(), anyString(), any());
+    }
+
+    @Test
+    void 작업_조회의_failed_결과_문서는_콜백과_같은_검증으로_저장한다() {
+        Map<String, Object> result = Map.of("status", "failed");
+        when(aiServerClient.getVideoAnalysisJob("job-1")).thenReturn(new VideoAnalysisJobResponse("job-1", "failed", result,
+                Map.of("code", "INTERNAL_ERROR", "message", "x", "retryable", false)));
+        when(callbackHandler.applyRecovered(ANALYSIS_ID, result)).thenReturn(VideoAnalysisCallbackHandler.Outcome.APPLIED);
+
+        service.check(pending("job-1", 1, LocalDateTime.now().minusMinutes(30)));
+
+        verify(callbackHandler).applyRecovered(ANALYSIS_ID, result);
+        verify(analysisRepository, never()).fail(any(), any(), any(), any(), any());
+    }
+
+    /** 다시 켜며 기준 시각을 옮겨도 이미 정상 대상으로 분석한 영상의 재분석까지 막지 않는다. */
+    @Test
+    void 분석_기준_시각은_요청이_한_번도_없는_영상에만_적용한다() {
+        InterviewRecordingEntity video = video(LocalDateTime.now().minusDays(1));
+        ReflectionTestUtils.setField(service, "analyzeUploadedAfter", LocalDateTime.now().minusHours(1));
+
+        assertThat(service.retryBlockedReason(video, List.of(), LocalDateTime.now())).contains("시작하기 전");
+        assertThat(service.retryBlockedReason(video, List.of(
+                done(1L, "a", VideoAnalysisRequestedBy.AUTO, VideoAnalysisStatus.PARTIAL, null, Map.of())), LocalDateTime.now()))
+                .isNull();
+    }
+
+    @Test
+    void 이미_마친_분석은_canRetry가_거짓이다() {
+        analyses.add(done(1L, "chain-a", VideoAnalysisRequestedBy.AUTO, VideoAnalysisStatus.READY, null, Map.of("v", 1)));
+
+        VideoAnalysisResponse response = service.get(USER_ID, INTERVIEW_ID);
+
+        assertThat(response.status()).isEqualTo(VideoAnalysisResponse.Status.READY);
+        assertThat(response.canRetry()).isFalse();
+        // 행동 데이터로 읽을 수 없는 옛 결과다. 지어내지 않고 사유를 밝힌다.
+        assertThat(response.behavior()).isNull();
+        assertThat(response.reasonCode()).isEqualTo("RESULT_SCHEMA_UNSUPPORTED");
+    }
+
     // ---- 준비 ----
 
     private static InterviewEntity interview(String sessionId) {
-        return InterviewEntity.builder().interviewId(INTERVIEW_ID).userId(USER_ID).sessionId(sessionId).build();
+        return interview(sessionId, Status.COMPLETED, null);
+    }
+
+    private static InterviewEntity interview(String sessionId, Status status, AnswerMode answerMode) {
+        return InterviewEntity.builder().interviewId(INTERVIEW_ID).userId(USER_ID).sessionId(sessionId)
+                .status(status).answerMode(answerMode).build();
     }
 
     private static InterviewRecordingEntity video(LocalDateTime uploadedAt) {

@@ -17,6 +17,15 @@ public interface InterviewRepository extends JpaRepository<InterviewEntity, Long
     @Query("select i from InterviewEntity i where i.interviewId = :interviewId")
     Optional<InterviewEntity> findForJobSnapshot(@Param("interviewId") Long interviewId);
 
+    /**
+     * 면접 행을 잠그고 읽는다. 같은 면접에 영상 분석 요청을 여는 길(자동 요청·자동 재분석·사용자 재분석)이 이 잠금 아래에서
+     * 자격·진행 중 요청·사용자 재분석 한도를 다시 보고 행을 만든다. 두 탭에서 동시에 눌러도 한쪽은 다른 쪽이 만든 행을 보고
+     * 멈춘다. 외부 호출은 이 잠금 안에서 하지 않는다.
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select i from InterviewEntity i where i.interviewId = :interviewId")
+    Optional<InterviewEntity> lockById(@Param("interviewId") Long interviewId);
+
     List<InterviewEntity> findAllByUserId(Long userId);
 
     Optional<InterviewEntity> findBySessionId(String sessionId);

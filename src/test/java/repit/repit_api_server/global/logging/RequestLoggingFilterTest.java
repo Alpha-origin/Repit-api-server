@@ -115,6 +115,54 @@ class RequestLoggingFilterTest {
         assertThat(requestSeenByHandler.get()).isNotInstanceOf(CachedBodyHttpServletRequest.class);
     }
 
+    /** 영상 콜백 본문은 내부 인증을 통과한 뒤 컨트롤러가 상한까지만 읽는다. 필터가 먼저 읽거나 로그에 싣지 않는다. */
+    @Test
+    void 영상_콜백_본문은_필터가_읽지도_남기지도_않는다() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/analyses/video/callback");
+        request.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        request.setContent("{\"summary\":[\"behavior-secret\"]}".getBytes(StandardCharsets.UTF_8));
+        AtomicReference<Object> requestSeenByHandler = new AtomicReference<>();
+        AtomicReference<Object> responseSeenByHandler = new AtomicReference<>();
+
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> {
+            requestSeenByHandler.set(req);
+            responseSeenByHandler.set(res);
+        });
+
+        assertThat(requestSeenByHandler.get()).isNotInstanceOf(CachedBodyHttpServletRequest.class);
+        assertThat(responseSeenByHandler.get()).isNotInstanceOf(ContentCachingResponseWrapper.class);
+        assertThat(capturedLogs.list).extracting(ILoggingEvent::getFormattedMessage)
+                .noneMatch(message -> message.contains("behavior-secret"));
+    }
+
+    @Test
+    void 영상_분석_조회_응답의_행동_데이터는_로그에_싣지_않는다() throws Exception {
+        AtomicReference<Object> responseSeenByHandler = new AtomicReference<>();
+
+        filter.doFilter(new MockHttpServletRequest("GET", "/api/interviews/42/video-analysis"), new MockHttpServletResponse(),
+                (req, res) -> responseSeenByHandler.set(res));
+
+        assertThat(responseSeenByHandler.get()).isNotInstanceOf(ContentCachingResponseWrapper.class);
+    }
+
+    /** 길이를 밝히지 않은 본문은 끝까지 읽어야 크기를 안다. 인증도 받기 전에 상한 없이 메모리에 올리지 않는다. */
+    @Test
+    void 길이를_밝히지_않은_본문은_메모리에_올리지_않는다() throws Exception {
+        MockHttpServletRequest chunked = new MockHttpServletRequest("POST", "/api/feedbacks/callback") {
+            @Override
+            public long getContentLengthLong() {
+                return -1;
+            }
+        };
+        chunked.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        chunked.setContent("{}".getBytes(StandardCharsets.UTF_8));
+        AtomicReference<Object> requestSeenByHandler = new AtomicReference<>();
+
+        filter.doFilter(chunked, new MockHttpServletResponse(), (req, res) -> requestSeenByHandler.set(req));
+
+        assertThat(requestSeenByHandler.get()).isNotInstanceOf(CachedBodyHttpServletRequest.class);
+    }
+
     @Test
     void SSE_응답은_감싸지_않아_이벤트가_바로_흘러간다() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/ai/subscribe/job-1");
