@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "data": {
+    "status": "NONE",
+    "result": null,
+    "canRetry": false,
+    "reasonCode": "NO_RECORDING",
+    "error": null,
+    "behavior": null,
+    "latestAnalysisId": null,
+    "behaviorAnalysisId": null,
+    "showingPreviousResult": false
+  }
+}
