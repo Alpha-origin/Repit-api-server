@@ -282,15 +282,47 @@ class InterviewServiceSaveResultTest {
         assertThat(saved.getValue().getSessionId()).isEqualTo("sess-1");
     }
 
+    /** 비거나 진행 중인 상태를 COMPLETED로 고쳐 받으면 중단된 면접까지 채점·영상 분석 대상이 된다. */
     @Test
-    void 상태가_비어_오면_끝난_것으로_본다() {
-        service.saveInterview(new SaveInterviewRequest("sess-1", 3L, 7L, null,
-                LocalDateTime.parse("2026-08-18T01:00:00"), List.of()));
+    void 새_기록의_상태가_비었거나_진행_중이면_차지하지_않고_422로_거절한다() {
+        for (Status status : java.util.Arrays.asList(null, Status.IN_PROGRESS)) {
+            assertThatThrownBy(() -> service.saveInterview(new SaveInterviewRequest("sess-1", 3L, 7L, status,
+                    LocalDateTime.parse("2026-08-18T01:00:00"), List.of())))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getStatus()).isEqualTo(org.springframework.http.HttpStatus.UNPROCESSABLE_CONTENT));
+        }
 
-        // 기록을 넘겼다는 것 자체가 면접이 끝났다는 뜻이다.
+        // 거절이 면접 상태를 바꾸지 않는다. 같은 기록이 올바른 상태로 다시 오면 처음부터 저장된다.
+        verify(interviewRepository, never()).claimResultSave(anyLong(), any());
+        verify(interviewRepository, never()).save(any());
+        verify(questionRepository, never()).deleteAllByInterviewId(anyLong());
+    }
+
+    @Test
+    void 중단_기록도_질문과_답변을_그대로_남긴다() {
+        service.saveInterview(new SaveInterviewRequest("sess-1", 3L, 7L, Status.ABANDONED, null,
+                request().getQnaRequests()));
+
+        verify(interviewRepository).claimResultSave(3L, Status.ABANDONED);
         ArgumentCaptor<InterviewEntity> saved = ArgumentCaptor.forClass(InterviewEntity.class);
         verify(interviewRepository).save(saved.capture());
-        assertThat(saved.getValue().getStatus()).isEqualTo(Status.COMPLETED);
+        assertThat(saved.getValue().getStatus()).isEqualTo(Status.ABANDONED);
+        verify(questionRepository, org.mockito.Mockito.atLeastOnce()).save(any(QuestionEntity.class));
+    }
+
+    /** 이미 확정한 면접에 반대 상태나 상태 없는 재전송이 와도 처음 기록·상태를 그대로 두고 정상 응답한다. */
+    @Test
+    void 이미_종료된_면접은_다시_온_요청의_상태가_무엇이든_건드리지_않는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(InterviewEntity.builder()
+                .interviewId(3L).userId(7L).sessionId("sess-1").status(Status.COMPLETED).build()));
+
+        for (Status status : java.util.Arrays.asList(Status.ABANDONED, null, Status.IN_PROGRESS)) {
+            service.saveInterview(new SaveInterviewRequest("sess-1", 3L, 7L, status, null, List.of()));
+        }
+
+        verify(interviewRepository, never()).claimResultSave(anyLong(), any());
+        verify(interviewRepository, never()).save(any());
+        verify(questionRepository, never()).deleteAllByInterviewId(anyLong());
     }
 
     @Test
@@ -317,11 +349,4 @@ class InterviewServiceSaveResultTest {
         verify(interviewRepository, never()).save(any());
     }
 
-    /** 진행 중으로 남기면 다시 온 기록을 처음 것으로 보고 또 저장한다. */
-    @Test
-    void 진행_중_상태로_와도_끝난_것으로_저장한다() {
-        service.saveInterview(new SaveInterviewRequest("sess-1", 3L, 7L, Status.IN_PROGRESS, null, List.of()));
-
-        verify(interviewRepository).claimResultSave(3L, Status.COMPLETED);
-    }
 }

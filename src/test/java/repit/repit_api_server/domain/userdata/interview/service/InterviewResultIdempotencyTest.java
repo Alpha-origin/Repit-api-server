@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionTemplate;
 import repit.repit_api_server.domain.userdata.answer.entity.AnswerEntity;
@@ -18,6 +19,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionRepository;
+import repit.repit_api_server.global.exception.BusinessException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -29,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -77,7 +80,11 @@ class InterviewResultIdempotencyTest {
     }
 
     private SaveInterviewRequest record(String answerContent) {
-        return new SaveInterviewRequest(null, interviewId, 9L, Status.COMPLETED, null, List.of(
+        return record(Status.COMPLETED, answerContent);
+    }
+
+    private SaveInterviewRequest record(Status status, String answerContent) {
+        return new SaveInterviewRequest(null, interviewId, 9L, status, null, List.of(
                 new SaveInterviewRequest.QnA(
                         new SaveInterviewRequest.Question(1L, null, "tech_choice", "Redis를 왜 썼나요?",
                                 "선택 근거", "캐시 선택 근거", List.of()),
@@ -115,6 +122,78 @@ class InterviewResultIdempotencyTest {
         // 다시 받은 기록에도 채점 준비를 부른다. 빠진 대기 행을 채우고, 있는 것은 다시 요청하지 않는다
         // (FeedbackDispatchServiceTest가 확인한다).
         verify(feedbackDispatchService, times(3)).onTranscriptSaved(interviewId);
+    }
+
+    /** 상태를 COMPLETED로 고쳐 받지 않는다. 거절은 면접을 진행 중으로 둬, 같은 기록이 올바른 상태로 오면 처음부터 저장된다. */
+    @Test
+    void 새_기록의_상태가_없거나_진행_중이면_422이고_면접은_그대로다() {
+        for (Status invalid : java.util.Arrays.asList(null, Status.IN_PROGRESS)) {
+            assertThatThrownBy(() -> chatInterviewResultService.handleResult(record(invalid, "답변")))
+                    .isInstanceOfSatisfying(BusinessException.class,
+                            e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT));
+        }
+
+        assertThat(interviewRepository.findById(interviewId).orElseThrow().getStatus()).isEqualTo(Status.IN_PROGRESS);
+        assertThat(questions()).isEmpty();
+        verify(feedbackDispatchService, never()).onTranscriptSaved(interviewId);
+
+        chatInterviewResultService.handleResult(record(Status.COMPLETED, "답변"));
+        assertThat(interviewRepository.findById(interviewId).orElseThrow().getStatus()).isEqualTo(Status.COMPLETED);
+        assertThat(questions()).hasSize(2);
+    }
+
+    /** 중단 기록도 질문·답변을 남긴다. 채점 준비만 하지 않고, 뒤늦은 완료 요청이 와도 중단을 지킨다. */
+    @Test
+    void 중단_기록은_보존하고_채점을_준비하지_않으며_뒤늦은_완료가_바꾸지_못한다() {
+        chatInterviewResultService.handleResult(record(Status.ABANDONED, "여기까지 답했습니다."));
+        List<Long> first = questions().stream().map(QuestionEntity::getQuestionId).toList();
+
+        chatInterviewResultService.handleResult(record(Status.COMPLETED, "다른 답변"));
+        chatInterviewResultService.handleResult(record(null, "상태 없는 재전송"));
+
+        assertThat(interviewRepository.findById(interviewId).orElseThrow().getStatus()).isEqualTo(Status.ABANDONED);
+        assertThat(questions()).extracting(QuestionEntity::getQuestionId).containsExactlyElementsOf(first);
+        assertThat(answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(interviewId))
+                .extracting(AnswerEntity::getContent).contains("여기까지 답했습니다.");
+        verify(feedbackDispatchService, never()).onTranscriptSaved(interviewId);
+    }
+
+    @Test
+    void 완료_뒤_늦게_온_중단은_완료와_질문_PK를_바꾸지_않는다() {
+        chatInterviewResultService.handleResult(record(Status.COMPLETED, "답변"));
+        List<Long> first = questions().stream().map(QuestionEntity::getQuestionId).toList();
+
+        chatInterviewResultService.handleResult(record(Status.ABANDONED, "다른 답변"));
+
+        assertThat(interviewRepository.findById(interviewId).orElseThrow().getStatus()).isEqualTo(Status.COMPLETED);
+        assertThat(questions()).extracting(QuestionEntity::getQuestionId).containsExactlyElementsOf(first);
+        // 늦은 중단도 저장된 COMPLETED를 따른다. 빠진 대기 행을 채우는 호출이라 다시 불러도 중복 요청은 없다.
+        verify(feedbackDispatchService, times(2)).onTranscriptSaved(interviewId);
+    }
+
+    /** 완료와 중단이 동시에 와도 처음 확정된 상태 하나만 남고, 채점 준비는 그 상태를 따른다. */
+    @Test
+    void 완료와_중단이_동시에_와도_먼저_확정한_상태만_남는다() {
+        CountDownLatch start = new CountDownLatch(1);
+        List<CompletableFuture<Void>> requests = List.of(Status.COMPLETED, Status.ABANDONED, Status.COMPLETED,
+                        Status.ABANDONED).stream()
+                .map(status -> CompletableFuture.runAsync(() -> {
+                    try {
+                        start.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    chatInterviewResultService.handleResult(record(status, "답변 " + status));
+                }))
+                .toList();
+
+        start.countDown();
+        CompletableFuture.allOf(requests.toArray(CompletableFuture[]::new)).join();
+
+        Status stored = interviewRepository.findById(interviewId).orElseThrow().getStatus();
+        assertThat(stored).isIn(Status.COMPLETED, Status.ABANDONED);
+        assertThat(questions()).hasSize(2);
+        verify(feedbackDispatchService, times(stored == Status.COMPLETED ? 4 : 0)).onTranscriptSaved(interviewId);
     }
 
     @Test

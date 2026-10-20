@@ -29,6 +29,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.InterviewMo
 import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.interview.service.InterviewFeedbackPolicy;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
@@ -146,18 +147,15 @@ public class FeedbackService {
 
     /**
      * 서버가 정상 완료로 확정한 면접만 채점한다. 중단(ABANDONED)과 진행 중(IN_PROGRESS)은 채점하지 않는다.
-     * 소켓이 끊긴 것만으로는 완료나 중단으로 보지 않는다 — 판단은 저장된 상태로만 한다.
+     * 판단은 영상 분석과 같은 {@link InterviewFeedbackPolicy}가 한다.
      */
     private static boolean isFeedbackEligible(InterviewEntity interview) {
-        return interview.getStatus() == Status.COMPLETED;
+        return InterviewFeedbackPolicy.isEligible(interview);
     }
 
     /** 수동 요청이 채점 대상이 아닐 때 돌려줄 오류. 기존 오류 envelope 그대로 409다. */
     private static BusinessException notEligible(InterviewEntity interview) {
-        if (interview.getStatus() == Status.ABANDONED) {
-            return BusinessException.conflict("중단된 면접은 피드백을 생성하지 않습니다.");
-        }
-        return BusinessException.conflict("면접이 아직 끝나지 않았습니다. 완료된 면접만 피드백을 요청할 수 있습니다.");
+        return InterviewFeedbackPolicy.notEligible(interview);
     }
 
     private InterviewEntity findInterview(Long interviewId) {

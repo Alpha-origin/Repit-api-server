@@ -17,8 +17,10 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * 채팅 서버가 면접을 마치고 기록을 넘기는 자리. 저장에 이어 채점 준비까지 여기서 시작한다.
@@ -41,6 +43,7 @@ class ChatInterviewResultServiceTest {
     void setUp() {
         service = new ChatInterviewResultService(interviewService, feedbackDispatchService);
         request = new SaveInterviewRequest("sess-1", 3L, 7L, Status.COMPLETED, null, List.of());
+        lenient().when(interviewService.findStoredStatus(3L)).thenReturn(Status.COMPLETED);
     }
 
     @Test
@@ -62,6 +65,30 @@ class ChatInterviewResultServiceTest {
                 .isInstanceOf(BusinessException.class);
 
         verify(feedbackDispatchService, never()).onTranscriptSaved(3L);
+    }
+
+    /** 중단 기록은 남기되 채점·분석은 열지 않는다. 정상 응답해야 채팅 서버의 전달 대기열이 정리된다. */
+    @Test
+    void 중단으로_저장된_면접은_채점을_준비하지_않고_정상_응답한다() {
+        SaveInterviewRequest abandoned = new SaveInterviewRequest("sess-1", 3L, 7L, Status.ABANDONED, null, List.of());
+        when(interviewService.findStoredStatus(3L)).thenReturn(Status.ABANDONED);
+
+        assertThatCode(() -> service.handleResult(abandoned)).doesNotThrowAnyException();
+
+        verify(interviewService).saveInterview(abandoned);
+        verify(feedbackDispatchService, never()).onTranscriptSaved(3L);
+    }
+
+    /** 요청이 아니라 처음 확정된 상태를 따른다. 완료 뒤 늦게 온 중단도, 중단 뒤 늦게 온 완료도 결과를 바꾸지 않는다. */
+    @Test
+    void 받은_상태가_아니라_저장된_상태로_채점_준비를_정한다() {
+        SaveInterviewRequest lateAbandon = new SaveInterviewRequest("sess-1", 3L, 7L, Status.ABANDONED, null, List.of());
+        service.handleResult(lateAbandon);
+        verify(feedbackDispatchService).onTranscriptSaved(3L);
+
+        when(interviewService.findStoredStatus(3L)).thenReturn(Status.ABANDONED);
+        service.handleResult(request);
+        verify(feedbackDispatchService, org.mockito.Mockito.times(1)).onTranscriptSaved(3L);
     }
 
     @Test
