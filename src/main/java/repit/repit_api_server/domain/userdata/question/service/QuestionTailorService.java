@@ -154,6 +154,17 @@ public class QuestionTailorService {
         return startTailor(interview, user.getMajor(), user.getJobTitle(), null);
     }
 
+    /**
+     * 준비 재시도 전에 시간이 지난 준비 건을 먼저 닫는다. 재시도가 질문을 다시 만들지는 이 결과로 갈린다.
+     * 면접 전용 면접관 고정처럼 그 판단에 기대는 일이 재시도보다 먼저 돌 때 쓴다.
+     */
+    public void expireTimedOutPreparation(Long interviewId) {
+        QuestionTailorEntity latest = latestTailor(interviewId);
+        if (latest != null) {
+            expireIfTimedOut(latest);
+        }
+    }
+
     private QuestionTailorEntity latestTailor(Long interviewId) {
         return questionTailorRepository.findTopByInterviewIdOrderByCreatedAtDesc(interviewId).orElse(null);
     }

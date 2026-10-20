@@ -137,8 +137,10 @@ class InterviewServicePrepareTest {
 
         service.retryPreparation(user, INTERVIEW_ID);
 
-        verify(snapshotService).captureForRetry(user, INTERVIEW_ID);
-        verify(questionTailorService).retryPreparation(snapshotted, user.user());
+        var order = org.mockito.Mockito.inOrder(questionTailorService, snapshotService);
+        order.verify(questionTailorService).expireTimedOutPreparation(INTERVIEW_ID);
+        order.verify(snapshotService).captureForRetry(user, INTERVIEW_ID);
+        order.verify(questionTailorService).retryPreparation(snapshotted, user.user());
     }
 
     @Test
@@ -149,5 +151,6 @@ class InterviewServicePrepareTest {
             service.retryPreparation(userWithMajor(major), INTERVIEW_ID);
         }
         verify(snapshotService, never()).captureForRetry(any(), any());
+        verify(questionTailorService, never()).expireTimedOutPreparation(any());
     }
 }

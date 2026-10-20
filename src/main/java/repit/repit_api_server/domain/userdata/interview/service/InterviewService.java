@@ -8,6 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 import repit.repit_api_server.domain.company.service.CompanySnapshotFactory;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
+import repit.repit_api_server.domain.metadata.support.JobRole;
+import repit.repit_api_server.domain.userdata.persona.support.UserJobMajors;
 import repit.repit_api_server.domain.userdata.interview.dto.request.CreateInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatAnswerResponse;
@@ -257,6 +259,8 @@ public class InterviewService {
         }
         // 질문을 다시 만드는 재시도는 처음 시작과 같은 직무 고정을 거친다. 이미 고정됐으면 그대로 둔다.
         if (requiresJobSnapshot(authUser)) {
+            // 콜백을 기다리다 시간만 지난 건이 실패로 닫혀야 질문을 다시 만드는 재시도인지 알 수 있다.
+            questionTailorService.expireTimedOutPreparation(interviewId);
             interview = interviewJobSnapshotService.captureForRetry(authUser, interviewId);
         }
 
@@ -268,10 +272,8 @@ public class InterviewService {
 
     /** 직무명을 고정해야 하는 직무(일반 직군)인지. 고정은 면접 전용 면접관 복제로 한다. */
     private static boolean requiresJobSnapshot(AuthUser authUser) {
-        return repit.repit_api_server.domain.metadata.support.JobRole.find(
-                        repit.repit_api_server.domain.userdata.persona.support.UserJobMajors.normalize(
-                                authUser.user().getMajor()))
-                .map(repit.repit_api_server.domain.metadata.support.JobRole::requiresJobTitle).orElse(false);
+        return JobRole.find(UserJobMajors.normalize(authUser.user().getMajor()))
+                .map(JobRole::requiresJobTitle).orElse(false);
     }
 
     /**
