@@ -1,5 +1,6 @@
 package repit.repit_api_server.domain.userdata.interview.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -28,6 +29,9 @@ public class SaveInterviewRequest {
     private String sessionId;
     private Long interviewId;
     private Long userId;
+    // 채팅 서버가 확정한 종료 상태. 새 기록은 COMPLETED 또는 ABANDONED여야 한다. 모르는 값은 본문 해석 오류(400)로
+    // 끊지 않고 비워 받아, 저장할 때 상태 검사가 422로 거절한다(이미 저장한 면접의 재전송이면 그대로 무시된다).
+    @JsonFormat(with = JsonFormat.Feature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
     private Status status;
     private LocalDateTime interviewCreatedAt;
     private List<QnA> qnaRequests;

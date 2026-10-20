@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
 import java.util.UUID;
@@ -56,6 +57,13 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
     // 끝나지 않고 계속 흘러가는 응답. 로그를 위해 감쌌다가는 이벤트가 캐시에 갇힌다.
     private static final String SSE_PATH_PREFIX = "/api/v1/ai/subscribe/";
+
+    // 본문을 로그에 남기지 않는 경로. 영상 행동 관찰 데이터는 요약 수치라도 로그로 퍼뜨리지 않는다.
+    // 영상 콜백은 이 필터가 먼저 읽지도 않는다 — 내부 인증을 통과한 뒤 컨트롤러가 상한까지만 읽는다.
+    private static final List<String> BODY_EXCLUDED_PATH_PATTERNS = List.of(
+            "/api/analyses/video/callback",
+            "/api/interviews/*/video-analysis",
+            "/api/interviews/*/video-analysis/retry");
 
     private final HttpLoggingProperties properties;
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
@@ -279,7 +287,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
      * 파일 내용은 남기지 않고 이름과 크기만 남긴다.
      */
     private void appendFormSummary(StringBuilder message, HttpServletRequest request, String contentType) {
-        if (!properties.includeBody() || contentType == null) {
+        if (!properties.includeBody() || contentType == null || bodyExcluded(request)) {
             return;
         }
         String lowerCase = contentType.toLowerCase();
@@ -341,7 +349,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     }
 
     private boolean shouldCacheRequestBody(HttpServletRequest request) {
-        if (!properties.includeBody()) {
+        if (!properties.includeBody() || bodyExcluded(request)) {
             return false;
         }
         String contentType = request.getContentType();
@@ -355,7 +363,14 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
                 return false;
             }
         }
-        return request.getContentLengthLong() <= MAX_CACHEABLE_BODY_BYTES;
+        // 길이를 밝히지 않은 본문(chunked)은 끝까지 읽어 봐야 크기를 안다. 상한 없이 메모리에 올리지 않는다.
+        long contentLength = request.getContentLengthLong();
+        return contentLength >= 0 && contentLength <= MAX_CACHEABLE_BODY_BYTES;
+    }
+
+    private boolean bodyExcluded(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        return BODY_EXCLUDED_PATH_PATTERNS.stream().anyMatch(pattern -> pathMatcher.match(pattern, path));
     }
 
     /**
@@ -371,7 +386,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
      * 비켜간다.
      */
     private boolean shouldCacheResponseBody(HttpServletRequest request) {
-        if (!properties.includeBody()) {
+        if (!properties.includeBody() || bodyExcluded(request)) {
             return false;
         }
 

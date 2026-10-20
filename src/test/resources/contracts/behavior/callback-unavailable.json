@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1",
+  "jobId": "job-001",
+  "requestId": "video-request-001",
+  "sessionId": "session-42",
+  "interviewId": "42",
+  "userId": "7",
+  "status": "unavailable",
+  "result": {
+    "videoId": "501",
+    "durationMs": 4000,
+    "status": "unavailable",
+    "analysis": {
+      "status": "unavailable",
+      "data": null,
+      "error": {
+        "code": "BEHAVIOR_NOT_MEASURABLE",
+        "message": "이 영상에서는 행동 지표를 측정할 수 있는 구간이 충분하지 않습니다.",
+        "retryable": false
+      }
+    },
+    "error": null
+  },
+  "error": null
+}

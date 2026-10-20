@@ -10,6 +10,12 @@ import org.springframework.data.domain.Limit;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
+import repit.repit_api_server.domain.userdata.analysis.behavior.BehaviorData;
+import repit.repit_api_server.domain.userdata.analysis.behavior.VideoPublicError;
+import repit.repit_api_server.domain.userdata.analysis.behavior.VideoPublicErrors;
+import repit.repit_api_server.domain.userdata.analysis.behavior.VideoResultDocument;
+import repit.repit_api_server.domain.userdata.analysis.behavior.VideoResultException;
 import repit.repit_api_server.domain.userdata.analysis.dto.request.VideoAnalysisRequest;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisAcceptedResponse;
 import repit.repit_api_server.domain.userdata.analysis.dto.response.VideoAnalysisJobResponse;
@@ -20,6 +26,7 @@ import repit.repit_api_server.domain.userdata.analysis.entity.enums.VideoAnalysi
 import repit.repit_api_server.domain.userdata.analysis.repository.VideoAnalysisRepository;
 import repit.repit_api_server.domain.userdata.interview.entity.InterviewEntity;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
+import repit.repit_api_server.domain.userdata.interview.service.InterviewFeedbackPolicy;
 import repit.repit_api_server.domain.userdata.recording.entity.InterviewRecordingEntity;
 import repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind;
 import repit.repit_api_server.domain.userdata.recording.repository.InterviewRecordingRepository;
@@ -44,6 +51,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 
 /**
  * 면접 화면 전체 녹화를 분석 서버의 영상 분석(POST /analysis/video)에 맡기고, 결과를 받을 때까지 지켜본다.
@@ -63,6 +72,17 @@ import java.util.UUID;
  *   <li>조회 장애·5xx·타임아웃만으로는 새 분석을 시작하지 않는다.</li>
  *   <li>자동 재분석은 분석 서버가 retryable=true로 끝낸 실패만, 묶음당 작업 5개까지. 사용자 재분석은 영상당 2회.</li>
  * </ul>
+ *
+ * <p>정상 완료(COMPLETED)로 저장된 음성 면접만 분석한다({@link VideoAnalysisEligibility}). 새 요청·재전송·작업 조회 복구·
+ * 자동/사용자 재분석·조회·늦은 콜백이 모두 같은 판단을 거친다. 중단·텍스트 면접의 녹화는 보존하되 분석하지 않고, 진행 중인
+ * 면접의 녹화는 완료될 때까지 기다린다.
+ *
+ * <p>기능 스위치(app.video-analysis.enabled)는 새 작업을 만드는 것만 막는다 — 새 요청, 새 요청 id의 자동 재분석, 사용자
+ * 재분석. 이미 맡긴 요청은 꺼져 있어도 같은 요청 id·저장한 본문으로 다시 보내고 작업을 조회하며 콜백도 받는다. 기존 작업을
+ * 취소하는 스위치가 아니다. 저장된 결과는 꺼져 있어도 보여 준다.
+ *
+ * <p>요청 행을 만드는 길은 모두 면접 행을 잠근 트랜잭션 안에서 자격·진행 중 요청·한도를 다시 보고 만든다. 분석 서버를 부르는
+ * 느린 HTTP는 이 잠금 밖(스윕)에서 한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -98,8 +118,21 @@ public class VideoAnalysisService {
     static final Duration CHECK_INTERVAL = Duration.ofMinutes(1);
     static final Duration RESEND_BASE_DELAY = Duration.ofSeconds(30);
     static final Duration REANALYSIS_DELAY = Duration.ofMinutes(1);
+    // 면접이 아직 끝나지 않은 요청을 다시 볼 간격. 닫지 않고 완료를 기다린다.
+    static final Duration HOLD_INTERVAL = Duration.ofMinutes(10);
     // 한 번의 스윕에서 단계마다 다루는 수. 켜는 순간 쌓인 영상이 한꺼번에 나가지 않게 한다.
     static final int BATCH_SIZE = 20;
+
+    // ---- 웹에 내보내는 사유(reasonCode). 오류 코드는 VideoPublicErrors가 정한다. ----
+    static final String REASON_TEXT_INTERVIEW = "TEXT_INTERVIEW";
+    static final String REASON_NO_RECORDING = "NO_RECORDING";
+    static final String REASON_UPLOADED_BEFORE_ENABLED = "UPLOADED_BEFORE_ENABLED";
+    static final String REASON_SOURCE_EXPIRED = "SOURCE_EXPIRED";
+    static final String REASON_SERVICE_DISABLED = "SERVICE_DISABLED";
+    static final String REASON_RESULT_SCHEMA_UNSUPPORTED = "RESULT_SCHEMA_UNSUPPORTED";
+    // 하위 호환 result로 내보내는 완료 문서. failed 문서는 결과가 없어 내보내지 않는다.
+    private static final Set<VideoAnalysisStatus> COMPLETED_DOCUMENTS =
+            Set.of(VideoAnalysisStatus.READY, VideoAnalysisStatus.PARTIAL, VideoAnalysisStatus.UNAVAILABLE);
 
     private final VideoAnalysisRepository analysisRepository;
     private final InterviewRepository interviewRepository;
@@ -108,6 +141,10 @@ public class VideoAnalysisService {
     private final AiServerClient aiServerClient;
     private final S3Presigner s3Presigner;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
+
+    // 꺼져 있는데 요청 인증값도 없어 남은 요청을 확인하지 못한다는 경고를 한 번만 남긴다.
+    private final AtomicBoolean warnedNoToken = new AtomicBoolean();
 
     // 분석 서버가 브라우저 샘플로 검증을 마치고 영상 분석을 열면 켠다. 꺼져 있으면 영상을 받아 두기만 한다.
     @Value("${app.video-analysis.enabled:false}")
@@ -175,90 +212,189 @@ public class VideoAnalysisService {
     /**
      * 새로 올라온 최종 영상을 요청 자리에 올리고, 보낼 때가 된 요청을 보내거나 조회하고, 자동 재분석할 실패를 잇는다.
      *
+     * <p>새 작업을 만드는 첫째·셋째 단계만 켜져 있을 때 한다. 둘째 단계(이미 맡긴 요청의 재전송·조회)는 꺼져 있어도 한다 —
+     * 끄는 순간 결과를 기다리던 요청이 영영 "분석 중"으로 남지 않게 한다. 둘째 단계는 새 요청 id를 만들지 않는다.
+     *
      * <p>한 건이 넘어져도 나머지는 계속한다.
      */
     @Scheduled(fixedDelayString = "${app.video-analysis.sweep-interval:30s}")
     public void sweep() {
-        if (!enabled) {
-            return;
-        }
-        LocalDateTime startedAt = now();
-        LocalDateTime uploadedAfter = startedAt.minus(ANALYZABLE_FOR);
-        if (analyzeUploadedAfter != null && analyzeUploadedAfter.isAfter(uploadedAfter)) {
-            uploadedAfter = analyzeUploadedAfter;
-        }
-        for (InterviewRecordingEntity video : analysisRepository.findVideosToStart(
-                startedAt.minus(UPLOAD_GRACE), uploadedAfter, Limit.of(BATCH_SIZE))) {
-            guarded("영상 분석 요청을 만들지 못했습니다.", video.getInterviewId(),
-                    () -> open(video, newChainId(), VideoAnalysisRequestedBy.AUTO));
+        if (enabled) {
+            LocalDateTime startedAt = now();
+            LocalDateTime uploadedAfter = startedAt.minus(ANALYZABLE_FOR);
+            if (analyzeUploadedAfter != null && analyzeUploadedAfter.isAfter(uploadedAfter)) {
+                uploadedAfter = analyzeUploadedAfter;
+            }
+            for (InterviewRecordingEntity video : analysisRepository.findVideosToStart(
+                    startedAt.minus(UPLOAD_GRACE), uploadedAfter, Limit.of(BATCH_SIZE))) {
+                guarded("영상 분석 요청을 만들지 못했습니다.", video.getInterviewId(), () -> openFirst(video));
+            }
         }
         // 방금 만든 요청도 이번에 보내도록 시각을 다시 잰다.
-        for (VideoAnalysisEntity analysis : analysisRepository.findDueChecks(now(), Limit.of(BATCH_SIZE))) {
+        List<VideoAnalysisEntity> due = analysisRepository.findDueChecks(now(), Limit.of(BATCH_SIZE));
+        if (!due.isEmpty() && !enabled && (videoApiToken == null || videoApiToken.isBlank())) {
+            // 꺼진 채 요청 인증값까지 빠졌다. 보내면 모두 401로 거절돼 멀쩡한 요청이 실패로 닫힌다. 확인을 미룬다.
+            if (warnedNoToken.compareAndSet(false, true)) {
+                log.warn("영상 분석이 꺼져 있고 VIDEO_ANALYSIS_API_TOKEN도 없어 남은 요청 {}건 이상을 확인하지 못합니다.", due.size());
+            }
+            due = List.of();
+        }
+        for (VideoAnalysisEntity analysis : due) {
             guarded("영상 분석 요청을 확인하지 못했습니다.", analysis.getInterviewId(), () -> check(analysis));
         }
-        for (VideoAnalysisEntity failed : analysisRepository.findReanalysisCandidates(
-                now().minus(REANALYSIS_DELAY), MAX_JOBS_PER_CHAIN, Limit.of(BATCH_SIZE))) {
-            guarded("영상 분석을 자동으로 다시 맡기지 못했습니다.", failed.getInterviewId(), () -> reanalyze(failed));
+        if (enabled) {
+            for (VideoAnalysisEntity failed : analysisRepository.findReanalysisCandidates(
+                    now().minus(REANALYSIS_DELAY), MAX_JOBS_PER_CHAIN, Limit.of(BATCH_SIZE))) {
+                guarded("영상 분석을 자동으로 다시 맡기지 못했습니다.", failed.getInterviewId(), () -> reanalyze(failed));
+            }
         }
     }
 
-    /** 웹이 보는 영상 분석 상태. */
+    /**
+     * 웹이 보는 영상 분석 상태와 행동 관찰 결과. 본인 면접이 아니면 403, 없으면 404, 정상 완료되지 않은 면접이면 409다 —
+     * 인증·권한·존재 오류를 "데이터 없음"으로 감추지 않는다. 분석 서버를 부르지 않는다.
+     */
     public VideoAnalysisResponse get(Long userId, Long interviewId) {
-        ownedInterview(userId, interviewId);
-        InterviewRecordingEntity video = finalVideo(interviewId);
+        InterviewEntity interview = ownedInterview(userId, interviewId);
+        InterviewFeedbackPolicy.requireEligible(interview);
+        return view(interview, now());
+    }
+
+    /**
+     * 최종 영상의 최신 요청으로 상태를 정하고, 같은 영상의 요청 가운데 검증을 통과한 가장 최근 ready/partial 결과를 따로
+     * 골라 행동 데이터로 싣는다. 이전 영상의 결과는 섞지 않는다.
+     */
+    VideoAnalysisResponse view(InterviewEntity interview, LocalDateTime now) {
+        if (VideoAnalysisEligibility.isText(interview)) {
+            // 과거 버그로 텍스트 면접에 녹화가 있어도 행동 분석은 보여 주지 않는다.
+            return VideoAnalysisResponse.empty(VideoAnalysisResponse.Status.NONE, REASON_TEXT_INTERVIEW);
+        }
+        InterviewRecordingEntity video = finalVideo(interview.getInterviewId());
         if (video == null) {
-            return new VideoAnalysisResponse(VideoAnalysisResponse.Status.NONE, null, false);
+            return VideoAnalysisResponse.empty(VideoAnalysisResponse.Status.NONE, REASON_NO_RECORDING);
         }
         List<VideoAnalysisEntity> analyses =
                 analysisRepository.findAllByRecordingIdOrderByAnalysisIdAsc(video.getRecordingId());
         if (analyses.isEmpty()) {
-            VideoAnalysisResponse.Status status = expired(video, now()) || uploadedBeforeEnabled(video)
-                    ? VideoAnalysisResponse.Status.NONE
-                    : VideoAnalysisResponse.Status.WAITING;
-            return new VideoAnalysisResponse(status, null, false);
+            if (uploadedBeforeEnabled(video)) {
+                return VideoAnalysisResponse.empty(VideoAnalysisResponse.Status.NONE, REASON_UPLOADED_BEFORE_ENABLED);
+            }
+            if (expired(video, now)) {
+                return VideoAnalysisResponse.empty(VideoAnalysisResponse.Status.NONE, REASON_SOURCE_EXPIRED);
+            }
+            if (!enabled) {
+                // 꺼져 있으면 이 영상은 요청되지 않는다. WAITING으로 두면 웹이 끝없이 기다린다.
+                return VideoAnalysisResponse.empty(VideoAnalysisResponse.Status.NONE, REASON_SERVICE_DISABLED);
+            }
+            return VideoAnalysisResponse.empty(VideoAnalysisResponse.Status.WAITING, null);
         }
 
         VideoAnalysisEntity latest = analyses.getLast();
-        VideoAnalysisResponse.Status status = switch (latest.getStatus()) {
-            case PENDING -> VideoAnalysisResponse.Status.ANALYZING;
-            case READY -> VideoAnalysisResponse.Status.READY;
-            case PARTIAL -> VideoAnalysisResponse.Status.PARTIAL;
-            case UNAVAILABLE, FAILED -> autoReanalysisPending(latest, analyses)
-                    ? VideoAnalysisResponse.Status.ANALYZING
-                    : VideoAnalysisResponse.Status.FAILED;
-        };
-        // 늦게 도착한 옛 결과가 새 결과를 가리지 않게, 요청 순서로 가장 나중의 완료 결과를 보여 준다.
+        VideoAnalysisResponse.Status status;
+        String reasonCode = null;
+        VideoPublicError error = null;
+        switch (latest.getStatus()) {
+            case PENDING -> status = VideoAnalysisResponse.Status.ANALYZING;
+            case READY -> status = VideoAnalysisResponse.Status.READY;
+            case PARTIAL -> status = VideoAnalysisResponse.Status.PARTIAL;
+            default -> {
+                if (autoReanalysisPending(latest, analyses)) {
+                    status = VideoAnalysisResponse.Status.ANALYZING;
+                } else {
+                    status = VideoAnalysisResponse.Status.FAILED;
+                    error = VideoPublicErrors.forDisplay(latest.getErrorCode(), latest.getErrorRetryable());
+                    reasonCode = error.code();
+                }
+            }
+        }
+
+        ShownBehavior shown = latestBehavior(analyses);
+        if ((status == VideoAnalysisResponse.Status.READY || status == VideoAnalysisResponse.Status.PARTIAL)
+                && (shown == null || shown.analysis() != latest)) {
+            // 최신 완료 결과를 이 서버가 읽을 수 없다(데이터 계약이 생기기 전의 옛 결과 등). 지어내지 않고 사유를 밝힌다.
+            reasonCode = REASON_RESULT_SCHEMA_UNSUPPORTED;
+        }
+        // 하위 호환용 원문. 요청 순서로 가장 나중의 완료 문서다 — 늦게 도착한 옛 결과가 새 결과를 가리지 않는다.
         Map<String, Object> result = analyses.reversed().stream()
-                .filter(analysis -> analysis.getResult() != null)
+                .filter(analysis -> analysis.getResult() != null && COMPLETED_DOCUMENTS.contains(analysis.getStatus()))
                 .findFirst()
                 .map(VideoAnalysisEntity::getResult)
                 .orElse(null);
-        boolean canRetry = enabled && retryBlockedReason(video, analyses, now()) == null;
-        return new VideoAnalysisResponse(status, result, canRetry);
+        boolean canRetry = (status == VideoAnalysisResponse.Status.PARTIAL || status == VideoAnalysisResponse.Status.FAILED)
+                && retryBlockedReason(video, analyses, now) == null;
+        String latestId = String.valueOf(latest.getAnalysisId());
+        String behaviorId = shown == null ? null : String.valueOf(shown.analysis().getAnalysisId());
+        return new VideoAnalysisResponse(status, result, canRetry, reasonCode, error,
+                shown == null ? null : shown.data(), latestId, behaviorId,
+                shown != null && !behaviorId.equals(latestId));
+    }
+
+    private record ShownBehavior(VideoAnalysisEntity analysis, BehaviorData data) {
+    }
+
+    /**
+     * 보여 줄 행동 데이터. 요청 순서의 역순으로 ready/partial 결과 가운데 콜백을 받을 때와 같은 검증을 통과한 첫 결과다.
+     * 상태 행과 같은 행이라고 가정하지 않는다.
+     */
+    private static ShownBehavior latestBehavior(List<VideoAnalysisEntity> analyses) {
+        for (VideoAnalysisEntity analysis : analyses.reversed()) {
+            if (analysis.getResult() == null || (analysis.getStatus() != VideoAnalysisStatus.READY
+                    && analysis.getStatus() != VideoAnalysisStatus.PARTIAL)) {
+                continue;
+            }
+            try {
+                VideoResultDocument.Accepted accepted =
+                        VideoResultDocument.validate(analysis.getResult(), String.valueOf(analysis.getRecordingId()));
+                if (accepted.behavior() != null
+                        && VideoAnalysisStatus.fromResult(accepted.status()) == analysis.getStatus()) {
+                    return new ShownBehavior(analysis, accepted.behavior());
+                }
+            } catch (VideoResultException e) {
+                log.debug("저장된 영상 분석 결과를 행동 데이터로 읽을 수 없어 건너뜁니다. analysisId={}, 사유={}",
+                        analysis.getAnalysisId(), e.getMessage());
+            }
+        }
+        return null;
     }
 
     /**
      * 사용자가 재분석을 요청한다. 새 묶음을 열고 요청 자리만 만든다 — 보내는 것은 스윕이 곧바로 한다.
+     *
+     * <p>면접 행을 잠근 트랜잭션 안에서 자격·진행 중 요청·사용자 재분석 한도를 다시 보고 행을 만든다. 두 탭에서 동시에 눌러도
+     * 뒤의 요청은 앞 요청이 만든 행을 보고 409로 끝난다. 영상당 진행 중 요청 하나라는 DB 인덱스는 마지막 방어선일 뿐 한도
+     * 검사를 대신하지 않는다.
      */
     public VideoAnalysisResponse retry(Long userId, Long interviewId) {
         ownedInterview(userId, interviewId);
-        if (!enabled) {
-            throw BusinessException.conflict("영상 분석을 아직 사용할 수 없습니다.");
-        }
-        InterviewRecordingEntity video = finalVideo(interviewId);
-        if (video == null) {
-            throw BusinessException.notFound("분석할 면접 영상이 없습니다.");
-        }
-        List<VideoAnalysisEntity> analyses =
-                analysisRepository.findAllByRecordingIdOrderByAnalysisIdAsc(video.getRecordingId());
-        String blocked = retryBlockedReason(video, analyses, now());
-        if (blocked != null) {
-            throw BusinessException.conflict(blocked);
-        }
-        if (open(video, newChainId(), VideoAnalysisRequestedBy.USER) == null) {
+        try {
+            transactionTemplate.executeWithoutResult(tx -> {
+                InterviewEntity interview = interviewRepository.lockById(interviewId)
+                        .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
+                InterviewFeedbackPolicy.requireEligible(interview);
+                if (VideoAnalysisEligibility.isText(interview)) {
+                    throw BusinessException.conflict("텍스트 면접은 영상 분석을 하지 않습니다.");
+                }
+                if (!enabled) {
+                    throw BusinessException.conflict("영상 분석을 아직 사용할 수 없습니다.");
+                }
+                InterviewRecordingEntity video = finalVideo(interviewId);
+                if (video == null) {
+                    throw BusinessException.notFound("분석할 면접 영상이 없습니다.");
+                }
+                List<VideoAnalysisEntity> analyses =
+                        analysisRepository.findAllByRecordingIdOrderByAnalysisIdAsc(video.getRecordingId());
+                String blocked = retryBlockedReason(video, analyses, now());
+                if (blocked != null) {
+                    throw BusinessException.conflict(blocked);
+                }
+                insert(video, interview, newChainId(), VideoAnalysisRequestedBy.USER);
+                log.info("사용자가 영상 분석을 다시 요청했습니다. interviewId={}, recordingId={}",
+                        interviewId, video.getRecordingId());
+            });
+        } catch (DataIntegrityViolationException e) {
+            // 잠금 밖에서 행을 만드는 옛 경로나 다른 서버가 먼저 자리를 차지했다.
             throw BusinessException.conflict("이미 분석 중입니다.");
         }
-        log.info("사용자가 영상 분석을 다시 요청했습니다. interviewId={}, recordingId={}", interviewId, video.getRecordingId());
         return get(userId, interviewId);
     }
 
@@ -268,16 +404,21 @@ public class VideoAnalysisService {
      * <p>READY는 같은 영상이면 같은 결과가 나와 비용만 든다. 자동 재분석이 남아 있으면 그것을 기다린다. 분석 서버가
      * retryable=false로 끝낸 실패는 영상을 새로 올려야 한다. 보관 기간은 요청이 아니라 영상이 올라온 시각으로 센다 —
      * 요청 시각으로 세면 재분석할 때마다 기간이 늘어 이미 지워진 파일로 요청하게 된다.
+     *
+     * <p>분석 기준 시각(analyze-uploaded-after)은 요청이 한 번도 없는 영상에만 적용한다. 다시 켜면서 기준 시각을 옮겨도 이미
+     * 정상적으로 분석한 영상의 재분석까지 막지는 않는다.
      */
     String retryBlockedReason(InterviewRecordingEntity video, List<VideoAnalysisEntity> analyses, LocalDateTime now) {
+        if (!enabled) {
+            return "영상 분석을 아직 사용할 수 없습니다.";
+        }
         if (expired(video, now)) {
             return "녹화한 지 90일이 지나 다시 분석할 수 없습니다.";
         }
-        if (uploadedBeforeEnabled(video)) {
-            return "영상 분석을 시작하기 전에 녹화한 영상이라 분석할 수 없습니다.";
-        }
         if (analyses.isEmpty()) {
-            return "아직 분석을 시작하지 않았습니다.";
+            return uploadedBeforeEnabled(video)
+                    ? "영상 분석을 시작하기 전에 녹화한 영상이라 분석할 수 없습니다."
+                    : "아직 분석을 시작하지 않았습니다.";
         }
         VideoAnalysisEntity latest = analyses.getLast();
         if (latest.getStatus() == VideoAnalysisStatus.PENDING) {
@@ -289,7 +430,8 @@ public class VideoAnalysisService {
         if (autoReanalysisPending(latest, analyses)) {
             return "자동으로 다시 분석하는 중입니다.";
         }
-        if (Boolean.FALSE.equals(latest.getErrorRetryable())) {
+        // 화면의 error.retryable과 같은 판단이다. 둘이 어긋나면 "다시 해도 안 된다"는 오류 옆에 재분석 버튼이 열린다.
+        if (!VideoPublicErrors.userRetryable(latest.getErrorCode(), latest.getErrorRetryable())) {
             return "이 영상은 다시 분석할 수 없습니다. 영상을 새로 올려 주세요.";
         }
         long userChains = analyses.stream()
@@ -303,8 +445,14 @@ public class VideoAnalysisService {
         return null;
     }
 
-    /** 스윕이 곧 이 묶음을 자동으로 이어 갈지. {@code findReanalysisCandidates}와 같은 조건이다. */
-    private static boolean autoReanalysisPending(VideoAnalysisEntity latest, List<VideoAnalysisEntity> analyses) {
+    /**
+     * 스윕이 곧 이 묶음을 자동으로 이어 갈지. {@code findReanalysisCandidates}와 같은 조건이다. 꺼져 있으면 자동 재분석을
+     * 만들지 않으므로 이어 가지 않는다 — 그때 화면은 "분석 중"이 아니라 FAILED다.
+     */
+    private boolean autoReanalysisPending(VideoAnalysisEntity latest, List<VideoAnalysisEntity> analyses) {
+        if (!enabled) {
+            return false;
+        }
         boolean retryableFailure = (latest.getStatus() == VideoAnalysisStatus.FAILED
                 || latest.getStatus() == VideoAnalysisStatus.UNAVAILABLE)
                 && Boolean.TRUE.equals(latest.getErrorRetryable());
@@ -314,16 +462,70 @@ public class VideoAnalysisService {
         return retryableFailure && jobsInChain < MAX_JOBS_PER_CHAIN;
     }
 
+    /** 새 최종 영상의 첫 요청. 잠금 아래에서 아직 요청이 없는지 다시 본다. */
+    VideoAnalysisEntity openFirst(InterviewRecordingEntity video) {
+        return openLocked(video, newChainId(), VideoAnalysisRequestedBy.AUTO, List::isEmpty);
+    }
+
     /**
-     * 요청 자리를 만든다. 보내는 것은 스윕이 한다.
+     * 면접 행을 잠그고 자격·최종 영상·요청 기록을 다시 본 뒤 요청 자리를 만든다.
      *
-     * <p>보낼 수 없는 영상(세션 없음, 입력 제한을 넘는 옛 파일 등)은 보내지 않고 닫힌 행으로 남긴다. 남기지 않으면
-     * 스윕이 그 영상을 계속 다시 집는다.
+     * <p>스윕이 고른 뒤 잠그기 전까지 면접이 중단으로 확정되거나, 새 영상이 올라오거나, 사용자 재분석이 먼저 자리를 차지할 수
+     * 있다. 고를 때의 판단을 믿지 않고 잠근 뒤 다시 본다.
+     *
+     * @param stillWanted 그 영상의 요청 기록(오래된 것부터)을 보고 지금도 만들어야 하는지
+     * @return 만든 행. 만들 이유가 없어졌거나 같은 영상에 이미 살아 있는 요청이 있으면 null
+     */
+    private VideoAnalysisEntity openLocked(InterviewRecordingEntity video, String chainId,
+                                           VideoAnalysisRequestedBy requestedBy,
+                                           Predicate<List<VideoAnalysisEntity>> stillWanted) {
+        try {
+            return transactionTemplate.execute(tx -> {
+                InterviewEntity interview = interviewRepository.lockById(video.getInterviewId()).orElse(null);
+                if (VideoAnalysisEligibility.of(interview).kind() != VideoAnalysisEligibility.Kind.RUN) {
+                    return null;
+                }
+                InterviewRecordingEntity finalVideo = finalVideo(video.getInterviewId());
+                if (finalVideo == null || !finalVideo.getRecordingId().equals(video.getRecordingId())) {
+                    return null;
+                }
+                List<VideoAnalysisEntity> analyses =
+                        analysisRepository.findAllByRecordingIdOrderByAnalysisIdAsc(video.getRecordingId());
+                if (!stillWanted.test(analyses)) {
+                    return null;
+                }
+                return insert(video, interview, chainId, requestedBy);
+            });
+        } catch (DataIntegrityViolationException e) {
+            log.info("같은 영상에 진행 중인 영상 분석이 있어 새로 만들지 않습니다. recordingId={}", video.getRecordingId());
+            return null;
+        }
+    }
+
+    /**
+     * 잠금 없이 요청 자리만 만든다. 같은 영상의 살아 있는 요청 하나라는 DB 인덱스가 마지막으로 막는다. 운영 경로는
+     * {@link #openLocked}를 쓴다.
      *
      * @return 만든 행. 같은 영상에 이미 살아 있는 요청이 있으면 null
      */
     VideoAnalysisEntity open(InterviewRecordingEntity video, String chainId, VideoAnalysisRequestedBy requestedBy) {
-        InterviewEntity interview = interviewRepository.findById(video.getInterviewId()).orElse(null);
+        try {
+            return insert(video, interviewRepository.findById(video.getInterviewId()).orElse(null), chainId, requestedBy);
+        } catch (DataIntegrityViolationException e) {
+            // 다른 서버(배포 중 두 대)나 연달아 누른 재분석이 먼저 자리를 차지했다.
+            log.info("같은 영상에 진행 중인 영상 분석이 있어 새로 만들지 않습니다. recordingId={}", video.getRecordingId());
+            return null;
+        }
+    }
+
+    /**
+     * 요청 자리를 만든다. 보내는 것은 스윕이 한다. 같은 영상에 살아 있는 요청이 있으면 DB 인덱스 위반이 그대로 올라간다.
+     *
+     * <p>보낼 수 없는 영상(세션 없음, 입력 제한을 넘는 옛 파일 등)은 보내지 않고 닫힌 행으로 남긴다. 남기지 않으면
+     * 스윕이 그 영상을 계속 다시 집는다. 서명 URL은 이 서버 안에서 계산만 하고 S3를 부르지 않는다.
+     */
+    private VideoAnalysisEntity insert(InterviewRecordingEntity video, InterviewEntity interview, String chainId,
+                                       VideoAnalysisRequestedBy requestedBy) {
         String requestId = "video-" + UUID.randomUUID();
         Rejection rejection = rejection(video, interview);
         LocalDateTime now = now();
@@ -348,14 +550,7 @@ public class VideoAnalysisService {
                     .nextCheckAt(now);
         }
 
-        VideoAnalysisEntity saved;
-        try {
-            saved = analysisRepository.save(row.build());
-        } catch (DataIntegrityViolationException e) {
-            // 다른 서버(배포 중 두 대)나 연달아 누른 재분석이 먼저 자리를 차지했다.
-            log.info("같은 영상에 진행 중인 영상 분석이 있어 새로 만들지 않습니다. recordingId={}", video.getRecordingId());
-            return null;
-        }
+        VideoAnalysisEntity saved = analysisRepository.save(row.build());
         if (rejection != null) {
             log.warn("영상 분석을 보낼 수 없어 닫았습니다. interviewId={}, recordingId={}, code={}, 사유={}",
                     video.getInterviewId(), video.getRecordingId(), rejection.code(), rejection.message());
@@ -426,6 +621,18 @@ public class VideoAnalysisService {
      * </ul>
      */
     void check(VideoAnalysisEntity analysis) {
+        // 자격을 먼저 본다. 중단·텍스트 면접이면 분석 서버를 부르지 않고 닫고, 진행 중이면 닫지 않고 기다린다.
+        VideoAnalysisEligibility.Verdict verdict = VideoAnalysisEligibility.of(
+                interviewRepository.findById(analysis.getInterviewId()).orElse(null));
+        if (verdict.kind() == VideoAnalysisEligibility.Kind.SKIP) {
+            fail(analysis, verdict.code(), false, verdict.message());
+            return;
+        }
+        if (verdict.kind() == VideoAnalysisEligibility.Kind.HOLD) {
+            hold(analysis);
+            return;
+        }
+
         if (analysis.getJobId() == null) {
             if (canSendAgain(analysis, analysis.getSendCount())) {
                 send(analysis);
@@ -453,14 +660,35 @@ public class VideoAnalysisService {
 
         String status = job == null || job.getStatus() == null ? "" : job.getStatus().trim().toLowerCase(Locale.ROOT);
         switch (status) {
-            case "completed" -> {
-                if (!callbackHandler.applyRecovered(analysis.getAnalysisId(), job.getResult())) {
-                    fail(analysis, "INVALID_RESULT", null, "작업 조회로 받은 결과가 검증을 통과하지 못했습니다.");
+            // 종료된 작업의 result는 콜백 본문 전체다(failed 포함). 콜백과 같은 검증을 거쳐 저장한다.
+            case "completed" -> applyRecovered(analysis, job.getResult());
+            case "failed" -> {
+                if (job.getResult() != null) {
+                    applyRecovered(analysis, job.getResult());
+                } else {
+                    failFromJob(analysis, job.getError());
                 }
             }
-            case "failed" -> failFromJob(analysis, job.getError());
             default -> waitOrGiveUp(analysis, "작업이 아직 끝나지 않았습니다. status=" + status);
         }
+    }
+
+    private void applyRecovered(VideoAnalysisEntity analysis, Map<String, Object> result) {
+        switch (callbackHandler.applyRecovered(analysis.getAnalysisId(), result)) {
+            // 계약에 맞지 않는 결과는 같은 원본으로 다시 해도 같은 문서가 나올 수 있다. 사용자 재분석도 막는다.
+            case INVALID -> fail(analysis, "INVALID_RESULT", false, "작업 조회로 받은 결과가 검증을 통과하지 못했습니다.");
+            case POLICY_HELD -> hold(analysis);
+            default -> {
+                // 저장했거나, 이미 같은 결과가 있거나, 정책상 닫았다.
+            }
+        }
+    }
+
+    /** 면접이 아직 끝나지 않았다. 닫지 않고 나중에 다시 본다. */
+    private void hold(VideoAnalysisEntity analysis) {
+        LocalDateTime now = now();
+        analysisRepository.postpone(analysis.getAnalysisId(), now.plus(HOLD_INTERVAL),
+                "면접이 아직 끝나지 않아 결과 확인을 미룹니다.", now);
     }
 
     /**
@@ -563,13 +791,16 @@ public class VideoAnalysisService {
         analysisRepository.postpone(analysis.getAnalysisId(), now.plus(CHECK_INTERVAL), reason, now);
     }
 
+    /** 결과 문서 없이 실패만 알려 온 작업. 오류도 공개 오류 계약(코드·retryable)에 맞아야 그대로 받는다. */
     private void failFromJob(VideoAnalysisEntity analysis, Map<String, Object> error) {
-        Object code = error == null ? null : error.get("code");
-        Object retryable = error == null ? null : error.get("retryable");
-        Object message = error == null ? null : error.get("message");
-        fail(analysis, code == null ? "UNKNOWN" : String.valueOf(code),
-                retryable instanceof Boolean flag ? flag : null,
-                message == null ? "분석 서버가 작업 실패를 알렸습니다." : String.valueOf(message));
+        String code;
+        try {
+            code = VideoPublicErrors.validateRemote(error, "$.error");
+        } catch (VideoResultException e) {
+            fail(analysis, "INVALID_RESULT", false, "작업 조회의 실패 오류가 공개 오류 계약에 맞지 않습니다. " + e.getMessage());
+            return;
+        }
+        fail(analysis, code, VideoPublicErrors.retryableOf(code), String.valueOf(error.get("message")));
     }
 
     private void fail(VideoAnalysisEntity analysis, String code, Boolean retryable, String message) {
@@ -589,7 +820,12 @@ public class VideoAnalysisService {
         if (video == null) {
             return;
         }
-        if (open(video, failed.getChainId(), failed.getRequestedBy()) != null) {
+        // 잠근 뒤에도 그 실패가 영상의 최신 요청이고 묶음에 자리가 남았는지 다시 본다. 그 사이 사용자 재분석이 새 묶음을
+        // 열었으면 잇지 않는다.
+        VideoAnalysisEntity opened = openLocked(video, failed.getChainId(), failed.getRequestedBy(), analyses ->
+                !analyses.isEmpty() && analyses.getLast().getAnalysisId().equals(failed.getAnalysisId())
+                        && autoReanalysisPending(analyses.getLast(), analyses));
+        if (opened != null) {
             log.info("재시도할 만한 실패라 영상 분석을 다시 맡깁니다. interviewId={}, 이전 analysisId={}, code={}",
                     failed.getInterviewId(), failed.getAnalysisId(), failed.getErrorCode());
         }

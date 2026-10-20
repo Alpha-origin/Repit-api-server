@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "data": {
+    "status": "NONE",
+    "result": null,
+    "canRetry": false,
+    "reasonCode": "SERVICE_DISABLED",
+    "error": null,
+    "behavior": null,
+    "latestAnalysisId": null,
+    "behaviorAnalysisId": null,
+    "showingPreviousResult": false
+  }
+}

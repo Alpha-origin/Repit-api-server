@@ -456,18 +456,32 @@ public class InterviewService {
      * 면접은 진행 중으로 남아, 다시 보낸 기록이 처음부터 저장된다.
      *
      * <p>채팅 서버는 저장이 끝났는데 응답을 받지 못하면 같은 기록을 다시 보낸다. 이미 저장한 면접이면 아무것도 바꾸지
-     * 않는다. 지우고 다시 넣으면 질문 PK가 바뀌어 그 질문에 매달린 채점·녹음과 어긋난다. 내용이 달라도 처음 것을 둔다.
+     * 않는다. 지우고 다시 넣으면 질문 PK가 바뀌어 그 질문에 매달린 채점·녹음과 어긋난다. 내용이 달라도, 상태가 반대로 와도
+     * 처음 것을 둔다.
+     *
+     * <p>새 기록의 상태는 COMPLETED 또는 ABANDONED만 받는다. 중단 기록도 질문·답변을 그대로 남긴다 — 채점·분석을 하지 않을
+     * 뿐 기록은 보존한다. 무엇을 실행할지는 저장이 끝난 뒤 저장된 상태를 다시 읽어 정한다({@link ChatInterviewResultService}).
      */
     @Transactional
     public void saveInterview(SaveInterviewRequest request) {
         InterviewEntity interview = interviewRepository.findById(request.getInterviewId())
                 .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
 
-        // 기록을 넘겼다는 것 자체가 면접이 끝났다는 뜻이다. 상태가 비거나 진행 중으로 와도 진행 중으로 두지 않는다 —
-        // 진행 중으로 두면 다시 온 기록을 처음 것으로 보고 또 저장한다.
-        Status status = request.getStatus() == null || request.getStatus() == Status.IN_PROGRESS
-                ? Status.COMPLETED
-                : request.getStatus();
+        // 이미 종료 기록을 저장한 면접이다. 다시 온 요청의 상태가 무엇이든 처음 저장한 기록·질문 PK·최종 상태를 그대로 둔다.
+        // 상태 검사보다 먼저 본다 — 상태를 빠뜨린 재전송을 422로 돌려보내면 채팅 서버가 이미 끝난 전달을 계속 다시 보낸다.
+        if (interview.getStatus() != Status.IN_PROGRESS) {
+            log.info("이미 기록을 저장한 면접이라 다시 저장하지 않습니다. interviewId={}, 저장된 상태={}, 받은 상태={}, 받은 문항 수={}",
+                    interview.getInterviewId(), interview.getStatus(), request.getStatus(),
+                    request.getQnaRequests() == null ? 0 : request.getQnaRequests().size());
+            return;
+        }
+
+        // 새 종료 기록은 채팅 서버가 확정한 상태를 밝혀야 한다. 비었거나 진행 중이면 COMPLETED로 고쳐 받지 않는다 — 그렇게
+        // 받으면 중단된 면접까지 채점·영상 분석 대상이 된다. 차지(claim)하기 전에 거절해 면접은 진행 중으로 남는다.
+        Status status = request.getStatus();
+        if (status != Status.COMPLETED && status != Status.ABANDONED) {
+            throw BusinessException.unprocessable("면접 종료 상태(status)는 COMPLETED 또는 ABANDONED여야 합니다.");
+        }
         if (interviewRepository.claimResultSave(interview.getInterviewId(), status) == 0) {
             log.info("이미 기록을 저장한 면접이라 다시 저장하지 않습니다. interviewId={}, 받은 상태={}, 받은 문항 수={}",
                     interview.getInterviewId(), request.getStatus(),
@@ -492,6 +506,14 @@ public class InterviewService {
 
         Map<Long, Long> questionIdByChatId = saveQuestions(interview, qnAs);
         saveAnswers(interview, qnAs, questionIdByChatId);
+    }
+
+    /**
+     * 지금 DB에 저장된 면접 상태. 기록 저장이 커밋된 뒤 무엇을 실행할지 정할 때 쓴다 — 받은 요청의 상태가 아니라 처음 확정된
+     * 상태를 따라야 반대 상태로 다시 온 기록이 채점을 열지 못한다. 면접이 없으면 null이다.
+     */
+    public Status findStoredStatus(Long interviewId) {
+        return interviewRepository.findById(interviewId).map(InterviewEntity::getStatus).orElse(null);
     }
 
     /**

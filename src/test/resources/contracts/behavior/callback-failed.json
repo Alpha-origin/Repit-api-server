@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1",
+  "jobId": "job-001",
+  "requestId": "video-request-001",
+  "sessionId": "session-42",
+  "interviewId": "42",
+  "userId": "7",
+  "status": "failed",
+  "result": null,
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "영상 분석 서버 내부 오류가 발생했습니다.",
+    "retryable": false
+  }
+}

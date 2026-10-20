@@ -98,4 +98,17 @@ class SaveInterviewRequestDeserializationTest {
             assertThat(request.getQnaRequests().get(1).getAnswer()).isNull();
         });
     }
+
+    /** 모르는 상태 값은 본문 해석 오류(400)로 끊지 않고 비워 받는다. 저장할 때 상태 검사가 422로 거절한다. */
+    @Test
+    void 모르는_종료_상태는_비워_받고_중단은_그대로_읽는다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+
+            assertThat(objectMapper.readValue(CHAT_REQUEST.replace("\"COMPLETED\"", "\"DONE\""), SaveInterviewRequest.class)
+                    .getStatus()).isNull();
+            assertThat(objectMapper.readValue(CHAT_REQUEST.replace("\"COMPLETED\"", "\"ABANDONED\""), SaveInterviewRequest.class)
+                    .getStatus()).isEqualTo(Status.ABANDONED);
+        });
+    }
 }

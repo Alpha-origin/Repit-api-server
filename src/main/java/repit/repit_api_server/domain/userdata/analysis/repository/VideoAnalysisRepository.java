@@ -1,7 +1,9 @@
 package repit.repit_api_server.domain.userdata.analysis.repository;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +24,14 @@ public interface VideoAnalysisRepository extends JpaRepository<VideoAnalysisEnti
 
     Optional<VideoAnalysisEntity> findByRequestId(String requestId);
 
+    /**
+     * 결과를 반영할 요청 행을 잠그고 읽는다. 같은 결과가 콜백과 작업 조회로 동시에 오거나 서로 다른 종료 문서가 겹쳐 와도
+     * 한쪽이 끝날 때까지 다른 쪽이 기다렸다가, 먼저 저장된 문서를 보고 중복인지 상충인지 가린다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select v from VideoAnalysisEntity v where v.requestId = :requestId")
+    Optional<VideoAnalysisEntity> findLockedByRequestId(String requestId);
+
     Optional<VideoAnalysisEntity> findByJobId(String jobId);
 
     List<VideoAnalysisEntity> findAllByRecordingIdOrderByAnalysisIdAsc(Long recordingId);
@@ -31,10 +41,17 @@ public interface VideoAnalysisRepository extends JpaRepository<VideoAnalysisEnti
      * 없는 것.
      *
      * <p>원본 보관 기간이 거의 끝난 영상은 보내지 않는다. 분석 서버가 내려받기 전에 지워진다.
+     *
+     * <p>정상 완료(COMPLETED)로 저장된 면접의 영상만 고른다. 텍스트 면접은 행동 분석 대상이 아니다. 진행 중인 면접의 영상은
+     * 고르지 않고 남겨 둔다 — 면접이 완료로 확정되면 그때 고른다. 중단된 면접은 영영 고르지 않는다.
      */
     @Query("select r from InterviewRecordingEntity r "
             + "where r.kind = repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind.FULL_INTERVIEW "
             + "and r.createdAt < :quietBefore and r.createdAt > :uploadedAfter "
+            + "and exists (select 1 from InterviewEntity i where i.interviewId = r.interviewId "
+            + "    and i.status = repit.repit_api_server.domain.userdata.interview.entity.enums.Status.COMPLETED "
+            + "    and (i.answerMode is null "
+            + "        or i.answerMode <> repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode.TEXT)) "
             + "and r.recordingId = (select max(r2.recordingId) from InterviewRecordingEntity r2 "
             + "    where r2.interviewId = r.interviewId "
             + "    and r2.kind = repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind.FULL_INTERVIEW) "
@@ -56,6 +73,7 @@ public interface VideoAnalysisRepository extends JpaRepository<VideoAnalysisEnti
      *   <li>그 영상의 가장 최근 요청이다. 이미 다음 요청이 있거나 사용자가 새 묶음을 열었으면 잇지 않는다.</li>
      *   <li>그 면접의 최종 영상이다. 새 영상이 올라왔으면 그 영상이 따로 요청된다.</li>
      *   <li>묶음의 작업 수가 한도 아래다. 새 요청 id마다 한도를 새로 세지 않는다.</li>
+     *   <li>정상 완료로 저장된 음성 면접이다. 중단·진행 중·텍스트 면접은 잇지 않는다.</li>
      * </ul>
      */
     @Query("select v from VideoAnalysisEntity v "
@@ -67,6 +85,10 @@ public interface VideoAnalysisRepository extends JpaRepository<VideoAnalysisEnti
             + "    where r.interviewId = v.interviewId "
             + "    and r.kind = repit.repit_api_server.domain.userdata.recording.entity.enums.RecordingKind.FULL_INTERVIEW) "
             + "and (select count(v3) from VideoAnalysisEntity v3 where v3.chainId = v.chainId) < :maxJobsPerChain "
+            + "and exists (select 1 from InterviewEntity i where i.interviewId = v.interviewId "
+            + "    and i.status = repit.repit_api_server.domain.userdata.interview.entity.enums.Status.COMPLETED "
+            + "    and (i.answerMode is null "
+            + "        or i.answerMode <> repit.repit_api_server.domain.userdata.interview.entity.enums.AnswerMode.TEXT)) "
             + "order by v.analysisId")
     List<VideoAnalysisEntity> findReanalysisCandidates(LocalDateTime failedBefore, long maxJobsPerChain, Limit limit);
 

@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "data": {
+    "status": "WAITING",
+    "result": null,
+    "canRetry": false,
+    "reasonCode": null,
+    "error": null,
+    "behavior": null,
+    "latestAnalysisId": null,
+    "behaviorAnalysisId": null,
+    "showingPreviousResult": false
+  }
+}
