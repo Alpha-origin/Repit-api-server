@@ -118,6 +118,8 @@ public final class BehaviorValidator {
         exactKeys(m, METRIC_FIELDS, path);
         Object rawStatus = m.get("status");
         require(AVAILABLE.equals(rawStatus) || UNAVAILABLE.equals(rawStatus), path + ".status", "unknown status");
+        require(m.get("unavailableReason") == null || m.get("unavailableReason") instanceof String,
+                path + ".unavailableReason", "string required");
         Double value = m.get("value") == null ? null : number(m.get("value"), 0, 1, path + ".value");
         int numerator = (int) integer(m.get("numeratorMs"), 0, MAX_DURATION_MS, path + ".numeratorMs");
         int denominator = (int) integer(m.get("denominatorMs"), 0, MAX_DURATION_MS, path + ".denominatorMs");
@@ -154,13 +156,14 @@ public final class BehaviorValidator {
     private static BehaviorData.Event event(Object raw, String path) {
         Map<String, Object> e = object(raw, path);
         exactKeys(e, EVENT_FIELDS, path);
-        Object type = e.get("type");
+        // 불변 Map은 null 키·값을 조회하면 NPE를 던진다. 문자열인지 먼저 본다.
+        String type = text(e.get("type"), 40, path + ".type");
         require(EVENT_METRICS.containsKey(type), path + ".type", "unknown event type");
-        Object source = e.get("sourceMetric");
+        String source = text(e.get("sourceMetric"), 40, path + ".sourceMetric");
         require(EVENT_METRICS.containsValue(source), path + ".sourceMetric", "unknown source metric");
         int start = (int) integer(e.get("startMs"), 0, MAX_DURATION_MS, path + ".startMs");
         int end = (int) integer(e.get("endMs"), 1, MAX_DURATION_MS, path + ".endMs");
-        return new BehaviorData.Event((String) type, (String) source, start, end);
+        return new BehaviorData.Event(type, source, start, end);
     }
 
     // ---- 의미(분석 서버 validation.py) ----

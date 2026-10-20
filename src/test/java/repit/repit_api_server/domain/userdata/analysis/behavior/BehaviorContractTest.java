@@ -70,7 +70,8 @@ class BehaviorContractTest {
             "durationText", "durationFraction", "nan", "truncatedText", "model", "schema", "reason", "eventSource",
             "eventShort", "eventOverlap", "eventOrder", "truncatedNotFull", "summaryLong", "unknownWarning",
             "duplicateWarning", "coverage", "sampleCount", "missingMetric", "timelineGap", "binOverflow", "emptySuccess",
-            "intervalFraction", "faceExceeded"})
+            "intervalFraction", "faceExceeded", "eventTypeNull", "eventSourceNull", "eventTypeNumber",
+            "reasonNumber"})
     void 어긋난_행동_데이터는_받지_않는다(String mutation) {
         Map<String, Object> raw = fixture("behavior-ready");
         mutateBehavior(raw, mutation);
@@ -123,6 +124,23 @@ class BehaviorContractTest {
         Map<String, Object> raw = mutateCallback(mutation);
 
         assertThatThrownBy(() -> VideoResultDocument.validate(raw, VIDEO)).isInstanceOf(VideoResultException.class);
+    }
+
+    /** 규칙이 다루지 못한 모양이라도 NPE·형 변환 오류로 5xx가 되지 않고 계약 위반으로 돌아온다. */
+    @Test
+    void 이벤트_필드가_null이어도_계약_위반으로_돌려준다() {
+        for (String field : List.of("type", "sourceMetric")) {
+            Map<String, Object> raw = fixture("callback-ready");
+            Map<String, Object> event = obj(((List<?>) data(raw).get("events")).getFirst());
+            event.put(field, null);
+
+            assertThatThrownBy(() -> VideoResultDocument.validate(raw, VIDEO))
+                    .isInstanceOf(VideoResultException.class)
+                    .hasMessageContaining("$.result.analysis.data.events[0]." + field);
+        }
+        Map<String, Object> odd = fixture("callback-ready");
+        result(odd).put("analysis", List.of("not", "an", "object"));
+        assertThatThrownBy(() -> VideoResultDocument.validate(odd, VIDEO)).isInstanceOf(VideoResultException.class);
     }
 
     @Test
@@ -211,6 +229,10 @@ class BehaviorContractTest {
             }
             case "intervalFraction" -> raw.put("sampleIntervalMs", 200.0);
             case "faceExceeded" -> metric(raw, "faceVisibleRatio").put("numeratorMs", 1);
+            case "eventTypeNull" -> event(raw, 0).put("type", null);
+            case "eventSourceNull" -> event(raw, 0).put("sourceMetric", null);
+            case "eventTypeNumber" -> event(raw, 0).put("type", 3);
+            case "reasonNumber" -> metric(raw, "faceVisibleRatio").put("unavailableReason", 3);
             default -> throw new IllegalArgumentException(mutation);
         }
     }

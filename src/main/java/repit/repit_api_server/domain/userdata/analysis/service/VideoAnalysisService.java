@@ -302,7 +302,7 @@ public class VideoAnalysisService {
                     status = VideoAnalysisResponse.Status.ANALYZING;
                 } else {
                     status = VideoAnalysisResponse.Status.FAILED;
-                    error = VideoPublicErrors.forDisplay(latest.getErrorCode());
+                    error = VideoPublicErrors.forDisplay(latest.getErrorCode(), latest.getErrorRetryable());
                     reasonCode = error.code();
                 }
             }
@@ -430,7 +430,8 @@ public class VideoAnalysisService {
         if (autoReanalysisPending(latest, analyses)) {
             return "자동으로 다시 분석하는 중입니다.";
         }
-        if (Boolean.FALSE.equals(latest.getErrorRetryable())) {
+        // 화면의 error.retryable과 같은 판단이다. 둘이 어긋나면 "다시 해도 안 된다"는 오류 옆에 재분석 버튼이 열린다.
+        if (!VideoPublicErrors.userRetryable(latest.getErrorCode(), latest.getErrorRetryable())) {
             return "이 영상은 다시 분석할 수 없습니다. 영상을 새로 올려 주세요.";
         }
         long userChains = analyses.stream()
@@ -674,7 +675,8 @@ public class VideoAnalysisService {
 
     private void applyRecovered(VideoAnalysisEntity analysis, Map<String, Object> result) {
         switch (callbackHandler.applyRecovered(analysis.getAnalysisId(), result)) {
-            case INVALID -> fail(analysis, "INVALID_RESULT", null, "작업 조회로 받은 결과가 검증을 통과하지 못했습니다.");
+            // 계약에 맞지 않는 결과는 같은 원본으로 다시 해도 같은 문서가 나올 수 있다. 사용자 재분석도 막는다.
+            case INVALID -> fail(analysis, "INVALID_RESULT", false, "작업 조회로 받은 결과가 검증을 통과하지 못했습니다.");
             case POLICY_HELD -> hold(analysis);
             default -> {
                 // 저장했거나, 이미 같은 결과가 있거나, 정책상 닫았다.
@@ -795,7 +797,7 @@ public class VideoAnalysisService {
         try {
             code = VideoPublicErrors.validateRemote(error, "$.error");
         } catch (VideoResultException e) {
-            fail(analysis, "INVALID_RESULT", null, "작업 조회의 실패 오류가 공개 오류 계약에 맞지 않습니다. " + e.getMessage());
+            fail(analysis, "INVALID_RESULT", false, "작업 조회의 실패 오류가 공개 오류 계약에 맞지 않습니다. " + e.getMessage());
             return;
         }
         fail(analysis, code, VideoPublicErrors.retryableOf(code), String.valueOf(error.get("message")));

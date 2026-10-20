@@ -43,6 +43,18 @@ public final class VideoResultDocument {
      * @param expectedVideoId 이 요청으로 보낸 영상(recording_id)
      */
     public static Accepted validate(Map<String, Object> body, String expectedVideoId) {
+        try {
+            return check(body, expectedVideoId);
+        } catch (VideoResultException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            // 규칙이 미처 다루지 못한 모양(타입이 다른 값 등)이라도 5xx로 끝내지 않는다. 5xx면 분석 서버가 같은 본문을
+            // 계속 다시 보내고 따로 남지도 않는다. 계약 위반으로 돌려 원문을 따로 남기게 한다.
+            throw new VideoResultException("$", "unexpected document shape: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private static Accepted check(Map<String, Object> body, String expectedVideoId) {
         require(!JsonValues.containsNul(body), "$", "NUL character in string");
         constant(body.get("schemaVersion"), SCHEMA_VERSION, "$.schemaVersion");
         Object rawStatus = body.get("status");

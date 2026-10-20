@@ -328,7 +328,7 @@ class VideoAnalysisServiceTest {
 
         when(callbackHandler.applyRecovered(ANALYSIS_ID, result)).thenReturn(VideoAnalysisCallbackHandler.Outcome.INVALID);
         service.check(pending("job-1", 1, LocalDateTime.now().minusMinutes(30)));
-        verify(analysisRepository).fail(eq(ANALYSIS_ID), eq("INVALID_RESULT"), isNull(), anyString(), any());
+        verify(analysisRepository).fail(eq(ANALYSIS_ID), eq("INVALID_RESULT"), eq(false), anyString(), any());
     }
 
     @Test
@@ -697,7 +697,7 @@ class VideoAnalysisServiceTest {
 
         service.check(pending("job-1", 1, LocalDateTime.now().minusMinutes(30)));
 
-        verify(analysisRepository).fail(eq(ANALYSIS_ID), eq("INVALID_RESULT"), isNull(), anyString(), any());
+        verify(analysisRepository).fail(eq(ANALYSIS_ID), eq("INVALID_RESULT"), eq(false), anyString(), any());
     }
 
     @Test
@@ -723,6 +723,28 @@ class VideoAnalysisServiceTest {
         assertThat(service.retryBlockedReason(video, List.of(
                 done(1L, "a", VideoAnalysisRequestedBy.AUTO, VideoAnalysisStatus.PARTIAL, null, Map.of())), LocalDateTime.now()))
                 .isNull();
+    }
+
+    /** 공개 오류가 "다시 해도 안 된다"(retryable=false)면 재분석 버튼도 닫혀 있어야 한다. 반대도 같다. */
+    @Test
+    void 화면의_retryable과_canRetry는_같은_판단을_따른다() {
+        Object[][] cases = {
+                {"INVALID_RESULT", false}, {"RESULT_EXPIRED", null}, {"NOT_ACKNOWLEDGED", null},
+                {"PROCESSING_OVERDUE", null}, {"CONFLICT", null}, {"SESSION_MISSING", false},
+                {"INTERVIEW_ABANDONED", false}, {"BEHAVIOR_NOT_MEASURABLE", false}, {"ANALYZER_NOT_CONFIGURED", false},
+                {"INTERNAL_ERROR", false}, {null, null}};
+        for (Object[] c : cases) {
+            analyses.clear();
+            VideoAnalysisEntity failed = done(1L, "chain-a", VideoAnalysisRequestedBy.AUTO,
+                    VideoAnalysisStatus.FAILED, (Boolean) c[1], null);
+            failed.setErrorCode((String) c[0]);
+            analyses.add(failed);
+
+            VideoAnalysisResponse response = service.get(USER_ID, INTERVIEW_ID);
+
+            assertThat(response.status()).as(String.valueOf(c[0])).isEqualTo(VideoAnalysisResponse.Status.FAILED);
+            assertThat(response.canRetry()).as(String.valueOf(c[0])).isEqualTo(response.error().retryable());
+        }
     }
 
     @Test

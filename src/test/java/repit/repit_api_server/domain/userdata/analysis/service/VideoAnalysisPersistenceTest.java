@@ -365,6 +365,23 @@ class VideoAnalysisPersistenceTest {
         assertThat(reload(pending).getStatus()).isEqualTo(VideoAnalysisStatus.PENDING);
     }
 
+    /** null 이벤트 필드가 NPE로 500이 되면 분석 서버가 같은 본문을 계속 보내고 아무 흔적도 남지 않는다. */
+    @Test
+    void 이벤트_필드가_null인_콜백도_500이_아니라_따로_남긴다() {
+        VideoAnalysisEntity pending = pendingRow();
+        Map<String, Object> body = parse(callback("callback-ready", pending, "job-" + UUID.randomUUID()));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> event = (Map<String, Object>) ((List<Object>) ((Map<String, Object>) analysisOf(body)
+                .get("data")).get("events")).getFirst();
+        event.put("type", null);
+
+        assertThat(callbackHandler.handle(JSON.writeValueAsString(body))).isEqualTo(VideoAnalysisCallbackHandler.Outcome.INVALID);
+
+        assertThat(jdbc.queryForList("select reason from unmatched_callback where payload like ?",
+                String.class, "%" + sessionId + "%")).containsExactly("INVALID_BODY");
+        assertThat(reload(pending).getStatus()).isEqualTo(VideoAnalysisStatus.PENDING);
+    }
+
     @Test
     void 작업_조회로_받은_결과는_콜백과_같게_저장된다() {
         for (String name : List.of("callback-partial", "callback-unconfigured", "callback-failed")) {
@@ -401,6 +418,7 @@ class VideoAnalysisPersistenceTest {
 
         assertThat(reload(byJob).getStatus()).isEqualTo(VideoAnalysisStatus.FAILED);
         assertThat(reload(byJob).getErrorCode()).isEqualTo("INVALID_RESULT");
+        assertThat(reload(byJob).getErrorRetryable()).isFalse();
         assertThat(unmatchedCount()).isEqualTo(1);
     }
 

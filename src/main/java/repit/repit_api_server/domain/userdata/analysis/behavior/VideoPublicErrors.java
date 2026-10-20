@@ -13,6 +13,9 @@ import static repit.repit_api_server.domain.userdata.analysis.behavior.StrictJso
  *
  * <p>이 서버가 결과 없이 닫은 사유(접수 미확인, 작업 없음, 처리 상한 초과 등)도 화면용 코드로 옮긴다. 그 밖의 내부 코드는
  * UNKNOWN_ERROR로만 내보낸다 — DB에 적힌 임의 문자열을 화면 코드로 쓰지 않는다.
+ *
+ * <p>화면의 {@code error.retryable}과 재분석 허용(canRetry)은 같은 판단({@link #userRetryable})을 쓴다. 공개 오류는
+ * retryable=false라고 내보내면서 재분석 버튼은 열리는 어긋남을 만들지 않는다.
  */
 public final class VideoPublicErrors {
 
@@ -32,29 +35,48 @@ public final class VideoPublicErrors {
             entry("ANALYZER_NOT_CONFIGURED", "영상 행동 분석기가 아직 연결되지 않았습니다.", false),
             entry("BEHAVIOR_NOT_MEASURABLE", "이 영상에서는 행동 지표를 측정할 수 있는 구간이 충분하지 않습니다.", false));
 
-    // 이 서버가 결과 없이 닫은 사유. 코드 값은 VideoAnalysisService가 error_code에 남기는 것과 같다.
-    private static final Map<String, VideoPublicError> SERVICE = Map.ofEntries(
-            entry("NOT_ACKNOWLEDGED", "분석 서버가 영상 분석 요청을 접수했는지 확인하지 못했습니다.", true),
-            entry("JOB_NOT_FOUND", "분석 서버에서 영상 분석 작업을 찾지 못했습니다.", true),
-            entry("PROCESSING_OVERDUE", "영상 분석이 제한 시간 안에 끝나지 않았습니다.", true),
-            entry("INVALID_RESULT", "영상 분석 결과의 형식을 확인하지 못했습니다.", false),
-            entry("RESULT_EXPIRED", "영상 분석 결과의 보관 기간이 지났습니다.", false));
+    // 이 서버가 결과 없이 닫은 사유의 문구. 코드 값은 VideoAnalysisService가 error_code에 남기는 것과 같다. 다시 해 볼 수
+    // 있는지는 닫을 때 남긴 error_retryable을 따른다(비어 있으면 사용자 재분석은 받는다).
+    private static final Map<String, String> SERVICE = Map.of(
+            "NOT_ACKNOWLEDGED", "분석 서버가 영상 분석 요청을 접수했는지 확인하지 못했습니다.",
+            "JOB_NOT_FOUND", "분석 서버에서 영상 분석 작업을 찾지 못했습니다.",
+            "PROCESSING_OVERDUE", "영상 분석이 제한 시간 안에 끝나지 않았습니다.",
+            "INVALID_RESULT", "영상 분석 결과의 형식을 확인하지 못했습니다.",
+            "RESULT_EXPIRED", "영상 분석 결과의 보관 기간이 지났습니다.");
 
-    private static final VideoPublicError UNKNOWN = new VideoPublicError(UNKNOWN_ERROR, "영상 분석을 마치지 못했습니다.", false);
+    private static final String UNKNOWN_MESSAGE = "영상 분석을 마치지 못했습니다.";
 
     private VideoPublicErrors() {
     }
 
-    /** 화면에 내보낼 오류. 모르는 코드나 내부 사유는 UNKNOWN_ERROR다. */
-    public static VideoPublicError forDisplay(String storedCode) {
-        if (storedCode == null) {
-            return UNKNOWN;
+    /**
+     * 화면에 내보낼 오류. 모르는 코드나 내부 사유는 UNKNOWN_ERROR다. retryable은 {@link #userRetryable}과 같다.
+     *
+     * @param storedCode      요청 행의 error_code
+     * @param storedRetryable 요청 행의 error_retryable
+     */
+    public static VideoPublicError forDisplay(String storedCode, Boolean storedRetryable) {
+        boolean retryable = userRetryable(storedCode, storedRetryable);
+        VideoPublicError known = storedCode == null ? null : ANALYSIS.get(storedCode);
+        if (known != null) {
+            return known;
         }
-        VideoPublicError known = ANALYSIS.get(storedCode);
-        if (known == null) {
-            known = SERVICE.get(storedCode);
+        String message = storedCode == null ? null : SERVICE.get(storedCode);
+        return message == null
+                ? new VideoPublicError(UNKNOWN_ERROR, UNKNOWN_MESSAGE, retryable)
+                : new VideoPublicError(storedCode, message, retryable);
+    }
+
+    /**
+     * 결과 없이 끝난 요청을 같은 원본으로 다시 분석해 볼 만한지. 분석 서버의 공개 코드면 공개 사전을 따른다. 이 서버가 닫은
+     * 사유면 닫을 때 남긴 값을 따른다 — false면 막고, 비어 있거나 true면 받는다.
+     */
+    public static boolean userRetryable(String storedCode, Boolean storedRetryable) {
+        Boolean known = retryableOf(storedCode);
+        if (known != null) {
+            return known;
         }
-        return known == null ? UNKNOWN : known;
+        return !Boolean.FALSE.equals(storedRetryable);
     }
 
     /** 분석 서버가 알릴 수 있는 공개 코드인지. */

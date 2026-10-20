@@ -62,6 +62,24 @@ class ExternalApiLoggingInterceptorTest {
                 .contains("{\"jobId\":\"job-1\"}"));
     }
 
+    /** 영상 분석 작업 조회 응답에는 행동 관찰 수치가, 요청에는 서명된 원본 주소가 실린다. 본문은 남기지 않는다. */
+    @Test
+    void 영상_분석_요청과_작업_조회의_본문은_남기지_않는다() throws Exception {
+        MockClientHttpRequest job = new MockClientHttpRequest(HttpMethod.GET, URI.create("http://ai-server/analysis/video/jobs/job-1"));
+        ClientHttpResponse response = jsonResponse(HttpStatus.OK,
+                "{\"result\":{\"result\":{\"analysis\":{\"data\":{\"metrics\":{\"headFacingRatio\":{\"value\":0.8}}}}}}}");
+
+        ClientHttpResponse returned = interceptor.intercept(job, new byte[0], (req, body) -> response);
+        interceptor.intercept(new MockClientHttpRequest(HttpMethod.POST, URI.create("http://ai-server/analysis/video")),
+                "{\"video\":{\"videoId\":\"501\"}}".getBytes(StandardCharsets.UTF_8),
+                (req, body) -> jsonResponse(HttpStatus.ACCEPTED, "{\"jobId\":\"job-1\"}"));
+
+        assertThat(messages()).hasSize(4).allSatisfy(message -> assertThat(message)
+                .contains("body=생략").doesNotContain("headFacingRatio").doesNotContain("videoId").doesNotContain("job-1\""));
+        // 로그가 본문을 읽지 않았으니 호출한 쪽이 그대로 읽는다.
+        assertThat(new String(returned.getBody().readAllBytes(), StandardCharsets.UTF_8)).contains("headFacingRatio");
+    }
+
     @Test
     void 응답_본문을_로그로_읽어도_호출한_쪽이_같은_본문을_다시_읽는다() throws Exception {
         // 실제 클라이언트는 BufferingClientHttpRequestFactory로 감싸 두 번 읽을 수 있다.

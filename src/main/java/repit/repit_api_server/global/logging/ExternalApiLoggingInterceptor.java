@@ -27,6 +27,11 @@ public class ExternalApiLoggingInterceptor implements ClientHttpRequestIntercept
     private static final String REQUEST_ARROW = "  ext --> ";
     private static final String RESPONSE_ARROW = "  ext <-- ";
     private static final String BODY_INDENT = "\n            body: ";
+    private static final String BODY_OMITTED = "  body=생략";
+
+    // 본문을 로그에 남기지 않는 외부 경로. 영상 분석 요청에는 서명된 원본 주소가, 작업 조회 응답에는 행동 관찰 수치가 실린다.
+    // 들어오는 쪽(RequestLoggingFilter)에서 콜백·조회 본문을 빼도 여기서 남기면 같은 데이터가 로그로 퍼진다.
+    private static final String BODY_EXCLUDED_PATH = "/analysis/video";
 
     private final String serverName;
     private final HttpLoggingProperties properties;
@@ -65,7 +70,11 @@ public class ExternalApiLoggingInterceptor implements ClientHttpRequestIntercept
             message.append("  auth=").append(authorization);
         }
 
-        appendBody(message, body, request.getHeaders().getContentType());
+        if (bodyExcluded(request)) {
+            message.append(BODY_OMITTED);
+        } else {
+            appendBody(message, body, request.getHeaders().getContentType());
+        }
         log.info(message.toString());
     }
 
@@ -78,7 +87,12 @@ public class ExternalApiLoggingInterceptor implements ClientHttpRequestIntercept
                 .append("  ").append(statusText(status))
                 .append("  (").append(elapsedMillis).append("ms)");
 
-        appendBody(message, readBody(response), response.getHeaders().getContentType());
+        if (bodyExcluded(request)) {
+            // 읽지도 않는다. 호출한 쪽이 그대로 읽는다.
+            message.append(BODY_OMITTED);
+        } else {
+            appendBody(message, readBody(response), response.getHeaders().getContentType());
+        }
 
         if (status >= 500) {
             log.error(message.toString());
@@ -116,6 +130,11 @@ public class ExternalApiLoggingInterceptor implements ClientHttpRequestIntercept
         if (summary != null) {
             message.append(BODY_INDENT).append(summary);
         }
+    }
+
+    private static boolean bodyExcluded(HttpRequest request) {
+        String path = request.getURI().getPath();
+        return path != null && path.contains(BODY_EXCLUDED_PATH);
     }
 
     private static String statusText(int status) {
