@@ -13,6 +13,10 @@ import java.util.List;
 import java.util.Optional;
 
 public interface InterviewRepository extends JpaRepository<InterviewEntity, Long> {
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select i from InterviewEntity i where i.interviewId = :interviewId")
+    Optional<InterviewEntity> findForJobSnapshot(@Param("interviewId") Long interviewId);
+
     List<InterviewEntity> findAllByUserId(Long userId);
 
     Optional<InterviewEntity> findBySessionId(String sessionId);

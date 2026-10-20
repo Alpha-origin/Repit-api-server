@@ -15,13 +15,22 @@ public record MaterialsResponse(
         String jobRole,
         List<MaterialDocument> documents,
         List<String> gitUrls,
-        List<Supplement> supplements) {
+        List<Supplement> supplements,
+        String jobTitle,
+        List<CoverLetter> coverLetters) {
+
+    public MaterialsResponse(String jobRole, List<MaterialDocument> documents, List<String> gitUrls, List<Supplement> supplements) {
+        this(jobRole, documents, gitUrls, supplements, null, List.of());
+    }
 
     /**
-     * 지금 분석 요청(/profile)이 portfolioUrl로 받는 문서 종류.
+     * 옛 포트폴리오 업로드를 문서 목록으로 변환할 때 쓰는 종류.
      * 옛 업로드 경로(dataUpload)로 올린 PDF도 이 종류의 문서 한 건으로 보여 준다.
      */
     public static final String PORTFOLIO_TYPE = "PORTFOLIO";
+
+    public record CoverLetter(String question, String answer) {
+    }
 
     public record MaterialDocument(int index, String type, String fileUrl, String fileName, Integer pageCount) {
     }
@@ -31,7 +40,7 @@ public record MaterialsResponse(
     }
 
     /**
-     * 지금 /profile 요청 모양(포트폴리오 문서 + GitHub)으로 옮긴다. 분석을 시작하는 모든 길이 이것을 쓴다.
+     * 옛 포트폴리오·GitHub 업로드 경로와의 호환을 위해 기존 자료 형식으로 옮긴다.
      * 문서 순서는 사용자가 정하므로 첫 문서가 아니라 종류로 찾는다. 여러 개면 앞의 것이고, 없으면 fileUrl이 null이다.
      */
     public MetaDataResponse toAnalysisInput() {
@@ -57,7 +66,10 @@ public record MaterialsResponse(
                 auth.gitUrls() == null ? List.of() : auth.gitUrls(),
                 auth.supplements() == null ? List.of() : auth.supplements().stream()
                         .map(s -> new Supplement(s.title(), s.documentIndex(), s.goal(), s.role(), s.decision(), s.outcome()))
-                        .toList());
+                        .toList(),
+                auth.jobTitle(),
+                auth.coverLetters() == null ? List.of() : auth.coverLetters().stream()
+                        .map(c -> new CoverLetter(c.question(), c.answer())).toList());
     }
 
     private static List<MaterialDocument> documentsOf(AuthMaterialsResponse auth) {

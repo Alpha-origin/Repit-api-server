@@ -22,6 +22,11 @@ public class FeedbackSoloRequest {
     private String sessionId;
     private String interviewId;
     private String userId;
+    // 면접 시작 시점 기술 면접관의 직무와 직무명. 현재 사용자 프로필을 다시 읽지 않는다.
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String jobRole;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String jobTitle;
     private String personaType;
     // 면접관 어조. 성향(personaType)과 독립된 축이다.
     private String personaTone;

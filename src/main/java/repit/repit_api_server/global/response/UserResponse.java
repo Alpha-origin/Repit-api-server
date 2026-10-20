@@ -16,6 +16,7 @@ public class UserResponse {
     private String nickname;
     private String username;
     private String major;
+    private String jobTitle;
     private String provider;
     private String role;
     private LocalDateTime createAt;

@@ -34,6 +34,8 @@ public class QuestionTailorRequest {
     @AllArgsConstructor
     public static class Profile {
         private String jobRole;
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String jobTitle;
         private String experienceLevel;
         private String personaType;
         // 면접관 어조. 성향(personaType)과 독립된 축이다.

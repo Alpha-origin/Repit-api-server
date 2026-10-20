@@ -157,4 +157,26 @@ class MetaDataControllerMaterialsPutTest {
                 .andExpect(jsonPath("$.errors[1].reason").value("TOO_MANY_PAGES"))
                 .andExpect(jsonPath("$.errors[1].detail").value("52"));
     }
+    @Test
+    void 일반_직무명과_자소서_payload를_받고_응답에_함께_싣는다() throws Exception {
+        when(materialsService.replace(eq(authUser), any(), any())).thenReturn(new MaterialsSaveResponse(
+                new MaterialsResponse("GEN_MARKETING", List.of(), List.of(), List.of(), "퍼포먼스 마케터",
+                        List.of(new MaterialsResponse.CoverLetter("역량", "캠페인 경험"))),
+                new MaterialsSaveResponse.Analysis("job-general", "accepted")));
+        String payload = """
+                {"jobRole":"GEN_MARKETING","jobTitle":"퍼포먼스 마케터","documents":[],
+                 "gitUrls":[],"supplements":[],"coverLetters":[{"question":"역량","answer":"캠페인 경험"}]}
+                """;
+        mockMvc.perform(multipart("/api/v1/metaData/materials").file(new MockMultipartFile(
+                        "payload", "", MediaType.APPLICATION_JSON_VALUE, payload.getBytes(StandardCharsets.UTF_8)))
+                        .with(request -> { request.setMethod("PUT"); return request; }))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.materials.jobTitle").value("퍼포먼스 마케터"))
+                .andExpect(jsonPath("$.materials.coverLetters[0].answer").value("캠페인 경험"));
+        var sent = ArgumentCaptor.forClass(MaterialsPayload.class);
+        verify(materialsService).replace(eq(authUser), sent.capture(), any());
+        assertThat(sent.getValue().jobTitle()).isEqualTo("퍼포먼스 마케터");
+        assertThat(sent.getValue().coverLetters()).containsExactly(new MaterialsPayload.CoverLetterInput("역량", "캠페인 경험"));
+    }
+
 }

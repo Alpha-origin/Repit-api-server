@@ -66,6 +66,7 @@ public class ChatInterviewHandoffService {
                 .personality(persona.getType())
                 .tone(persona.getTone())
                 .major(persona.getMajor() == null ? FALLBACK_MAJOR : persona.getMajor())
+                .jobTitle(persona.getJobTitle())
                 .level(persona.getLevel())
                 .questions(toQuestions(tailor, defaultPersonaId(interview, persona),
                         personas.stream().map(PersonaEntity::getPersonaId).collect(Collectors.toSet())))
@@ -110,7 +111,7 @@ public class ChatInterviewHandoffService {
     private ChatInterviewPrepareRequest.Persona toPersona(PersonaEntity persona) {
         return ChatInterviewPrepareRequest.Persona.builder()
                 .personaId(persona.getPersonaId())
-                .personaName(persona.getPersonaName())
+                .personaName(persona.getDisplayName())
                 .role(persona.getRole())
                 // 대표 설정과 달리 대체값을 채우지 않는다. 비기술 면접관은 비어 있는 것이 맞다.
                 .major(persona.getMajor())

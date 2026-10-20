@@ -72,7 +72,7 @@ class InterviewServiceCreateTest {
     void setUp() {
         service = new InterviewService(interviewRepository, questionRepository, chatServerClient,
                 answerRepository, personaRepository, questionTailorService,
-                interviewPersonaRepository, null, companySnapshotFactory);
+                interviewPersonaRepository, null, companySnapshotFactory, org.mockito.Mockito.mock(InterviewJobSnapshotService.class));
 
 
         when(personaRepository.findById(1L)).thenReturn(Optional.of(persona()));

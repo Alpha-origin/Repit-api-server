@@ -30,6 +30,7 @@ import repit.repit_api_server.domain.userdata.interview.entity.enums.Status;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewPersonaRepository;
 import repit.repit_api_server.domain.userdata.interview.repository.InterviewRepository;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
 import repit.repit_api_server.domain.userdata.question.entity.QuestionEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.Type;
@@ -321,12 +322,15 @@ public class FeedbackService {
 
     private FeedbackSoloRequest toSoloRequest(InterviewEntity interview, Transcript transcript) {
         PersonaEntity persona = soloPersonaOf(interview);
+        PersonaEntity techPersona = persona != null && persona.getRole() == Role.TECH ? persona : null;
 
         return FeedbackSoloRequest.builder()
                 .interviewStatus(interview.getStatus().name())
                 .sessionId(interview.getSessionId())
                 .interviewId(String.valueOf(interview.getInterviewId()))
                 .userId(String.valueOf(interview.getUserId()))
+                .jobRole(enumName(techPersona == null ? null : techPersona.getMajor()))
+                .jobTitle(techPersona == null ? null : techPersona.getJobTitle())
                 .personaType(enumName(persona == null ? null : persona.getType()))
                 .personaTone(enumName(persona == null ? null : persona.getTone()))
                 .company(interview.getCompanySnapshot())
@@ -355,12 +359,18 @@ public class FeedbackService {
     private FeedbackMultiRequest toMultiRequest(InterviewEntity interview, Transcript transcript) {
         List<PersonaEntity> members = orderedPersonas(interview.getInterviewId());
         Map<Long, Long> personaByQuestion = resolveQuestionPersonas(transcript, members.getFirst().getPersonaId());
+        PersonaEntity techPersona = members.stream()
+                .filter(persona -> persona.getRole() == Role.TECH)
+                .findFirst()
+                .orElse(null);
 
         return FeedbackMultiRequest.builder()
                 .interviewStatus(interview.getStatus().name())
                 .sessionId(interview.getSessionId())
                 .interviewId(String.valueOf(interview.getInterviewId()))
                 .userId(String.valueOf(interview.getUserId()))
+                .jobRole(enumName(techPersona == null ? null : techPersona.getMajor()))
+                .jobTitle(techPersona == null ? null : techPersona.getJobTitle())
                 .personas(members.stream()
                         .map(persona -> FeedbackMultiRequest.Persona.builder()
                                 .personaId(String.valueOf(persona.getPersonaId()))

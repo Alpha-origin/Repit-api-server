@@ -19,7 +19,7 @@ import repit.repit_api_server.domain.metadata.dto.response.AuthMaterialsResponse
 import repit.repit_api_server.domain.metadata.dto.response.AuthMaterialsResponse.SupplementEntry;
 import repit.repit_api_server.domain.metadata.dto.response.GenerateResponse;
 import repit.repit_api_server.domain.metadata.dto.response.MaterialsSaveResponse;
-import repit.repit_api_server.domain.metadata.dto.response.MetaDataResponse;
+import repit.repit_api_server.domain.metadata.dto.response.MaterialsResponse;
 import repit.repit_api_server.domain.metadata.exception.MaterialValidationException;
 import repit.repit_api_server.domain.metadata.support.MaterialFileStorage;
 import repit.repit_api_server.domain.metadata.support.PdfInspector;
@@ -97,7 +97,7 @@ class MaterialsServiceTest {
             AuthMaterialsRequest request = invocation.getArgument(1);
             return new AuthMaterialsResponse(request.major(), request.documents(), request.gitUrls(), request.supplements(), null);
         });
-        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_FRONTEND"), any()))
+        when(analysisLaunchService.launchMaterials(eq(7L), any()))
                 .thenReturn(new GenerateResponse("job-1", "processing", null));
 
         MaterialsSaveResponse response = service.replace(authUser, new MaterialsPayload("FRONTEND",
@@ -136,7 +136,7 @@ class MaterialsServiceTest {
             return uploadedFrom.size() == 1 ? "https://bucket/portfolio.pdf" : "https://bucket/resume.pdf";
         });
         authEchoesSavedRequest();
-        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_BACKEND"), any()))
+        when(analysisLaunchService.launchMaterials(eq(7L), any()))
                 .thenReturn(new GenerateResponse("job-2", "processing", null));
         Map<String, MultipartFile> files = Map.of(
                 "file0", new MockMultipartFile("file0", "포트폴리오.pdf", "application/pdf", TestPdfs.pdf(9, "portfolio")),
@@ -153,9 +153,9 @@ class MaterialsServiceTest {
                         new DocumentEntry("RESUME", "https://bucket/resume.pdf", "이력서.pdf", 2)),
                 List.of("https://github.com/a/api"), List.of()));
 
-        ArgumentCaptor<MetaDataResponse> launched = ArgumentCaptor.forClass(MetaDataResponse.class);
-        verify(analysisLaunchService).launch(eq(7L), eq("MAJOR_BACKEND"), launched.capture());
-        assertThat(launched.getValue().getFileUrl()).isEqualTo("https://bucket/portfolio.pdf");
+        ArgumentCaptor<MaterialsResponse> launched = ArgumentCaptor.forClass(MaterialsResponse.class);
+        verify(analysisLaunchService).launchMaterials(eq(7L), launched.capture());
+        assertThat(launched.getValue().documents()).extracting("type").containsExactly("PORTFOLIO", "RESUME");
         assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis("job-2", "accepted"));
         // 올린 뒤 임시 파일은 남지 않는다.
         assertThat(uploadedFrom).hasSize(2).allSatisfy(file -> assertThat(file).doesNotExist());
@@ -166,7 +166,7 @@ class MaterialsServiceTest {
         when(authServerClient.getMaterials(TOKEN)).thenReturn(savedBackend());
         when(storage.upload(any())).thenReturn("https://bucket/resume.pdf");
         authEchoesSavedRequest();
-        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_BACKEND"), any()))
+        when(analysisLaunchService.launchMaterials(eq(7L), any()))
                 .thenReturn(new GenerateResponse("job-3", "processing", null));
         Map<String, MultipartFile> files = Map.of(
                 "file0", new MockMultipartFile("file0", "이력서.pdf", "application/pdf", TestPdfs.pdf(2, "resume")));
@@ -179,17 +179,19 @@ class MaterialsServiceTest {
         ArgumentCaptor<AuthMaterialsRequest> sent = ArgumentCaptor.forClass(AuthMaterialsRequest.class);
         verify(authServerClient).putMaterials(eq(TOKEN), sent.capture());
         assertThat(sent.getValue().documents()).extracting(DocumentEntry::type).containsExactly("RESUME", "PORTFOLIO");
-        ArgumentCaptor<MetaDataResponse> launched = ArgumentCaptor.forClass(MetaDataResponse.class);
-        verify(analysisLaunchService).launch(eq(7L), eq("MAJOR_BACKEND"), launched.capture());
-        assertThat(launched.getValue().getFileUrl()).isEqualTo(SAVED_URL);
+        ArgumentCaptor<MaterialsResponse> launched = ArgumentCaptor.forClass(MaterialsResponse.class);
+        verify(analysisLaunchService).launchMaterials(eq(7L), launched.capture());
+        assertThat(launched.getValue().documents()).extracting("type").containsExactly("RESUME", "PORTFOLIO");
         assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis("job-3", "accepted"));
     }
 
     @Test
-    void 비개발_직무는_저장하지만_분석은_요청하지_않고_skipped() {
+    void 비개발_직무도_저장하고_분석을_요청한다() {
         when(authServerClient.getMaterials(TOKEN)).thenReturn(new AuthMaterialsResponse(null, List.of(), List.of(), List.of(), null));
         when(storage.upload(any())).thenReturn("https://bucket/prd.pdf");
         authEchoesSavedRequest();
+        when(analysisLaunchService.launchMaterials(eq(7L), any()))
+                .thenReturn(new GenerateResponse("job-pm", "accepted", null));
         Map<String, MultipartFile> files = Map.of(
                 "file0", new MockMultipartFile("file0", "회원가입-PRD.pdf", "application/pdf", TestPdfs.pdf(9, "prd")));
 
@@ -199,8 +201,8 @@ class MaterialsServiceTest {
 
         assertThat(response.materials().jobRole()).isEqualTo("PRODUCT_MANAGER");
         assertThat(response.materials().supplements()).hasSize(1);
-        assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis(null, "skipped"));
-        verifyNoInteractions(analysisLaunchService);
+        assertThat(response.analysis()).isEqualTo(new MaterialsSaveResponse.Analysis("job-pm", "accepted"));
+        verify(analysisLaunchService).launchMaterials(eq(7L), any());
     }
 
     /** 재시도 중 앞 시도가 커밋했을 수 있어 4xx도 저장되지 않았다고 확정하지 않는다. */
@@ -228,7 +230,7 @@ class MaterialsServiceTest {
         when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
         when(authServerClient.putMaterials(eq(TOKEN), any()))
                 .thenThrow(new ExternalApiException("요청이 너무 많습니다. (429)", HttpStatus.TOO_MANY_REQUESTS, null));
-        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_BACKEND"), any()))
+        when(analysisLaunchService.launchMaterials(eq(7L), any()))
                 .thenReturn(new GenerateResponse("job-4", "processing", null));
 
         MaterialsSaveResponse response = service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio());
@@ -260,7 +262,7 @@ class MaterialsServiceTest {
         when(storage.upload(any())).thenReturn("https://bucket/new.pdf");
         when(authServerClient.putMaterials(eq(TOKEN), any()))
                 .thenThrow(new ExternalApiException("인증 서버와 연결할 수 없습니다.", null, null));
-        when(analysisLaunchService.launch(eq(7L), eq("MAJOR_BACKEND"), any()))
+        when(analysisLaunchService.launchMaterials(eq(7L), any()))
                 .thenReturn(new GenerateResponse("job-3", "processing", null));
 
         MaterialsSaveResponse response = service.replace(authUser, backendWithNewPortfolio(), oneNewPortfolio());
@@ -347,7 +349,7 @@ class MaterialsServiceTest {
             AuthMaterialsRequest request = invocation.getArgument(1);
             return new AuthMaterialsResponse(request.major(), request.documents(), request.gitUrls(), request.supplements(), null);
         });
-        when(analysisLaunchService.launch(eq(7L), anyString(), any()))
+        when(analysisLaunchService.launchMaterials(eq(7L), any()))
                 .thenThrow(new ExternalApiException("분석 서버와 연결할 수 없습니다.", null, null));
 
         MaterialsSaveResponse response = service.replace(authUser, new MaterialsPayload("BACKEND",
@@ -358,4 +360,69 @@ class MaterialsServiceTest {
         assertThat(response.materials().gitUrls()).hasSize(2);
         verify(storage, never()).deleteQuietly(anyString());
     }
+    private AuthMaterialsResponse general(String title, String answer) {
+        return new AuthMaterialsResponse("MAJOR_GEN_MARKETING", List.of(), List.of(), List.of(), null,
+                title, List.of(new AuthMaterialsResponse.CoverLetterEntry("역량", answer)));
+    }
+
+    private MaterialsPayload generalPayload(String title, String answer) {
+        return new MaterialsPayload("GEN_MARKETING", List.of(), List.of(), List.of(), title,
+                List.of(new MaterialsPayload.CoverLetterInput("역량", answer)));
+    }
+
+    @Test
+    void 일반_자소서만_저장해_직무명과_함께_분석으로_전달한다() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(null);
+        when(authServerClient.putMaterials(eq(TOKEN), any())).thenAnswer(inv -> {
+            AuthMaterialsRequest r = inv.getArgument(1);
+            return new AuthMaterialsResponse(r.major(), r.documents(), r.gitUrls(), r.supplements(), null,
+                    r.jobTitle(), r.coverLetters());
+        });
+        when(analysisLaunchService.launchMaterials(eq(7L), any()))
+                .thenReturn(new GenerateResponse("job-general", "accepted", null));
+        var result = service.replace(authUser, generalPayload("  퍼포먼스 마케터  ", "경험"), Map.of());
+        assertThat(result.materials().jobTitle()).isEqualTo("퍼포먼스 마케터");
+        assertThat(result.materials().coverLetters()).containsExactly(new MaterialsResponse.CoverLetter("역량", "경험"));
+        var sent = ArgumentCaptor.forClass(MaterialsResponse.class);
+        verify(analysisLaunchService).launchMaterials(eq(7L), sent.capture());
+        assertThat(sent.getValue()).isEqualTo(result.materials());
+        verifyNoInteractions(storage);
+    }
+
+    @Test
+    void 일반_같은_직무명과_자소서는_재분석하지_않는다() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(general("마케터", "경험"));
+        var result = service.replace(authUser, generalPayload("마케터", "경험"), Map.of());
+        assertThat(result.analysis()).isNull();
+        verify(authServerClient, never()).putMaterials(anyString(), any());
+        verifyNoInteractions(analysisLaunchService, storage);
+    }
+
+    @Test
+    void 직무명만_바꾸거나_자소서_답을_바꾸면_다시_분석한다() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(general("마케터", "경험"));
+        when(authServerClient.putMaterials(eq(TOKEN), any())).thenAnswer(inv -> {
+            AuthMaterialsRequest r = inv.getArgument(1);
+            return new AuthMaterialsResponse(r.major(), r.documents(), r.gitUrls(), r.supplements(), null,
+                    r.jobTitle(), r.coverLetters());
+        });
+        when(analysisLaunchService.launchMaterials(eq(7L), any()))
+                .thenReturn(new GenerateResponse("job-general", "accepted", null));
+        assertThat(service.replace(authUser, generalPayload("해외 마케터", "경험"), Map.of()).analysis()).isNotNull();
+        assertThat(service.replace(authUser, generalPayload("마케터", "경험1"), Map.of()).analysis()).isNotNull();
+        verify(analysisLaunchService, times(2)).launchMaterials(eq(7L), any());
+    }
+
+    @Test
+    void 타임아웃_재조회에서_직무명이나_자소서가_다르면_저장_성공으로_보지_않는다() {
+        when(authServerClient.getMaterials(TOKEN)).thenReturn(general("마케터", "경험"));
+        ExternalApiException failure = new ExternalApiException("timeout", null, null);
+        when(authServerClient.putMaterials(eq(TOKEN), any())).thenThrow(failure);
+        assertThatThrownBy(() -> service.replace(authUser, generalPayload("해외 마케터", "경험"), Map.of()))
+                .isSameAs(failure);
+        assertThatThrownBy(() -> service.replace(authUser, generalPayload("마케터", "경험1"), Map.of()))
+                .isSameAs(failure);
+        verifyNoInteractions(analysisLaunchService);
+    }
+
 }

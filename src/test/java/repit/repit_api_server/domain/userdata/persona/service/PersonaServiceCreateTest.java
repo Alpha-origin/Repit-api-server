@@ -66,7 +66,7 @@ class PersonaServiceCreateTest {
 
     @Test
     void 요청한_직책이_그대로_저장된다() {
-        service.createPersona(request(Role.HR, null), "MAJOR_BACKEND");
+        service.createPersona(request(Role.HR, null), "MAJOR_BACKEND", null);
 
         verify(personaRepository).save(saved.capture());
         assertThat(saved.getValue().getRole()).isEqualTo(Role.HR);
@@ -76,7 +76,7 @@ class PersonaServiceCreateTest {
 
     @Test
     void 직책을_안_보내면_422다() {
-        assertThatThrownBy(() -> service.createPersona(request(null, Major.BACKEND), "MAJOR_BACKEND"))
+        assertThatThrownBy(() -> service.createPersona(request(null, Major.BACKEND), "MAJOR_BACKEND", null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
@@ -88,7 +88,7 @@ class PersonaServiceCreateTest {
     /** Web이 보낸 전공이 사용자 직무를 덮어쓰면 엉뚱한 직무 기준으로 면접이 진행된다. */
     @Test
     void 기술_면접관_전공은_요청값이_아니라_사용자_직무다() {
-        service.createPersona(request(Role.TECH, Major.BACKEND), "MAJOR_FRONTEND");
+        service.createPersona(request(Role.TECH, Major.BACKEND), "MAJOR_FRONTEND", null);
 
         verify(personaRepository).save(saved.capture());
         assertThat(saved.getValue().getRole()).isEqualTo(Role.TECH);
@@ -97,33 +97,56 @@ class PersonaServiceCreateTest {
 
     @Test
     void 기술_면접관은_전공을_안_보내도_저장된다() {
-        service.createPersona(request(Role.TECH, null), "MAJOR_BACKEND");
+        service.createPersona(request(Role.TECH, null), "MAJOR_BACKEND", null);
 
         verify(personaRepository).save(saved.capture());
         assertThat(saved.getValue().getMajor()).isEqualTo(Major.BACKEND);
     }
 
     @Test
-    void 웹퍼블리셔_사용자의_기술_면접관은_프론트엔드다() {
-        service.createPersona(request(Role.TECH, null), "WEB_PUBLISHER");
+    void 웹퍼블리셔_사용자의_기술_면접관은_웹퍼블리셔다() {
+        service.createPersona(request(Role.TECH, null), "WEB_PUBLISHER", null);
 
         verify(personaRepository).save(saved.capture());
-        assertThat(saved.getValue().getMajor()).isEqualTo(Major.FRONTEND);
+        assertThat(saved.getValue().getMajor()).isEqualTo(Major.WEB_PUBLISHER);
     }
 
     @ParameterizedTest
     @NullSource
-    @ValueSource(strings = "DATA_ANALYST")
+    @ValueSource(strings = "UNKNOWN")
     void 직무가_없거나_옮길_수_없으면_백엔드다(String userMajor) {
-        service.createPersona(request(Role.TECH, null), userMajor);
+        service.createPersona(request(Role.TECH, null), userMajor, null);
 
         verify(personaRepository).save(saved.capture());
         assertThat(saved.getValue().getMajor()).isEqualTo(Major.BACKEND);
     }
 
     @Test
+    void 일반_직군의_기술_면접관에_직무명을_저장하고_응답한다() {
+        var response = service.createPersona(request(Role.TECH, null), "MAJOR_GEN_MARKETING", "브랜드 마케터");
+        verify(personaRepository).save(saved.capture());
+        assertThat(saved.getValue().getMajor()).isEqualTo(Major.GEN_MARKETING);
+        assertThat(saved.getValue().getJobTitle()).isEqualTo("브랜드 마케터");
+        assertThat(response.getJobTitle()).isEqualTo("브랜드 마케터");
+    }
+
+    @Test
+    void 일반_직군도_인사_면접관에_직무명을_저장하지_않는다() {
+        service.createPersona(request(Role.HR, null), "MAJOR_GEN_MARKETING", "브랜드 마케터");
+        verify(personaRepository).save(saved.capture());
+        assertThat(saved.getValue().getJobTitle()).isNull();
+    }
+
+    @Test
+    void IT_직군의_기술_면접관은_직무명을_저장하지_않는다() {
+        service.createPersona(request(Role.TECH, null), "MAJOR_DATA_ANALYST", "분석가");
+        verify(personaRepository).save(saved.capture());
+        assertThat(saved.getValue().getJobTitle()).isNull();
+    }
+
+    @Test
     void 비기술_면접관은_사용자_직무와_관계없이_전공이_없다() {
-        service.createPersona(request(Role.HR, null), "MAJOR_FRONTEND");
+        service.createPersona(request(Role.HR, null), "MAJOR_FRONTEND", null);
 
         verify(personaRepository).save(saved.capture());
         assertThat(saved.getValue().getMajor()).isNull();
@@ -131,7 +154,7 @@ class PersonaServiceCreateTest {
 
     @Test
     void 요청한_난이도가_그대로_저장된다() {
-        service.createPersona(request(Role.CEO, null), "MAJOR_BACKEND");
+        service.createPersona(request(Role.CEO, null), "MAJOR_BACKEND", null);
 
         verify(personaRepository).save(saved.capture());
         assertThat(saved.getValue().getLevel()).isEqualTo(Level.HARD);
@@ -139,7 +162,7 @@ class PersonaServiceCreateTest {
 
     @Test
     void 요청한_어조가_그대로_저장된다() {
-        service.createPersona(request(Role.CEO, null), "MAJOR_BACKEND");
+        service.createPersona(request(Role.CEO, null), "MAJOR_BACKEND", null);
 
         verify(personaRepository).save(saved.capture());
         // 성향이 FRIENDLY라고 어조까지 부드럽게 채워지면 안 된다. 두 축은 독립이다.
@@ -151,7 +174,7 @@ class PersonaServiceCreateTest {
         PersonaRequest request = request(Role.CEO, null);
         request.setTone(null);
 
-        assertThatThrownBy(() -> service.createPersona(request, "MAJOR_BACKEND"))
+        assertThatThrownBy(() -> service.createPersona(request, "MAJOR_BACKEND", null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
@@ -165,7 +188,7 @@ class PersonaServiceCreateTest {
         PersonaRequest request = request(Role.HR, null);
         request.setVoiceIndex(voiceIndex);
 
-        assertThat(service.createPersona(request, "MAJOR_BACKEND").getVoiceIndex()).isEqualTo(voiceIndex);
+        assertThat(service.createPersona(request, "MAJOR_BACKEND", null).getVoiceIndex()).isEqualTo(voiceIndex);
         verify(personaRepository).save(saved.capture());
         assertThat(saved.getValue().getVoiceIndex()).isEqualTo(voiceIndex);
     }
@@ -173,7 +196,7 @@ class PersonaServiceCreateTest {
     /** 음성 번호는 선택이다. 비우면 채팅 서버가 기본 음성을 쓴다. */
     @Test
     void 음성_번호_없이도_저장된다() {
-        service.createPersona(request(Role.HR, null), "MAJOR_BACKEND");
+        service.createPersona(request(Role.HR, null), "MAJOR_BACKEND", null);
 
         verify(personaRepository).save(saved.capture());
         assertThat(saved.getValue().getVoiceIndex()).isNull();
@@ -185,7 +208,7 @@ class PersonaServiceCreateTest {
         PersonaRequest request = request(Role.HR, null);
         request.setVoiceIndex(voiceIndex);
 
-        assertThatThrownBy(() -> service.createPersona(request, "MAJOR_BACKEND"))
+        assertThatThrownBy(() -> service.createPersona(request, "MAJOR_BACKEND", null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
@@ -198,7 +221,7 @@ class PersonaServiceCreateTest {
         PersonaRequest request = request(Role.CEO, null);
         request.setLevel(null);
 
-        assertThatThrownBy(() -> service.createPersona(request, "MAJOR_BACKEND"))
+        assertThatThrownBy(() -> service.createPersona(request, "MAJOR_BACKEND", null))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getStatus())
                 .isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);

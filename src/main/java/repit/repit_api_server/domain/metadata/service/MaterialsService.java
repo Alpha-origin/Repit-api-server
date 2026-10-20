@@ -25,6 +25,7 @@ import repit.repit_api_server.global.client.AuthServerClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 마이페이지의 직무·문서·GitHub·보완 입력을 한 번에 저장하고 분석을 다시 요청한다(계약 C-1).
@@ -75,7 +76,9 @@ public class MaterialsService {
                 documents.add(new DocumentEntry(document.type(), fileUrl, document.fileName(), document.pageCount()));
             }
             request = new AuthMaterialsRequest(next.jobRole().authMajor(), documents, next.gitUrls(),
-                    toEntries(next.supplements()));
+                    toEntries(next.supplements()), next.jobTitle(), next.coverLetters().stream()
+                    .map(c -> new repit.repit_api_server.domain.metadata.dto.response.AuthMaterialsResponse.CoverLetterEntry(
+                            c.question(), c.answer())).toList());
             authCalled = true;
             stored = MaterialsResponse.from(authServerClient.putMaterials(authUser.token(), request));
         } catch (RuntimeException e) {
@@ -128,28 +131,20 @@ public class MaterialsService {
         return jobRole.name().equals(stored.jobRole())
                 && storedDocuments.equals(sentDocuments)
                 && stored.gitUrls().equals(request.gitUrls())
-                && stored.supplements().equals(sentSupplements);
+                && stored.supplements().equals(sentSupplements)
+                && Objects.equals(stored.jobTitle(), request.jobTitle())
+                && stored.coverLetters().equals(request.coverLetters().stream()
+                    .map(c -> new MaterialsResponse.CoverLetter(c.question(), c.answer())).toList());
     }
 
-    /**
-     * 저장된 자료로 분석을 요청한다. 분석 서버의 새 요청 모양(계약 C-3)이 붙기 전까지는 지금 요청 모양 그대로
-     * 포트폴리오 문서와 GitHub를 보낸다({@link MaterialsResponse#toAnalysisInput()}, 다시 분석하는 길과 같다).
-     * 비개발 직무는 그 모양으로는 맞는 분석이 나오지 않아 요청하지 않는다.
-     *
-     * <p>저장은 이미 끝났으므로 분석 요청이 실패해도 저장을 되돌리지 않는다. 화면이 다시 분석하게 한다.
-     */
+    /** 저장 완료 후 전체 자료를 분석한다. 분석 실패는 저장을 되돌리지 않는다. */
     private Analysis launchAnalysis(AuthUser authUser, JobRole jobRole, MaterialsResponse stored) {
-        if (!jobRole.supportsCurrentProfileRequest()) {
-            return new Analysis(null, MaterialsSaveResponse.ANALYSIS_SKIPPED);
-        }
-        MetaDataResponse input = stored.toAnalysisInput();
-        // 개발 직무는 포트폴리오가 필수라 검사를 통과했으면 있어야 한다. 없으면 인증 서버가 돌려준 저장값이 이상한 것이다.
-        if (input.getFileUrl() == null) {
-            log.error("자료는 저장했지만 저장값에 포트폴리오 문서가 없어 분석을 요청하지 못했습니다. userId={}", authUser.id());
+        if (!AnalysisLaunchService.canAnalyze(stored)) {
+            log.error("저장된 자료가 분석 조건을 충족하지 않습니다. userId={}", authUser.id());
             return new Analysis(null, MaterialsSaveResponse.ANALYSIS_FAILED);
         }
         try {
-            GenerateResponse response = analysisLaunchService.launch(authUser.id(), jobRole.authMajor(), input);
+            GenerateResponse response = analysisLaunchService.launchMaterials(authUser.id(), stored);
             return new Analysis(response.getJobId(), MaterialsSaveResponse.ANALYSIS_ACCEPTED);
         } catch (RuntimeException e) {
             log.error("자료는 저장했지만 분석을 요청하지 못했습니다. userId={}", authUser.id(), e);
@@ -172,7 +167,10 @@ public class MaterialsService {
                 .toList();
         return nextDocuments.equals(savedDocuments)
                 && next.gitUrls().equals(saved.gitUrls())
-                && nextSupplements.equals(saved.supplements());
+                && nextSupplements.equals(saved.supplements())
+                && Objects.equals(next.jobTitle(), saved.jobTitle())
+                && next.coverLetters().stream().map(c -> new MaterialsResponse.CoverLetter(c.question(), c.answer()))
+                    .toList().equals(saved.coverLetters());
     }
 
     private static List<SupplementEntry> toEntries(List<SupplementInput> supplements) {

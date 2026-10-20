@@ -55,8 +55,9 @@ public class MetaService {
 
 
     // metaData 반환. 원본은 인증 서버가 들고 있어 사용자 토큰을 그대로 넘겨 받아온다.
+    // fileUrl은 포트폴리오 자리다. 첫 문서가 이력서·경력기술서일 수 있으니 순서가 아니라 PORTFOLIO 종류로 고른다.
     public MetaDataResponse getMetaData(String token) {
-        return authServerClient.getMetaData(token);
+        return getMaterials(token).toAnalysisInput();
     }
 
     // 직무·문서·GitHub·보완 입력 반환. 옛 업로드 경로로 올린 PDF는 PORTFOLIO 문서 한 건으로 바꾼다.

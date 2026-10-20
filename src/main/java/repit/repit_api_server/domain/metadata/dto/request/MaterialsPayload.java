@@ -12,10 +12,19 @@ public record MaterialsPayload(
         String jobRole,
         List<DocumentInput> documents,
         List<String> gitUrls,
-        List<SupplementInput> supplements) {
+        List<SupplementInput> supplements,
+        String jobTitle,
+        List<CoverLetterInput> coverLetters) {
+
+    public MaterialsPayload(String jobRole, List<DocumentInput> documents, List<String> gitUrls, List<SupplementInput> supplements) {
+        this(jobRole, documents, gitUrls, supplements, null, List.of());
+    }
 
     public static final String SOURCE_NEW = "NEW";
     public static final String SOURCE_EXISTING = "EXISTING";
+
+    public record CoverLetterInput(String question, String answer) {
+    }
 
     public record DocumentInput(String type, String source, String fileKey, String fileUrl) {
     }

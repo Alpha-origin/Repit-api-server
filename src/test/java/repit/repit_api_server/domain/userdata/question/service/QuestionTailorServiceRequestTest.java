@@ -249,6 +249,33 @@ class QuestionTailorServiceRequestTest {
         assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("WEB_PUBLISHER");
     }
 
+    @Test
+    void 일반_직군은_현재_사용자_직무명을_전달한다() {
+        when(user.getMajor()).thenReturn("MAJOR_GEN_MARKETING");
+        when(user.getJobTitle()).thenReturn("브랜드 마케터");
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(11L, Role.TECH)));
+
+        service.requestTailor(interview(InterviewMode.SOLO), user);
+
+        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(sent.capture());
+        assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("GEN_MARKETING");
+        assertThat(sent.getValue().getProfile().getJobTitle()).isEqualTo("브랜드 마케터");
+    }
+
+    @Test
+    void IT_직군은_사용자_직무명이_있어도_전달하지_않는다() {
+        when(user.getMajor()).thenReturn("MAJOR_BACKEND");
+        when(user.getJobTitle()).thenReturn("백엔드 개발자");
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(persona(11L, Role.TECH)));
+
+        service.requestTailor(interview(InterviewMode.SOLO), user);
+
+        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(sent.capture());
+        assertThat(sent.getValue().getProfile().getJobTitle()).isNull();
+    }
+
     /** 인증 서버는 MAJOR_ 접두사를 붙여 내려준다. 떼지 않으면 분석 서버가 모르는 직군이 넘어간다. */
     @Test
     void 일대일은_면접관_전공이_없으면_사용자_전공을_접두사_없이_쓴다() {
@@ -514,4 +541,36 @@ class QuestionTailorServiceRequestTest {
         verify(aiServerClient).tailorQuestionsMulti(multi.capture());
         assertThat(mapper.readTree(mapper.writeValueAsString(multi.getValue())).has("company")).isFalse();
     }
+    @Test
+    void 스냅샷과_질문_직무가_다르면_PENDING을_남기지_않는다() {
+        when(personaRepository.findById(any())).thenReturn(Optional.of(PersonaEntity.builder()
+                .personaId(11L).role(Role.TECH).major(Major.GEN_MARKETING)
+                .jobTitle("마케터").interviewSnapshot(true).type(Type.REALISTIC).tone(InterviewTone.GENTLE).build()));
+        when(questionPoolService.takeSet(eq(7L), any(), eq(3L))).thenReturn(
+                new QuestionPoolService.DrawnSet("analysis-1", List.of(), null, "BACKEND"));
+        assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.SOLO), user))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("직무가 다릅니다");
+        verify(questionTailorRepository, never()).save(any());
+        verify(aiServerClient, never()).tailorQuestions(any());
+    }
+
+    /** 일반 직군 자료(v2)의 직무는 jobRole에서 온다. 다른 일반 직군 자료로 만든 세트로 면접을 열지 않는다. */
+    @Test
+    void 일반_직군_스냅샷과_v2_자료_직무가_다르면_409로_막는다() {
+        when(user.getMajor()).thenReturn("MAJOR_GEN_MARKETING");
+        when(personaRepository.findById(any())).thenReturn(Optional.of(PersonaEntity.builder()
+                .personaId(11L).role(Role.TECH).major(Major.GEN_MARKETING)
+                .jobTitle("마케터").interviewSnapshot(true).type(Type.REALISTIC).tone(InterviewTone.GENTLE).build()));
+        when(questionPoolService.takeSet(eq(7L), any(), eq(3L))).thenReturn(
+                new QuestionPoolService.DrawnSet("analysis-1", List.of(), null, "GEN_HR_ADMIN"));
+
+        assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.SOLO), user))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("직무가 다릅니다")
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.CONFLICT);
+        verify(questionTailorRepository, never()).save(any());
+        verify(aiServerClient, never()).tailorQuestions(any());
+    }
+
 }

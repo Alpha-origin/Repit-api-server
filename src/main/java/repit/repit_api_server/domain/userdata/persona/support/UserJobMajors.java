@@ -10,7 +10,7 @@ import java.util.Locale;
  * 인증 서버의 사용자 직무 값을 다룬다.
  *
  * <p>기술 면접관의 전공은 사용자가 고르지 않고 사용자 직무를 따른다. 면접관 전공은
- * BACKEND / FRONTEND 두 가지뿐이라, 그 밖의 직무는 가까운 값이나 대체값으로 맞춘다.
+ * 개발·비개발·일반 직군 15개 코드를 그대로 유지한다.
  */
 public final class UserJobMajors {
 
@@ -36,8 +36,7 @@ public final class UserJobMajors {
     /**
      * 기술 면접관 전공. null을 돌려주지 않는다.
      *
-     * <p>WEB_PUBLISHER는 화면 개발 직무라 FRONTEND로 맞춘다. 직무가 없거나 옮길 수 없는 값은
-     * BACKEND로 둔다. 마이페이지 직무 저장이 아직 없어 직무 없는 사용자가 정상 경로에 있으므로 막지 않는다.
+     * <p>직무가 없거나 알려지지 않은 값은 BACKEND로 둔다.
      */
     public static Major toPersonaMajor(String userMajor) {
         String job = normalize(userMajor);
@@ -45,13 +44,11 @@ public final class UserJobMajors {
             log.info("사용자 직무가 없어 기술 면접관 전공을 BACKEND로 둡니다.");
             return Major.BACKEND;
         }
-        return switch (job) {
-            case "BACKEND" -> Major.BACKEND;
-            case "FRONTEND", "WEB_PUBLISHER" -> Major.FRONTEND;
-            default -> {
-                log.info("면접관 전공으로 옮길 수 없는 직무라 BACKEND로 둡니다. userMajor={}", userMajor);
-                yield Major.BACKEND;
-            }
-        };
+        try {
+            return Major.valueOf(job);
+        } catch (IllegalArgumentException e) {
+            log.info("면접관 전공으로 옮길 수 없는 직무라 BACKEND로 둡니다. userMajor={}", userMajor);
+            return Major.BACKEND;
+        }
     }
 }

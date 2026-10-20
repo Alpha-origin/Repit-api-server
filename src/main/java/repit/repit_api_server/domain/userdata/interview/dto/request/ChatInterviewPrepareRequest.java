@@ -62,6 +62,9 @@ public class ChatInterviewPrepareRequest {
      * 비워 보내면 면접이 열리지 않으므로 넘기는 쪽에서 채운다 — {@code ChatInterviewHandoffService} 참고.
      */
     private Major major;
+    // 대표 면접관에 저장된 면접 시작 시점의 일반 직군 직무명.
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String jobTitle;
     // 면접 난이도.
     private Level level;
     /**

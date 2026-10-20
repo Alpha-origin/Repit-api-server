@@ -30,6 +30,7 @@ import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Gender;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.InterviewTone;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Level;
+import repit.repit_api_server.domain.userdata.persona.entity.enums.Major;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Role;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.Type;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
@@ -295,6 +296,71 @@ class FeedbackServiceSoloRequestTest {
         ArgumentCaptor<FeedbackSoloRequest> sent = ArgumentCaptor.forClass(FeedbackSoloRequest.class);
         verify(aiServerClient).requestSoloFeedback(sent.capture());
         return sent.getValue();
+    }
+
+    @Test
+    void SOLO는_저장된_전문_면접관의_직무와_직무명을_보낸다() {
+        when(personaRepository.findById(5L)).thenReturn(Optional.of(PersonaEntity.builder()
+                .personaId(5L).role(Role.TECH).major(Major.GEN_MARKETING).jobTitle("브랜드 마케터").build()));
+
+        service.requestFeedback(USER_ID, 3L);
+
+        FeedbackSoloRequest request = captureRequest();
+        assertThat(request.getJobRole()).isEqualTo("GEN_MARKETING");
+        assertThat(request.getJobTitle()).isEqualTo("브랜드 마케터");
+    }
+
+    @Test
+    void SOLO_비기술_면접관은_직무와_직무명을_보내지_않는다() {
+        when(personaRepository.findById(5L)).thenReturn(Optional.of(hrPersona()));
+
+        service.requestFeedback(USER_ID, 3L);
+
+        FeedbackSoloRequest request = captureRequest();
+        assertThat(request.getJobRole()).isNull();
+        assertThat(request.getJobTitle()).isNull();
+    }
+
+    @Test
+    void MULTI는_진행순_첫_TECH_면접관의_직무_스냅샷을_보낸다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.COMPLETED, null)));
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(5L).personaOrder(0).build(),
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(6L).personaOrder(1).build()));
+        PersonaEntity tech = PersonaEntity.builder().personaId(5L).role(Role.TECH)
+                .major(Major.GEN_DESIGN).jobTitle("제품 디자이너").build();
+        // 저장소 조회 순서가 바뀌어도 진행 순서대로 복원한 TECH를 쓴다.
+        when(personaRepository.findAllById(List.of(5L, 6L))).thenReturn(List.of(hrPersona(), tech));
+
+        service.requestFeedback(USER_ID, 3L);
+
+        ArgumentCaptor<FeedbackMultiRequest> sent = ArgumentCaptor.forClass(FeedbackMultiRequest.class);
+        verify(aiServerClient).requestMultiFeedback(sent.capture());
+        assertThat(sent.getValue().getJobRole()).isEqualTo("GEN_DESIGN");
+        assertThat(sent.getValue().getJobTitle()).isEqualTo("제품 디자이너");
+    }
+
+    @Test
+    void 면접관_스냅샷이_없으면_직무와_직무명을_비운다() {
+        when(personaRepository.findById(5L)).thenReturn(Optional.empty());
+
+        service.requestFeedback(USER_ID, 3L);
+
+        FeedbackSoloRequest request = captureRequest();
+        assertThat(request.getJobRole()).isNull();
+        assertThat(request.getJobTitle()).isNull();
+    }
+
+    @Test
+    void IT_면접관은_직무만_보내고_직무명은_비운다() {
+        when(personaRepository.findById(5L)).thenReturn(Optional.of(PersonaEntity.builder()
+                .personaId(5L).role(Role.TECH).major(Major.DATA_ANALYST).build()));
+
+        service.requestFeedback(USER_ID, 3L);
+
+        FeedbackSoloRequest request = captureRequest();
+        assertThat(request.getJobRole()).isEqualTo("DATA_ANALYST");
+        assertThat(request.getJobTitle()).isNull();
     }
 
     @Test

@@ -33,13 +33,18 @@ public class MetaDataController {
     public ResponseEntity<GenerateResponse> upload(@AuthenticationPrincipal AuthUser authUser,
                                                    @RequestPart("file") MultipartFile file,
                                                    @RequestParam List<String> gitUrls) throws IOException {
-        // 분석할 수 없는 직무(비개발)면 자료를 저장하기 전에 422로 막는다. 저장만 되고 분석은 실패하는 일을 막는다.
-        analysisLaunchService.requireSupportedJob(authUser.user().getMajor());
-        MetaDataResponse metaData = metaService.dataUpload(authUser.token(), file, gitUrls);
-
-        // 올린 자료로 곧바로 분석을 시작한다. 접수까지 함께 해야 이 분석에 주인이 남고,
-        // 주인이 없으면 나중에 면접을 열 때 이 결과를 찾지 못한다.
-        return ResponseEntity.ok(analysisLaunchService.launch(authUser.id(), authUser.user().getMajor(), metaData));
+        String jobRole = repit.repit_api_server.domain.userdata.persona.support.UserJobMajors
+                .normalize(authUser.user().getMajor());
+        MaterialsPayload payload = new MaterialsPayload(jobRole == null ? "BACKEND" : jobRole,
+                List.of(new MaterialsPayload.DocumentInput("PORTFOLIO", "NEW", "file0", null)),
+                gitUrls, List.of());
+        MaterialsSaveResponse saved = materialsService.replace(authUser, payload, Map.of("file0", file));
+        if (saved.analysis() == null || saved.analysis().jobId() == null) {
+            throw repit.repit_api_server.global.exception.BusinessException.unprocessable(
+                    "자료는 저장했지만 분석을 요청하지 못했습니다. 다시 분석해 주세요.");
+        }
+        return ResponseEntity.ok(GenerateResponse.builder().jobId(saved.analysis().jobId())
+                .status(saved.analysis().status()).build());
     }
 
 

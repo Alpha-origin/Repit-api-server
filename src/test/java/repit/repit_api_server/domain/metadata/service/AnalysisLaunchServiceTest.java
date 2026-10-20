@@ -125,7 +125,8 @@ class AnalysisLaunchServiceTest {
         // 첫 문서(이력서)가 아니라 포트폴리오를 보낸다. 옛 metaData의 파일 주소는 보지 않는다.
         ArgumentCaptor<ProfileRequest> sent = ArgumentCaptor.forClass(ProfileRequest.class);
         verify(aiServerClient).requestProfile(sent.capture());
-        assertThat(sent.getValue().getPortfolioUrl()).isEqualTo("https://s3/portfolio.pdf");
+        assertThat(sent.getValue().getDocuments()).extracting(ProfileRequest.Document::getUrl)
+                .containsExactly("https://s3/resume.pdf", "https://s3/portfolio.pdf");
         assertThat(sent.getValue().getGithubUrls()).containsExactly("https://github.com/user/repo");
         verify(metaService, never()).getMetaData(any());
         verify(aiMetaDataService).registerJob(eq("job-1"), eq(OWNER_ID), any(LocalDateTime.class), eq(AnalysisResultType.PROFILE));
@@ -207,7 +208,7 @@ class AnalysisLaunchServiceTest {
     @Test
     void 분석을_요청하고_그_실행을_접수한다() {
 
-        GenerateResponse response = service.launch(OWNER_ID, "MAJOR_BACKEND", metaData());
+        GenerateResponse response = service.launchMaterials(OWNER_ID, savedMaterials());
 
         assertThat(response.getJobId()).isEqualTo("job-1");
         verify(aiMetaDataService).registerJob(eq("job-1"), eq(9L), any(LocalDateTime.class), eq(AnalysisResultType.PROFILE));
@@ -220,7 +221,7 @@ class AnalysisLaunchServiceTest {
      */
     @Test
     void 분석을_요청한_뒤에_곧바로_접수한다() {
-        service.launch(OWNER_ID, "MAJOR_BACKEND", metaData());
+        service.launchMaterials(OWNER_ID, savedMaterials());
 
         InOrder order = inOrder(aiServerClient, aiMetaDataService);
         order.verify(aiServerClient).requestProfile(any(ProfileRequest.class));
@@ -235,13 +236,14 @@ class AnalysisLaunchServiceTest {
     void 콜백_주소를_설정에서_만든다() {
         ArgumentCaptor<ProfileRequest> sent = ArgumentCaptor.forClass(ProfileRequest.class);
 
-        service.launch(OWNER_ID, "MAJOR_BACKEND", metaData());
+        service.launchMaterials(OWNER_ID, savedMaterials());
 
         verify(aiServerClient).requestProfile(sent.capture());
         assertThat(sent.getValue().getCallbackUrl()).isEqualTo("https://api.repit.test/api/v1/ai/profile/callback");
-        assertThat(sent.getValue().getPortfolioUrl()).isEqualTo("https://s3/portfolio.pdf");
+        assertThat(sent.getValue().getDocuments()).extracting(ProfileRequest.Document::getUrl)
+                .containsExactly("https://s3/resume.pdf", "https://s3/portfolio.pdf");
         assertThat(sent.getValue().getGithubUrls()).containsExactly("https://github.com/user/repo");
-        assertThat(sent.getValue().getMajor()).isEqualTo("MAJOR_BACKEND");
+        assertThat(sent.getValue().getJobRole()).isEqualTo("BACKEND");
     }
 
     /** jobId가 없으면 구독도 조회도 할 수 없다. 성공으로 돌려주면 원인을 찾을 수 없다. */
@@ -251,7 +253,7 @@ class AnalysisLaunchServiceTest {
                 .status("rejected")
                 .build());
 
-        assertThatThrownBy(() -> service.launch(OWNER_ID, null, metaData()))
+        assertThatThrownBy(() -> service.launchMaterials(OWNER_ID, savedMaterials()))
                 .isInstanceOf(ExternalApiException.class);
     }
 
@@ -260,7 +262,7 @@ class AnalysisLaunchServiceTest {
     void 접수에_실패해도_jobId는_돌려준다() {
         doThrowOnRegister();
 
-        GenerateResponse response = service.launch(OWNER_ID, null, metaData());
+        GenerateResponse response = service.launchMaterials(OWNER_ID, savedMaterials());
 
         assertThat(response.getJobId()).isEqualTo("job-1");
     }
@@ -271,25 +273,26 @@ class AnalysisLaunchServiceTest {
     }
 
     @Test
-    void 비개발_직무는_분석을_요청하지_않고_422() {
-        assertThatThrownBy(() -> service.launch(OWNER_ID, "MAJOR_QA_ENGINEER", metaData()))
-                .isInstanceOf(repit.repit_api_server.global.exception.BusinessException.class)
-                .hasMessage(AnalysisLaunchService.NON_DEV_NOT_SUPPORTED)
-                .extracting("status").hasToString("422 UNPROCESSABLE_CONTENT");
-        verify(aiServerClient, never()).requestProfile(any());
+    void 비개발_문서를_GitHub_없이_분석한다() {
+        service.launchMaterials(OWNER_ID, new MaterialsResponse("QA_ENGINEER",
+                List.of(new MaterialDocument(0, "TEST_PLAN", "https://s3/test.pdf", "test.pdf", 1)), List.of(), List.of()));
+        ArgumentCaptor<ProfileRequest> sent = ArgumentCaptor.forClass(ProfileRequest.class);
+        verify(aiServerClient).requestProfile(sent.capture());
+        assertThat(sent.getValue().getJobRole()).isEqualTo("QA_ENGINEER");
+        assertThat(sent.getValue().getGithubUrls()).isEmpty();
     }
 
     @Test
-    void 면접을_시작해도_비개발_직무는_자동_분석을_돌리지_않는다() {
-        UserResponse user = mock(UserResponse.class);
-        when(user.getId()).thenReturn(OWNER_ID);
-        when(user.getMajor()).thenReturn("MAJOR_QA_ENGINEER");
+    void 일반_직군은_자소서만_있어도_자동_분석한다() {
         givenLatestProfile(null);
-        when(metaService.getMaterials("token-1")).thenReturn(savedMaterials());
-
-        service.launchIfMissing(new AuthUser(user, "token-1"));
-
-        verify(aiServerClient, never()).requestProfile(any());
-        verify(analysisDataRepository, never()).lockProfileLaunch(any());
+        when(metaService.getMaterials("token-1")).thenReturn(new MaterialsResponse("GEN_MARKETING",
+                List.of(), List.of(), List.of(), "퍼포먼스 마케터",
+                List.of(new MaterialsResponse.CoverLetter("경험", "캠페인을 개선했습니다"))));
+        service.launchIfMissing(authUser());
+        ArgumentCaptor<ProfileRequest> sent = ArgumentCaptor.forClass(ProfileRequest.class);
+        verify(aiServerClient).requestProfile(sent.capture());
+        assertThat(sent.getValue().getJobTitle()).isEqualTo("퍼포먼스 마케터");
+        assertThat(sent.getValue().getCoverLetters()).hasSize(1);
+        assertThat(sent.getValue().getDocuments()).isEmpty();
     }
 }

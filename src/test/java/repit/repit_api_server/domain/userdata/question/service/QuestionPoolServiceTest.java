@@ -163,6 +163,39 @@ class QuestionPoolServiceTest {
         verify(aiServerClient, never()).requestQuestionCycle(any());
     }
 
+    /**
+     * 비개발·일반 직군 결과(schemaVersion 2)에는 major가 없고 jobRole만 있다. major만 읽으면 직무가 늘 비어,
+     * 콜백에서 이어갈 때 재작성 축이 빠지고 면접 직무와 자료 직무가 달라도 가려내지 못한다.
+     */
+    @Test
+    void 비개발_직군_종합_데이터는_jobRole을_직무로_읽는다() {
+        AnalysisDataEntity profile = AnalysisDataEntity.builder()
+                .jobId(PROFILE_JOB)
+                .userId(USER_ID)
+                .status(AnalysisStatus.SUCCEEDED)
+                .resultType(AnalysisResultType.PROFILE)
+                .result(Map.of(
+                        "profile", Map.of(
+                                "schemaVersion", 2,
+                                "jobRole", "QA_ENGINEER",
+                                "overview", "결제 화면 회귀 테스트를 맡은 QA",
+                                "sources", List.of(),
+                                "materials", List.of(),
+                                "claimChecks", List.of(),
+                                "repositories", List.of()),
+                        "projectSummary", Map.of("overview", "결제 화면 회귀 테스트를 맡은 QA")))
+                .build();
+        when(analysisDataRepository.findLatestCompleted(USER_ID, AnalysisResultType.PROFILE))
+                .thenReturn(Optional.of(profile));
+        when(analysisDataRepository.findTopByUserIdAndResultTypeOrderByCreatedAtDesc(USER_ID, AnalysisResultType.PROFILE))
+                .thenReturn(Optional.of(profile));
+        givenActive(cycle(1L, 1, CycleStatus.ACTIVE), unusedSets(1L, 1, 2, 3));
+
+        QuestionPoolService.DrawnSet drawn = service.takeSet(USER_ID, InterviewMode.SOLO, 3L);
+
+        assertThat(drawn.major()).isEqualTo("QA_ENGINEER");
+    }
+
     @Test
     void 두_번째_세트를_꺼내면_다음_사이클을_미리_요청한다() {
         givenActive(cycle(1L, 1, CycleStatus.ACTIVE), unusedSets(1L, 2, 3));

@@ -136,8 +136,7 @@ public class AiMetaDataController {
     public ResponseEntity<GenerateResponse> generate(
             @AuthenticationPrincipal AuthUser authUser
     ) {
-        MetaDataResponse forRequest = metaService.getMaterials(authUser.token()).toAnalysisInput();
-        return ResponseEntity.ok(analysisLaunchService.launch(authUser.id(), authUser.user().getMajor(), forRequest));
+        return ResponseEntity.ok(analysisLaunchService.launchMaterials(authUser.id(), metaService.getMaterials(authUser.token())));
     }
 
     /**

@@ -102,4 +102,23 @@ class MaterialsResponseTest {
 
         assertThat(MaterialsResponse.from(auth).toAnalysisInput().getFileUrl()).isNull();
     }
+    @Test
+    void 일반_직무명과_자소서는_인증_서버_값을_순서대로_옮긴다() {
+        AuthMaterialsResponse auth = new AuthMaterialsResponse("MAJOR_GEN_MARKETING", List.of(), List.of(),
+                List.of(), null, "브랜드 마케터", List.of(
+                new AuthMaterialsResponse.CoverLetterEntry("지원 동기", "브랜드를 키웠습니다"),
+                new AuthMaterialsResponse.CoverLetterEntry("성과", "매출 증가")));
+
+        MaterialsResponse response = MaterialsResponse.from(auth);
+
+        assertThat(response.jobRole()).isEqualTo("GEN_MARKETING");
+        assertThat(response.jobTitle()).isEqualTo("브랜드 마케터");
+        assertThat(response.coverLetters()).containsExactly(
+                new MaterialsResponse.CoverLetter("지원 동기", "브랜드를 키웠습니다"),
+                new MaterialsResponse.CoverLetter("성과", "매출 증가"));
+        assertThat(MaterialsResponse.empty().jobTitle()).isNull();
+        assertThat(MaterialsResponse.empty().coverLetters()).isEmpty();
+        assertThat(MaterialsResponse.from(new AuthMaterialsResponse("MAJOR_GEN_DESIGN", null, null,
+                null, null, "디자이너", null)).coverLetters()).isEmpty();
+    }
 }

@@ -25,6 +25,8 @@ public class ProfileStatusResponse {
     public static final String INVALID_MATERIAL = "INVALID_MATERIAL";
     /** 코드에서 확인되는 근거가 모자라 질문을 만들 수 없다(422). */
     public static final String INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE";
+    /** 필수 문서에서 읽은 내용이 없음. */
+    public static final String UNREADABLE_DOCUMENT = "UNREADABLE_DOCUMENT";
     /** 분석 서버 오류이거나 결과를 받지 못했다. */
     public static final String INTERNAL = "INTERNAL";
 
@@ -53,7 +55,7 @@ public class ProfileStatusResponse {
      * <p>웹은 사유마다 안내가 다르다 — 저장소 공개 설정, 자료 교체, 자료 보강, 다시 시도.
      */
     public static String reasonOf(Integer statusCode, String code, String message) {
-        if (code != null && Set.of(REPO_NOT_PUBLIC, INVALID_MATERIAL, INSUFFICIENT_EVIDENCE, INTERNAL).contains(code)) {
+        if (code != null && Set.of(REPO_NOT_PUBLIC, INVALID_MATERIAL, INSUFFICIENT_EVIDENCE, UNREADABLE_DOCUMENT, INTERNAL).contains(code)) {
             return code;
         }
         if (statusCode == null) {

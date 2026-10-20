@@ -46,6 +46,24 @@ class QuestionTailorRequestSerializationTest {
             assertThat(json).contains("\"callbackUrl\":");
             assertThat(json).doesNotContain("expected_answer");
             assertThat(json).doesNotContain("based_on");
+            assertThat(json).doesNotContain("jobTitle");
         });
     }
+    @Test
+    void 일반_직군_직무명은_SOLO_profile과_MULTI_최상위에_직렬화한다() {
+        contextRunner.run(context -> {
+            ObjectMapper mapper = context.getBean(ObjectMapper.class);
+            var solo = QuestionTailorRequest.builder().profile(QuestionTailorRequest.Profile.builder()
+                    .jobRole("GEN_MARKETING").jobTitle("브랜드 마케터").build()).build();
+            var multi = QuestionTailorMultiRequest.builder()
+                    .jobRole("GEN_MARKETING").jobTitle("브랜드 마케터").build();
+            assertThat(mapper.readTree(mapper.writeValueAsString(solo)).path("profile").path("jobTitle").asText())
+                    .isEqualTo("브랜드 마케터");
+            assertThat(mapper.readTree(mapper.writeValueAsString(multi)).path("jobTitle").asText())
+                    .isEqualTo("브랜드 마케터");
+            assertThat(mapper.writeValueAsString(QuestionTailorMultiRequest.builder().jobRole("BACKEND").build()))
+                    .doesNotContain("jobTitle");
+        });
+    }
+
 }

@@ -27,6 +27,8 @@ public class QuestionTailorMultiRequest {
     private String userId;
     // 재작성 개인화 축. 둘 다 선택이라 없으면 비워 보낸다.
     private String jobRole;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String jobTitle;
     private String experienceLevel;
     // 기술 면접관. questionCount는 아래 questions 개수와 반드시 같아야 한다.
     private Persona techPersona;

@@ -17,6 +17,12 @@ public record MaterialErrorResponse(String message, List<MaterialError> errors) 
     /** Web 문구 표(비개발 06 §3.4)와 같은 사유 목록. */
     public enum Reason {
         JOB_ROLE_REQUIRED,
+        JOB_TITLE_REQUIRED,
+        JOB_TITLE_INVALID,
+        JOB_TITLE_NOT_ALLOWED,
+        MATERIAL_REQUIRED,
+        COVER_LETTER_INVALID,
+        COVER_LETTER_NOT_ALLOWED,
         NO_DOCUMENT,
         REQUIRED_DOC_MISSING,
         TOO_MANY_DOCUMENTS,

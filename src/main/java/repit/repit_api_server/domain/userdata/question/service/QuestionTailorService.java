@@ -40,6 +40,7 @@ import repit.repit_api_server.domain.userdata.question.repository.QuestionTailor
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 import repit.repit_api_server.global.response.UserResponse;
+import repit.repit_api_server.domain.metadata.support.JobRole;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -115,7 +116,7 @@ public class QuestionTailorService {
             return existing;
         }
 
-        return startTailor(interview, user.getMajor(), null);
+        return startTailor(interview, user.getMajor(), user.getJobTitle(), null);
     }
 
     /**
@@ -150,7 +151,7 @@ public class QuestionTailorService {
             deliverToChatServer(existing);
             return existing;
         }
-        return startTailor(interview, user.getMajor(), null);
+        return startTailor(interview, user.getMajor(), user.getJobTitle(), null);
     }
 
     private QuestionTailorEntity latestTailor(Long interviewId) {
@@ -163,7 +164,7 @@ public class QuestionTailorService {
      * @param userMajor 사용자 전공. 콜백에서 이어갈 때는 사용자 정보가 없어 종합 데이터에 실었던 값을 쓴다.
      * @param target    사이클을 기다리던 준비 건. 있으면 새로 만들지 않고 이 건을 채운다.
      */
-    private QuestionTailorEntity startTailor(InterviewEntity interview, String userMajor, QuestionTailorEntity target) {
+    private QuestionTailorEntity startTailor(InterviewEntity interview, String userMajor, String userJobTitle, QuestionTailorEntity target) {
         QuestionPoolService.DrawnSet drawn = questionPoolService.takeSet(
                 interview.getUserId(), interview.getMode(), interview.getInterviewId());
 
@@ -180,6 +181,18 @@ public class QuestionTailorService {
             return waitForCycle(interview, tailor);
         }
 
+        PersonaEntity representative = interview.getMode() == InterviewMode.MULTI
+                ? orderedPersonas(interview.getInterviewId()).getFirst()
+                : personaRepository.findById(interview.getPersonaId()).orElse(null);
+        String major = userMajor != null ? userMajor : drawn.major();
+        if (representative != null && representative.isInterviewSnapshot()) {
+            major = representative.getMajor().name();
+            userJobTitle = representative.getJobTitle();
+            if (drawn.major() != null && !major.equals(UserJobMajors.normalize(drawn.major()))) {
+                throw BusinessException.conflict("면접 직무와 분석 자료의 직무가 다릅니다. 자료 분석 후 새 면접을 시작해 주세요.");
+            }
+        }
+
         // 콜백이 접수 응답보다 먼저 올 수 있다. 분석 서버를 부르기 전에 이 건을 저장하고, 콜백 주소에 그 id를 실어
         // 보낸다 — 콜백은 접수 응답의 jobId 없이도 이 건을 찾는다. 이 메서드는 트랜잭션 밖에서 불려 저장이 곧바로
         // 커밋되므로, 분석 서버가 부르기 전에 다른 트랜잭션의 콜백 처리에서도 보인다.
@@ -190,12 +203,11 @@ public class QuestionTailorService {
         tailor.setSourceQuestions(drawn.questions());
         tailor = questionTailorRepository.save(tailor);
 
-        String major = userMajor != null ? userMajor : drawn.major();
         QuestionTailorAcceptedResponse accepted;
         try {
             accepted = interview.getMode() == InterviewMode.MULTI
-                    ? requestMultiTailor(interview, major, drawn, tailor.getTailorId())
-                    : requestSoloTailor(interview, major, drawn, tailor.getTailorId());
+                    ? requestMultiTailor(interview, major, userJobTitle, drawn, tailor.getTailorId())
+                    : requestSoloTailor(interview, major, userJobTitle, drawn, tailor.getTailorId());
         } catch (RuntimeException e) {
             // 접수되지 않은 새 건은 남기지 않는다. 남기면 면접을 다시 시작해도 이 건에 막혀 제한 시간까지 기다린다.
             // 그사이 콜백이 와서 결과가 들어갔으면 지우지 않는다. 사이클을 기다리던 건은 부르는 쪽이 실패로 닫는다.
@@ -222,9 +234,9 @@ public class QuestionTailorService {
                 .toUriString();
     }
 
-    private QuestionTailorAcceptedResponse requestSoloTailor(InterviewEntity interview, String major,
+    private QuestionTailorAcceptedResponse requestSoloTailor(InterviewEntity interview, String major, String jobTitle,
                                                              QuestionPoolService.DrawnSet drawn, Long tailorId) {
-        QuestionTailorRequest.Profile profile = resolveProfile(major, interview.getPersonaId());
+        QuestionTailorRequest.Profile profile = resolveProfile(major, jobTitle, interview.getPersonaId());
 
         return aiServerClient.tailorQuestions(QuestionTailorRequest.builder()
                 .interviewId(String.valueOf(interview.getInterviewId()))
@@ -266,7 +278,7 @@ public class QuestionTailorService {
      * 따라간다 — 면접관 2·3·4명이 각각 네·여섯·여덟 문항이다. 인원 범위는
      * {@link MultiInterviewPanel}에 있다.
      */
-    private QuestionTailorAcceptedResponse requestMultiTailor(InterviewEntity interview, String major,
+    private QuestionTailorAcceptedResponse requestMultiTailor(InterviewEntity interview, String major, String jobTitle,
                                                               QuestionPoolService.DrawnSet drawn, Long tailorId) {
         List<PersonaEntity> members = orderedPersonas(interview.getInterviewId());
         PersonaEntity tech = members.getFirst();
@@ -279,6 +291,7 @@ public class QuestionTailorService {
                 .interviewId(String.valueOf(interview.getInterviewId()))
                 .userId(String.valueOf(interview.getUserId()))
                 .jobRole(resolveJobRole(major))
+                .jobTitle(resolveJobTitle(major, jobTitle))
                 // persona.career는 면접관 설정이지 지원자 경력이 아니다. 지원자 경력은 아직 수집하지 않는다.
                 .experienceLevel(null)
                 .techPersona(toRequestPersona(tech, techQuestions.size()))
@@ -447,6 +460,11 @@ public class QuestionTailorService {
         return UserJobMajors.normalize(userMajor);
     }
 
+    private String resolveJobTitle(String userMajor, String jobTitle) {
+        return JobRole.find(resolveJobRole(userMajor)).map(JobRole::requiresJobTitle).orElse(false)
+                ? jobTitle : null;
+    }
+
     private QuestionTailorRequest.Question toRequestQuestion(TailoredQuestionResponse question) {
         return QuestionTailorRequest.Question.builder()
                 .id(question.getId())
@@ -462,7 +480,7 @@ public class QuestionTailorService {
      * 세 축이 모두 비면 분석 서버가 실패 콜백(422)을 보낸다.
      * 콜백까지 갔다 오면 면접 시작이 그만큼 늦어지므로 요청 전에 막는다.
      */
-    private QuestionTailorRequest.Profile resolveProfile(String userMajor, Long personaId) {
+    private QuestionTailorRequest.Profile resolveProfile(String userMajor, String jobTitle, Long personaId) {
         PersonaEntity persona = personaRepository.findById(personaId).orElse(null);
 
         String jobRole = resolveJobRole(userMajor);
@@ -475,6 +493,7 @@ public class QuestionTailorService {
 
         return QuestionTailorRequest.Profile.builder()
                 .jobRole(jobRole)
+                .jobTitle(resolveJobTitle(userMajor, jobTitle))
                 // persona.career는 면접관 설정이지 지원자 경력이 아니다. 지원자 경력은 아직 수집하지 않는다.
                 .experienceLevel(null)
                 .personaType(personaType)
@@ -655,7 +674,7 @@ public class QuestionTailorService {
             InterviewEntity interview = interviewRepository.findById(tailor.getInterviewId())
                     .orElseThrow(() -> BusinessException.notFound("면접을 찾을 수 없습니다"));
             // 콜백에는 사용자 정보가 없다. 재작성 축의 전공은 종합 데이터에 실었던 값으로 대신한다.
-            return startTailor(interview, null, tailor);
+            return startTailor(interview, null, null, tailor);
         } catch (RuntimeException e) {
             log.error("질문 사이클을 받았지만 면접 준비를 이어가지 못했습니다. tailorId={}, interviewId={}",
                     tailor.getTailorId(), tailor.getInterviewId(), e);

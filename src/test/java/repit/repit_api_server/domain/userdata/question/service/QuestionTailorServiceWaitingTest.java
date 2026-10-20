@@ -192,6 +192,30 @@ class QuestionTailorServiceWaitingTest {
         assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("BACKEND");
     }
 
+    /** 비개발 직군은 면접 스냅샷이 없다. 콜백에서 이어갈 때 직무는 종합 데이터(v2 jobRole)에서만 온다. */
+    @Test
+    void 비개발_직군_대기를_이어가면_종합_데이터의_직무를_재작성_축으로_보낸다() {
+        QuestionTailorEntity waiting = waitingTailor();
+        when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
+                .thenReturn(new QuestionPoolService.CycleOutcome(5L, 7L, InterviewMode.SOLO, true, false));
+        when(questionTailorRepository.findAllByUserIdAndModeAndStatus(7L, InterviewMode.SOLO, TailorStatus.WAITING))
+                .thenReturn(List.of(waiting));
+        when(questionTailorRepository.claimResume(eq(1L), any())).thenReturn(1);
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(PersonaEntity.builder()
+                .personaId(11L).role(Role.TECH).major(Major.QA_ENGINEER)
+                .type(Type.REALISTIC).tone(InterviewTone.DIRECT).build()));
+        when(questionPoolService.takeSet(7L, InterviewMode.SOLO, 3L))
+                .thenReturn(new QuestionPoolService.DrawnSet("profile-1", SET.questions(), null, "QA_ENGINEER"));
+
+        service.handleCycleCallback(QuestionCycleCallbackRequest.builder().jobId("cycle-job").status("succeeded").build(), 5L, 1);
+
+        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(sent.capture());
+        assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("QA_ENGINEER");
+        // 비개발 IT 직무는 직무명을 받지 않는다.
+        assertThat(sent.getValue().getProfile().getJobTitle()).isNull();
+    }
+
     @Test
     void 다른_쪽이_먼저_이어간_준비는_건드리지_않는다() {
         when(questionPoolService.applyCycleResult(any(), eq(5L), eq(1)))
@@ -342,4 +366,21 @@ class QuestionTailorServiceWaitingTest {
         assertThat(waiting.getQuestions()).isNull();
         verify(sseNotifier).sendFinal(eq("profile-1"), eq(SseNotifier.INTERVIEW_PREPARATION_FAILED), any());
     }
+    @Test
+    void 일반_대기_재개는_사용자_변경값_대신_면접_스냅샷_직무명을_쓴다() {
+        var snapshot = PersonaEntity.builder().personaId(11L).role(Role.TECH).major(Major.GEN_MARKETING)
+                .jobTitle("시작 시점 마케터").interviewSnapshot(true)
+                .type(Type.REALISTIC).tone(InterviewTone.DIRECT).build();
+        when(personaRepository.findById(11L)).thenReturn(Optional.of(snapshot));
+        var general = new QuestionPoolService.DrawnSet("profile-1", SET.questions(), null, "GEN_MARKETING");
+        when(questionPoolService.takeSet(7L, InterviewMode.SOLO, 3L)).thenReturn(WAITING, general);
+        when(questionPoolService.settled(7L, InterviewMode.SOLO)).thenReturn(true);
+        when(questionTailorRepository.claimResume(eq(1L), any())).thenReturn(1);
+        service.requestTailor(interview(), user());
+        ArgumentCaptor<QuestionTailorRequest> sent = ArgumentCaptor.forClass(QuestionTailorRequest.class);
+        verify(aiServerClient).tailorQuestions(sent.capture());
+        assertThat(sent.getValue().getProfile().getJobRole()).isEqualTo("GEN_MARKETING");
+        assertThat(sent.getValue().getProfile().getJobTitle()).isEqualTo("시작 시점 마케터");
+    }
+
 }

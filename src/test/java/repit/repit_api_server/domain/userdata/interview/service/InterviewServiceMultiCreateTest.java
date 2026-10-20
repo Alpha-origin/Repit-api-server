@@ -73,7 +73,7 @@ class InterviewServiceMultiCreateTest {
     void setUp() {
         service = new InterviewService(interviewRepository, questionRepository, chatServerClient,
                 answerRepository, personaRepository, questionTailorService,
-                interviewPersonaRepository, null, null);
+                interviewPersonaRepository, null, null, org.mockito.Mockito.mock(InterviewJobSnapshotService.class));
 
 
         when(interviewRepository.save(any(InterviewEntity.class))).thenAnswer(invocation -> {
