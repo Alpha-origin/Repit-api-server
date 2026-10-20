@@ -8,6 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.company.dto.CompanySnapshot;
 import repit.repit_api_server.domain.company.service.CompanySnapshotFactory;
 import repit.repit_api_server.domain.metadata.service.AnalysisLaunchService;
+import repit.repit_api_server.domain.metadata.support.JobRole;
+import repit.repit_api_server.domain.userdata.persona.support.UserJobMajors;
 import repit.repit_api_server.domain.userdata.interview.dto.request.CreateInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.request.SaveInterviewRequest;
 import repit.repit_api_server.domain.userdata.interview.dto.response.ChatAnswerResponse;
@@ -232,9 +234,7 @@ public class InterviewService {
         if (!authUser.id().equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 시작할 수 있습니다.");
         }
-        if (repit.repit_api_server.domain.metadata.support.JobRole.find(
-                repit.repit_api_server.domain.userdata.persona.support.UserJobMajors.normalize(authUser.user().getMajor()))
-                .map(repit.repit_api_server.domain.metadata.support.JobRole::requiresJobTitle).orElse(false)) {
+        if (requiresJobSnapshot(authUser)) {
             interview = interviewJobSnapshotService.capture(authUser, interviewId);
         }
         // 쓸 수 있는 종합 데이터가 없으면(예전 분석만 있거나, 분석 서버가 지금 것을 거부했으면) 종합 데이터부터 요청한다.
@@ -257,11 +257,23 @@ public class InterviewService {
         if (!authUser.id().equals(interview.getUserId())) {
             throw BusinessException.forbidden("본인의 면접만 다시 준비할 수 있습니다.");
         }
+        // 질문을 다시 만드는 재시도는 처음 시작과 같은 직무 고정을 거친다. 이미 고정됐으면 그대로 둔다.
+        if (requiresJobSnapshot(authUser)) {
+            // 콜백을 기다리다 시간만 지난 건이 실패로 닫혀야 질문을 다시 만드는 재시도인지 알 수 있다.
+            questionTailorService.expireTimedOutPreparation(interviewId);
+            interview = interviewJobSnapshotService.captureForRetry(authUser, interviewId);
+        }
 
         // 처음 시작할 때 종합 데이터를 요청하지 못했거나, 그 사이 분석 서버가 지금 것을 거부했으면 여기서 요청한다.
         analysisLaunchService.launchIfMissing(authUser);
         QuestionTailorEntity tailor = questionTailorService.retryPreparation(interview, authUser.user());
         return InterviewPrepareResponse.of(tailor, interview);
+    }
+
+    /** 직무명을 고정해야 하는 직무(일반 직군)인지. 고정은 면접 전용 면접관 복제로 한다. */
+    private static boolean requiresJobSnapshot(AuthUser authUser) {
+        return JobRole.find(UserJobMajors.normalize(authUser.user().getMajor()))
+                .map(JobRole::requiresJobTitle).orElse(false);
     }
 
     /**

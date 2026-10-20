@@ -11,6 +11,9 @@ import repit.repit_api_server.domain.userdata.interview.repository.*;
 import repit.repit_api_server.domain.userdata.persona.entity.PersonaEntity;
 import repit.repit_api_server.domain.userdata.persona.entity.enums.*;
 import repit.repit_api_server.domain.userdata.persona.repository.PersonaRepository;
+import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQuestionResponse;
+import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
+import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionTailorRepository;
 import repit.repit_api_server.global.auth.AuthUser;
 import repit.repit_api_server.global.response.UserResponse;
@@ -105,5 +108,61 @@ class InterviewJobSnapshotServiceTest {
         when(interviews.findForJobSnapshot(1L)).thenReturn(Optional.of(interview));
         assertThatThrownBy(() -> service.capture(user("마케터"), 1L)).hasMessageContaining("본인의");
         verifyNoInteractions(personas, members);
+    }
+
+    QuestionTailorEntity tailor(TailorStatus status, boolean withQuestions) {
+        return QuestionTailorEntity.builder().interviewId(1L).userId(7L).status(status).chatDelivered(false)
+                .questions(withQuestions ? List.of(TailoredQuestionResponse.builder().id(1).question("질문").build()) : List.of())
+                .build();
+    }
+
+    void givenSharedPersona(InterviewEntity interview) {
+        when(interviews.findForJobSnapshot(1L)).thenReturn(Optional.of(interview));
+        when(personas.findById(5L)).thenReturn(Optional.of(shared()));
+        lenient().when(personas.save(any())).thenAnswer(inv -> ((PersonaEntity) inv.getArgument(0)).toBuilder().personaId(11L).build());
+    }
+
+    @Test void 질문_생성이_실패한_재시도는_스냅샷이_없으면_지금_직무로_면접_전용_면접관을_만든다() {
+        InterviewEntity interview = interview(1L);
+        givenSharedPersona(interview);
+        when(tailors.findTopByInterviewIdOrderByCreatedAtDesc(1L)).thenReturn(Optional.of(tailor(TailorStatus.FAILED, false)));
+        service.captureForRetry(user("퍼포먼스 마케터"), 1L);
+        var saved = org.mockito.ArgumentCaptor.forClass(PersonaEntity.class);
+        verify(personas).save(saved.capture());
+        assertThat(saved.getValue().getJobTitle()).isEqualTo("퍼포먼스 마케터");
+        assertThat(interview.getPersonaId()).isEqualTo(11L);
+    }
+
+    @Test void 처음_시작은_실패한_준비가_있으면_스냅샷을_만들지_않는다() {
+        InterviewEntity interview = interview(1L);
+        when(interviews.findForJobSnapshot(1L)).thenReturn(Optional.of(interview));
+        when(tailors.findTopByInterviewIdOrderByCreatedAtDesc(1L)).thenReturn(Optional.of(tailor(TailorStatus.FAILED, false)));
+        service.capture(user("퍼포먼스 마케터"), 1L);
+        verify(personas, never()).save(any());
+        assertThat(interview.getPersonaId()).isEqualTo(5L);
+    }
+
+    @Test void 채팅_서버_전달만_실패한_재시도는_정해진_질문을_건드리지_않는다() {
+        InterviewEntity interview = interview(1L);
+        when(interviews.findForJobSnapshot(1L)).thenReturn(Optional.of(interview));
+        when(tailors.findTopByInterviewIdOrderByCreatedAtDesc(1L)).thenReturn(Optional.of(tailor(TailorStatus.SUCCEEDED, true)));
+        service.captureForRetry(user("퍼포먼스 마케터"), 1L);
+        verify(personas, never()).save(any());
+    }
+
+    @Test void 준비_중인_면접의_재시도는_스냅샷을_만들지_않는다() {
+        InterviewEntity interview = interview(1L);
+        when(interviews.findForJobSnapshot(1L)).thenReturn(Optional.of(interview));
+        when(tailors.findTopByInterviewIdOrderByCreatedAtDesc(1L)).thenReturn(Optional.of(tailor(TailorStatus.PENDING, false)));
+        service.captureForRetry(user("퍼포먼스 마케터"), 1L);
+        verify(personas, never()).save(any());
+    }
+
+    @Test void 재시도도_직무명이_없으면_먼저_저장하라고_알린다() {
+        InterviewEntity interview = interview(1L);
+        givenSharedPersona(interview);
+        when(tailors.findTopByInterviewIdOrderByCreatedAtDesc(1L)).thenReturn(Optional.of(tailor(TailorStatus.FAILED, false)));
+        assertThatThrownBy(() -> service.captureForRetry(user(null), 1L)).hasMessageContaining("직무명을 먼저 저장");
+        verify(personas, never()).save(any());
     }
 }

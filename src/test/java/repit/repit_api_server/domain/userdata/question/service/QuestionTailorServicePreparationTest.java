@@ -31,6 +31,7 @@ import repit.repit_api_server.domain.userdata.question.dto.response.TailoredQues
 import repit.repit_api_server.domain.userdata.question.entity.QuestionTailorEntity;
 import repit.repit_api_server.domain.userdata.question.entity.enums.TailorStatus;
 import repit.repit_api_server.domain.userdata.question.preparation.FailureStage;
+import repit.repit_api_server.domain.userdata.question.preparation.PreparationState;
 import repit.repit_api_server.domain.userdata.question.repository.QuestionTailorRepository;
 import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
@@ -294,6 +295,30 @@ class QuestionTailorServicePreparationTest {
         assertThat(stale.getStatus()).isEqualTo(TailorStatus.FAILED);
         // 1:1은 원질문이 폴백으로 들어차므로, 남은 일은 채팅 서버로 넘기는 것뿐이다.
         verify(chatInterviewHandoffService).deliver(stale);
+    }
+
+    /** 일반 직군 재시도는 면접관 고정 여부를 정하기 전에 시간이 지난 건부터 닫는다. 다시 만들 질문인지가 여기서 갈린다. */
+    @Test
+    void 재시도_전_정리는_시간이_지난_N대1을_질문_생성_실패로_닫는다() {
+        QuestionTailorEntity stale = tailor(InterviewMode.MULTI, TailorStatus.PENDING);
+        givenLatest(stale);
+
+        service.expireTimedOutPreparation(3L);
+
+        assertThat(stale.getStatus()).isEqualTo(TailorStatus.FAILED);
+        assertThat(PreparationState.of(stale).failureStage()).isEqualTo(FailureStage.QUESTION_GENERATION);
+    }
+
+    @Test
+    void 재시도_전_정리는_아직_시간이_남은_건을_건드리지_않는다() {
+        QuestionTailorEntity fresh = tailor(InterviewMode.MULTI, TailorStatus.PENDING);
+        fresh.setCreatedAt(LocalDateTime.now());
+        givenLatest(fresh);
+
+        service.expireTimedOutPreparation(3L);
+
+        assertThat(fresh.getStatus()).isEqualTo(TailorStatus.PENDING);
+        verify(questionTailorRepository, never()).claimExpiration(anyLong());
     }
 
     @Test
