@@ -623,9 +623,41 @@ class FeedbackServiceSoloRequestTest {
         when(answerRepository.findAllByInterviewIdOrderByAnswerIdAsc(3L)).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.requestFeedback(USER_ID, 3L))
-                .isInstanceOf(BusinessException.class)
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT))
                 .hasMessageContaining("면접이 아직 끝나지 않았습니다");
 
         verify(aiServerClient, never()).requestSoloFeedback(any());
+    }
+
+    @Test
+    void 중단된_면접은_수동_요청도_409로_거절한다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.ABANDONED, 5L)));
+
+        assertThatThrownBy(() -> service.requestFeedback(USER_ID, 3L))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining("중단된 면접은 피드백을 생성하지 않습니다");
+
+        verify(aiServerClient, never()).requestSoloFeedback(any());
+    }
+
+    @Test
+    void 중단된_면접은_실패한_피드백이_있어도_재채점하지_않는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.ABANDONED, 5L)));
+        FeedbackEntity failed = previousFeedback(FeedbackStatus.FAILED, LocalDateTime.now());
+        when(feedbackRepository.findTopByInterviewIdOrderByCreatedAtDesc(3L)).thenReturn(Optional.of(failed));
+
+        assertThatThrownBy(() -> service.requestFeedback(USER_ID, 3L))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining("중단된 면접은 피드백을 생성하지 않습니다");
+
+        verify(feedbackRepository, never()).save(any());
+        verify(aiServerClient, never()).requestSoloFeedback(any());
+    }
+
+    @Test
+    void 채점_요청에_면접_상태를_싣는다() {
+        service.requestFeedback(USER_ID, 3L);
+
+        assertThat(captureRequest().getInterviewStatus()).isEqualTo("COMPLETED");
     }
 }

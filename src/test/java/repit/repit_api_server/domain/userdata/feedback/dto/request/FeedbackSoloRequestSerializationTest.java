@@ -1,5 +1,6 @@
 package repit.repit_api_server.domain.userdata.feedback.dto.request;
 
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
@@ -25,6 +26,7 @@ class FeedbackSoloRequestSerializationTest {
 
             LocalDateTime createdAt = LocalDateTime.of(2026, 8, 18, 10, 0, 0);
             FeedbackSoloRequest request = FeedbackSoloRequest.builder()
+                    .interviewStatus("COMPLETED")
                     .sessionId("sess-1")
                     .interviewId("1")
                     .userId("7")
@@ -66,4 +68,23 @@ class FeedbackSoloRequestSerializationTest {
         });
     }
 
+    @Test
+    void 면접_상태는_interviewStatus_키로_직렬화된다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+
+            FeedbackSoloRequest request = FeedbackSoloRequest.builder()
+                    .interviewStatus("COMPLETED")
+                    .sessionId("sess-1")
+                    .interviewId("1")
+                    .userId("7")
+                    .questions(List.of())
+                    .answers(List.of())
+                    .build();
+
+            JsonNode json = objectMapper.readTree(objectMapper.writeValueAsString(request));
+
+            assertThat(json.get("interviewStatus").stringValue()).isEqualTo("COMPLETED");
+        });
+    }
 }
