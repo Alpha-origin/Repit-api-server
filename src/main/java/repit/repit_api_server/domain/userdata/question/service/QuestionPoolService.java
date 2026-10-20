@@ -91,7 +91,8 @@ public class QuestionPoolService {
      * 꺼낸 세트와 그 세트가 나온 종합 데이터.
      *
      * @param questions 비어 있으면(null) 꺼낼 세트가 없어 다음 사이클을 기다려야 한다.
-     * @param major     종합 데이터를 만들 때 실어 보낸 전공. 사용자 정보가 없는 콜백에서 재작성 축으로 쓴다.
+     * @param major     종합 데이터를 만들 때 실어 보낸 직무(v1은 major, v2는 jobRole). 사용자 정보가 없는 콜백에서
+     *                  재작성 축으로 쓰고, 면접 직무와 자료 직무가 같은지 가리는 데도 쓴다.
      */
     public record DrawnSet(String profileJobId, List<TailoredQuestionResponse> questions,
                            Object projectSummary, String major) {
@@ -555,9 +556,22 @@ public class QuestionPoolService {
                     .basedOn(question.getBasedOn())
                     .build());
         }
-        Object major = resultField(profile, "profile") instanceof Map<?, ?> body ? body.get("major") : null;
-        return new DrawnSet(profile.getJobId(), questions, resultField(profile, "projectSummary"),
-                major instanceof String text ? text : null);
+        return new DrawnSet(profile.getJobId(), questions, resultField(profile, "projectSummary"), profileMajor(profile));
+    }
+
+    /**
+     * 종합 데이터에 실었던 직무. 개발 직군 결과(schemaVersion 1)는 major에, 비개발·일반 직군 결과(schemaVersion 2)는
+     * jobRole에 담겨 온다. major만 읽으면 v2 결과에서는 늘 비어, 콜백에서 이어갈 때 재작성 축이 빠지고
+     * 면접 직무와 자료 직무가 달라도 가려내지 못한다.
+     */
+    private String profileMajor(AnalysisDataEntity profile) {
+        if (!(resultField(profile, "profile") instanceof Map<?, ?> body)) {
+            return null;
+        }
+        if (body.get("major") instanceof String major && !major.isBlank()) {
+            return major;
+        }
+        return body.get("jobRole") instanceof String jobRole && !jobRole.isBlank() ? jobRole : null;
     }
 
     private Object resultField(AnalysisDataEntity data, String key) {

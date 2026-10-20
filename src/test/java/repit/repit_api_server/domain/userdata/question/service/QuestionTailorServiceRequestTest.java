@@ -554,4 +554,23 @@ class QuestionTailorServiceRequestTest {
         verify(aiServerClient, never()).tailorQuestions(any());
     }
 
+    /** 일반 직군 자료(v2)의 직무는 jobRole에서 온다. 다른 일반 직군 자료로 만든 세트로 면접을 열지 않는다. */
+    @Test
+    void 일반_직군_스냅샷과_v2_자료_직무가_다르면_409로_막는다() {
+        when(user.getMajor()).thenReturn("MAJOR_GEN_MARKETING");
+        when(personaRepository.findById(any())).thenReturn(Optional.of(PersonaEntity.builder()
+                .personaId(11L).role(Role.TECH).major(Major.GEN_MARKETING)
+                .jobTitle("마케터").interviewSnapshot(true).type(Type.REALISTIC).tone(InterviewTone.GENTLE).build()));
+        when(questionPoolService.takeSet(eq(7L), any(), eq(3L))).thenReturn(
+                new QuestionPoolService.DrawnSet("analysis-1", List.of(), null, "GEN_HR_ADMIN"));
+
+        assertThatThrownBy(() -> service.requestTailor(interview(InterviewMode.SOLO), user))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("직무가 다릅니다")
+                .extracting(e -> ((BusinessException) e).getStatus())
+                .isEqualTo(HttpStatus.CONFLICT);
+        verify(questionTailorRepository, never()).save(any());
+        verify(aiServerClient, never()).tailorQuestions(any());
+    }
+
 }
