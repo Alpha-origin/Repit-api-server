@@ -76,6 +76,8 @@ class FeedbackCallbackPersistenceTest {
     @PersistenceContext
     private EntityManager entityManager;
 
+    private static final String FOLLOW_UP_QUESTION = "캐시와 DB가 어긋나면 어느 쪽을 기준으로 맞추시겠습니까?";
+
     private final String sessionId = UUID.randomUUID().toString();
     private final String jobId = UUID.randomUUID().toString();
 
@@ -107,7 +109,8 @@ class FeedbackCallbackPersistenceTest {
                 "901", 11L, "Redis를 캐시로 두신 이유는?", "기술 선택의 근거",
                 "조회가 쓰기보다 많아서요.", "지연을 수치로 제시한다.",
                 List.of("p99 지연을 근거로 든 점"), List.of("무효화 전략 미언급"),
-                "부작용까지는 못 짚었습니다.", null);
+                "부작용까지는 못 짚었습니다.", null,
+                JsonMapper.shared().valueToTree(FOLLOW_UP_QUESTION));
 
         return new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech, hr), List.of(item), null), null);
@@ -167,6 +170,28 @@ class FeedbackCallbackPersistenceTest {
         assertThat(item.getStrengths()).containsExactly("p99 지연을 근거로 든 점");
         assertThat(item.getImprovements()).containsExactly("무효화 전략 미언급");
         assertThat(item.getComment()).isEqualTo("부작용까지는 못 짚었습니다.");
+        assertThat(item.getFollowUpQuestion()).isEqualTo(FOLLOW_UP_QUESTION);
+    }
+
+    /** 구버전 분석 서버는 예상 꼬리질문을 보내지 않는다. 그래도 문항은 저장되고 그 칸만 빈다. */
+    @Test
+    void 예상_꼬리질문이_없는_콜백도_문항이_저장된다() {
+        FeedbackEntity accepted = givenAccepted();
+        FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item(
+                "901", 11L, "질문", "의도", "답변", "모범답변", List.of(), List.of(), "총평", null, null);
+        FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
+                70, 70, 70, "요약", List.of(), List.of(), List.of(), 1, 1, null);
+
+        feedbackService.handleCallback(new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
+                new FeedbackCallbackRequest.Result(overall, null, List.of(item), null), null));
+        flushAndClear();
+
+        assertThat(feedbackRepository.findById(accepted.getFeedbackId()).orElseThrow().getStatus())
+                .isEqualTo(FeedbackStatus.SUCCEEDED);
+        List<FeedbackItemEntity> items =
+                feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(accepted.getFeedbackId());
+        assertThat(items).hasSize(1);
+        assertThat(items.getFirst().getFollowUpQuestion()).isNull();
     }
 
     @Test
@@ -216,7 +241,7 @@ class FeedbackCallbackPersistenceTest {
                 12L, "HR", null, "담당 답변 없음", List.of(), List.of(), 0, 0, null);
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item(
                 "901", 11L, "질문", "의도", "답변", "모범답변", List.of(), List.of(), "총평",
-                JsonMapper.shared().valueToTree(axisScores));
+                JsonMapper.shared().valueToTree(axisScores), null);
 
         feedbackService.handleCallback(new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech, hr), List.of(item), null), null));
@@ -274,8 +299,10 @@ class FeedbackCallbackPersistenceTest {
         flushAndClear();
 
         // 지우고 다시 넣는다. 지운 것이 새로 넣은 것보다 늦게 반영되면 방금 넣은 행까지 사라진다.
-        assertThat(feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(accepted.getFeedbackId()))
-                .hasSize(1);
+        List<FeedbackItemEntity> items =
+                feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(accepted.getFeedbackId());
+        assertThat(items).hasSize(1);
+        assertThat(items.getFirst().getFollowUpQuestion()).isEqualTo(FOLLOW_UP_QUESTION);
         assertThat(feedbackPersonaRepository.findAllByFeedbackIdOrderBySortOrderAsc(accepted.getFeedbackId()))
                 .hasSize(2);
     }

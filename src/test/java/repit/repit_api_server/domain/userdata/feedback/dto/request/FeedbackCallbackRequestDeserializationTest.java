@@ -7,6 +7,8 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -162,6 +164,41 @@ class FeedbackCallbackRequestDeserializationTest {
               }
             }
             """;
+
+    // 예상 꼬리질문은 새로 생긴 필드다. 문항마다 문자열로 오거나, 구버전 분석 서버라 빠지거나, 계약과 다른 모양으로 올 수 있다.
+    private static final String FOLLOW_UP_CALLBACK = """
+            {
+              "jobId": "job-6",
+              "sessionId": "sess-6",
+              "status": "succeeded",
+              "result": {
+                "overall": { "totalScore": 70 },
+                "feedbacks": [
+                  { "questionId": "62", "followUpQuestion": "429 응답의 Retry-After와 전체 시간 예산을 어떻게 함께 적용하겠습니까?" },
+                  { "questionId": "63" },
+                  { "questionId": "64", "followUpQuestion": { "text": "질문" } }
+                ]
+              }
+            }
+            """;
+
+    @Test
+    void 예상_꼬리질문을_읽고_빠지거나_모양이_달라도_본문은_읽힌다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+
+            FeedbackCallbackRequest request =
+                    objectMapper.readValue(FOLLOW_UP_CALLBACK, FeedbackCallbackRequest.class);
+
+            List<FeedbackCallbackRequest.Item> feedbacks = request.getResult().getFeedbacks();
+            assertThat(feedbacks).hasSize(3);
+            assertThat(feedbacks.getFirst().getQuestionId()).isEqualTo("62");
+            assertThat(feedbacks.getFirst().getFollowUpQuestion().stringValue())
+                    .isEqualTo("429 응답의 Retry-After와 전체 시간 예산을 어떻게 함께 적용하겠습니까?");
+            assertThat(feedbacks.get(1).getFollowUpQuestion()).isNull();
+            assertThat(feedbacks.get(2).getFollowUpQuestion().isObject()).isTrue();
+        });
+    }
 
     @Test
     void 점수_산출_근거를_읽는다() {

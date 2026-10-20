@@ -12,6 +12,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import repit.repit_api_server.domain.userdata.answer.repository.AnswerRepository;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FeedbackResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
+import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.enums.FeedbackStatus;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackItemRepository;
 import repit.repit_api_server.domain.userdata.feedback.repository.FeedbackPersonaRepository;
@@ -116,6 +117,21 @@ class FeedbackServiceGetOneTest {
         FeedbackResponse response = service.getFeedback(USER_ID, 100L);
 
         assertThat(response.getMode()).isEqualTo(InterviewMode.SOLO);
+    }
+
+    /** 문항마다 저장된 예상 꼬리질문이 그대로 나간다. 만들지 못한 문항은 비어 있고, 웹은 그때 안내 문구를 보여준다. */
+    @Test
+    void 문항마다_예상_꼬리질문이_나간다() {
+        when(interviewRepository.findById(100L)).thenReturn(Optional.of(interview(InterviewMode.SOLO)));
+        when(feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(10L)).thenReturn(List.of(
+                item("62", 0, "429 응답의 Retry-After를 어떻게 적용하겠습니까?"),
+                item("63", 1, null)));
+
+        FeedbackResponse response = service.getFeedback(USER_ID, 100L);
+
+        assertThat(response.getFeedbacks()).extracting("questionId", "followUpQuestion").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("62", "429 응답의 Retry-After를 어떻게 적용하겠습니까?"),
+                org.assertj.core.groups.Tuple.tuple("63", null));
     }
 
     @Test
@@ -296,6 +312,15 @@ class FeedbackServiceGetOneTest {
                 .level(level)
                 .career(5)
                 .gender(Gender.MALE)
+                .build();
+    }
+
+    private FeedbackItemEntity item(String questionId, int sortOrder, String followUpQuestion) {
+        return FeedbackItemEntity.builder()
+                .feedbackId(10L)
+                .questionId(questionId)
+                .sortOrder(sortOrder)
+                .followUpQuestion(followUpQuestion)
                 .build();
     }
 }

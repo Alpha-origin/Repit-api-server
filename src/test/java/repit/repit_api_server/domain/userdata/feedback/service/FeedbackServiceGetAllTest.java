@@ -120,6 +120,9 @@ class FeedbackServiceGetAllTest {
         assertThat(responses.get(0).getFeedbacks()).extracting("questionId").containsExactly("q-1", "q-2");
         assertThat(responses.get(1).getPersonas()).extracting("personaRole").containsExactly("인사 담당");
         assertThat(responses.get(1).getFeedbacks()).extracting("questionId").containsExactly("q-3");
+        // 단건 조회와 같은 변환을 거쳐 예상 꼬리질문도 문항마다 그대로 나간다.
+        assertThat(responses.get(0).getFeedbacks()).extracting("followUpQuestion")
+                .containsExactly("q-1의 꼬리질문", "q-2의 꼬리질문");
     }
 
     @Test
@@ -299,6 +302,7 @@ class FeedbackServiceGetAllTest {
                 .feedbackId(feedbackId)
                 .questionId(questionId)
                 .sortOrder(0)
+                .followUpQuestion(questionId + "의 꼬리질문")
                 .build();
     }
 }
