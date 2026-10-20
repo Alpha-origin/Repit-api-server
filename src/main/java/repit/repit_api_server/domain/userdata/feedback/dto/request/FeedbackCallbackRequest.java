@@ -90,6 +90,9 @@ public class FeedbackCallbackRequest {
         // 이 문항의 축별 점수(0..100). 해당 없는 축은 비어 있다. 예: {"INTENT": 88, "ACCURACY": null}
         // 종합처럼 [{axis, score}]로 올 수도 있어 모양을 가리지 않고 받는다.
         private JsonNode axisScores;
+        // 이 답변에 이어질 예상 꼬리질문 한 문장. 새로 생긴 필드라 구버전 분석 서버는 보내지 않는다.
+        // 문자열이 아닌 값이 와도 본문 전체를 잃지 않도록 모양을 가리지 않고 받는다. 푸는 것은 FeedbackService가 한다.
+        private JsonNode followUpQuestion;
     }
 
     @Getter

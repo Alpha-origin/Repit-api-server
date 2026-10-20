@@ -62,4 +62,8 @@ public class FeedbackItemEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private Map<String, Integer> axisScores;
+
+    // 이 답변에 이어질 예상 꼬리질문. 이전 피드백이나 만들지 못한 문항은 값이 없다.
+    @Column(columnDefinition = "TEXT")
+    private String followUpQuestion;
 }

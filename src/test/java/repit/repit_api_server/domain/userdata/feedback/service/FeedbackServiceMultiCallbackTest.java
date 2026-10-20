@@ -111,7 +111,7 @@ class FeedbackServiceMultiCallbackTest {
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item(
                 "2", 11L, "Redis를 캐시로 두신 이유는?", "기술 선택의 근거",
                 "조회가 쓰기보다 많아서요.", "지연을 수치로 제시한다.",
-                List.of("p99 지연을 근거로 든 점"), List.of("무효화 전략 미언급"), "부작용까지는 못 짚었습니다.", null);
+                List.of("p99 지연을 근거로 든 점"), List.of("무효화 전략 미언급"), "부작용까지는 못 짚었습니다.", null, null);
 
         return new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech, hr, ceo), List.of(item), null), null);
@@ -253,7 +253,7 @@ class FeedbackServiceMultiCallbackTest {
         FeedbackCallbackRequest request = callback();
         FeedbackCallbackRequest.Item stray = new FeedbackCallbackRequest.Item(
                 "903", 99L, "팀에서 갈등이 있었다면?", "협업 태도",
-                null, "사실과 대응을 나눠 말한다.", List.of(), List.of(), "답하지 않았습니다.", null);
+                null, "사실과 대응을 나눠 말한다.", List.of(), List.of(), "답하지 않았습니다.", null, null);
         FeedbackCallbackRequest withStray = new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(request.getResult().getOverall(),
                         request.getResult().getPersonas(), List.of(stray), null),
@@ -298,7 +298,7 @@ class FeedbackServiceMultiCallbackTest {
 
     private FeedbackCallbackRequest.Item item(String questionId, Long personaId) {
         return new FeedbackCallbackRequest.Item(questionId, personaId, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평", null);
+                "답변", "모범답변", List.of(), List.of(), "총평", null, null);
     }
 
     private FeedbackCallbackRequest.Persona persona(Long personaId, Integer score) {
@@ -420,7 +420,7 @@ class FeedbackServiceMultiCallbackTest {
         axisScores.put("INTENT", 88);
         axisScores.put("ACCURACY", null);
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item("2", 11L, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores));
+                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores), null);
 
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech), List.of(item), null), null));
@@ -475,7 +475,7 @@ class FeedbackServiceMultiCallbackTest {
         Map<String, Integer> axisScores = new LinkedHashMap<>();
         axisScores.put("DEPTH", -5);
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item("2", 11L, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores));
+                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores), null);
 
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(persona(11L, 78)), List.of(item), null), null));
@@ -500,5 +500,38 @@ class FeedbackServiceMultiCallbackTest {
 
         verify(feedbackPersonaRepository).saveAll(savedPersonas.capture());
         assertThat(savedPersonas.getValue().get(1).getScore()).isNull();
+    }
+
+    /**
+     * 예상 꼬리질문은 앞뒤 공백을 뺀 1~200자 문자열만 남긴다. 글자 수는 분석 서버처럼 code point로 센다.
+     * 받아들일 수 없는 값은 그 문항의 꼬리질문만 비우고 문항 평가는 그대로 저장한다. 길다고 잘라 넣지 않는다.
+     */
+    @Test
+    void 예상_꼬리질문은_1에서_200자_문자열만_남기고_나머지는_비운다() {
+        when(feedbackRepository.findByJobId("job-1")).thenReturn(Optional.of(acceptedFeedback()));
+        givenInterviewMembers();
+        String emoji200 = "🙂".repeat(200);
+
+        service.handleCallback(callbackWith(List.of(persona(11L, 78)), List.of(
+                followUp("1", json("  재시도 간격은 어떻게 정하시겠습니까?  ")),
+                followUp("2", json("   ")),
+                followUp("3", json("가".repeat(201))),
+                followUp("4", json(emoji200)),
+                followUp("5", json(Map.of("text", "질문"))),
+                followUp("6", json(42)),
+                followUp("7", null))));
+
+        verify(feedbackItemRepository).saveAll(savedItems.capture());
+        assertThat(savedItems.getValue())
+                .extracting(FeedbackItemEntity::getFollowUpQuestion)
+                .containsExactly("재시도 간격은 어떻게 정하시겠습니까?", null, null, emoji200, null, null, null);
+        assertThat(savedItems.getValue())
+                .extracting(FeedbackItemEntity::getComment)
+                .containsOnly("총평");
+    }
+
+    private FeedbackCallbackRequest.Item followUp(String questionId, JsonNode followUpQuestion) {
+        return new FeedbackCallbackRequest.Item(questionId, 11L, "질문", "의도",
+                "답변", "모범답변", List.of(), List.of(), "총평", null, followUpQuestion);
     }
 }
