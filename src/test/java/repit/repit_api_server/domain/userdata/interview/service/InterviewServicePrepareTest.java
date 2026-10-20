@@ -125,4 +125,29 @@ class InterviewServicePrepareTest {
                 .interviewId(INTERVIEW_ID).userId(USER_ID).sessionId("session-1").build()));
         assertThat(service.prepareInterview(user, INTERVIEW_ID).getCompany()).isNull();
     }
+
+    @Test
+    void 일반_직군의_준비_재시도는_직무_고정을_거친_면접으로_다시_준비한다() {
+        InterviewEntity snapshotted = InterviewEntity.builder().interviewId(INTERVIEW_ID).userId(USER_ID)
+                .sessionId("session-1").personaId(11L).build();
+        AuthUser user = userWithMajor("MAJOR_GEN_MARKETING");
+        when(snapshotService.captureForRetry(user, INTERVIEW_ID)).thenReturn(snapshotted);
+        when(questionTailorService.retryPreparation(any(), any())).thenReturn(QuestionTailorEntity.builder()
+                .interviewId(INTERVIEW_ID).userId(USER_ID).status(TailorStatus.PENDING).build());
+
+        service.retryPreparation(user, INTERVIEW_ID);
+
+        verify(snapshotService).captureForRetry(user, INTERVIEW_ID);
+        verify(questionTailorService).retryPreparation(snapshotted, user.user());
+    }
+
+    @Test
+    void 개발과_IT_비개발_직무의_준비_재시도는_직무_고정을_하지_않는다() {
+        when(questionTailorService.retryPreparation(any(), any())).thenReturn(QuestionTailorEntity.builder()
+                .interviewId(INTERVIEW_ID).userId(USER_ID).status(TailorStatus.PENDING).build());
+        for (String major : new String[]{"MAJOR_BACKEND", "MAJOR_QA_ENGINEER", null}) {
+            service.retryPreparation(userWithMajor(major), INTERVIEW_ID);
+        }
+        verify(snapshotService, never()).captureForRetry(any(), any());
+    }
 }
