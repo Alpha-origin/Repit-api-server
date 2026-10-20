@@ -39,6 +39,7 @@ import repit.repit_api_server.global.client.AiServerClient;
 import repit.repit_api_server.global.exception.BusinessException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
@@ -66,6 +67,7 @@ public class FeedbackService {
     private static final int MAX_QUESTIONS = 50;
     private static final String STATUS_SUCCEEDED = "succeeded";
     private static final String INTENTION_MISSING = "질문 의도가 기록되지 않았습니다.";
+    private static final int FOLLOW_UP_QUESTION_MAX = 200;
 
     private final FeedbackRepository feedbackRepository;
     private final FeedbackItemRepository feedbackItemRepository;
@@ -204,6 +206,13 @@ public class FeedbackService {
                 : aiServerClient.requestSoloFeedback(solo);
 
         saveAccepted(interview, accepted == null ? null : accepted.getJobId(), requestedQuestionIds);
+
+        // 기업 관점 코멘트가 비면 요청에 기업과 근거 문항이 실렸는지부터 본다. 기업 자료와 답변 내용은 남기지 않는다.
+        CompanySnapshot company = interview.getCompanySnapshot();
+        log.info("채점을 요청했습니다. interviewId={}, jobId={}, sessionId={}, 기업={}, 기업 fact={}건, 근거 문항={}건",
+                interview.getInterviewId(), accepted == null ? null : accepted.getJobId(), interview.getSessionId(),
+                company != null, company == null || company.facts() == null ? 0 : company.facts().size(),
+                requestedQuestionIds.size());
         return accepted;
     }
 
@@ -696,6 +705,16 @@ public class FeedbackService {
 
         feedbackPersonaRepository.saveAll(personaRows);
         feedbackItemRepository.saveAll(itemRows);
+
+        // 화면에서 기업 관점 코멘트나 예상 꼬리질문이 비면, 콜백에 실려 왔는지와 저장됐는지를 이 한 줄로 가린다.
+        log.info("채점 결과를 저장했습니다. interviewId={}, jobId={}, 문항={}건, 예상 꼬리질문={}건, 기업 관점 코멘트 수신={}, 저장={}",
+                interviewId, callbackJobId, itemRows.size(),
+                itemRows.stream().filter(item -> item.getFollowUpQuestion() != null).count(),
+                isPresent(result.getCompanyFit()), feedback.getCompanyFit() != null);
+    }
+
+    private static boolean isPresent(JsonNode node) {
+        return node != null && !node.isNull() && !node.isMissingNode();
     }
 
     /**
@@ -793,9 +812,39 @@ public class FeedbackService {
                     .comment(item.getComment())
                     .axisScores(ScoreBreakdownReader.readAxisScores(item.getAxisScores(),
                             "문항 " + questionId, feedback.getInterviewId()))
+                    .followUpQuestion(followUpQuestionOf(feedback, questionId, item.getFollowUpQuestion()))
                     .build());
         }
         return entities;
+    }
+
+    /**
+     * 예상 꼬리질문. 앞뒤 공백을 뺀 1~200자 문자열만 받는다. 그 밖의 값은 비워 둔다.
+     *
+     * <p>없어도 피드백이 성립하는 부가 정보라, 받아들일 수 없어도 그 문항의 꼬리질문만 비우고 점수와 나머지 평가는 저장한다.
+     * 길다고 잘라 넣지 않는다 — 잘린 질문은 뜻이 바뀐다. 로그에는 사유와 길이만 남기고 모델이 쓴 문장은 남기지 않는다.
+     */
+    private String followUpQuestionOf(FeedbackEntity feedback, String questionId, JsonNode node) {
+        if (!isPresent(node)) {
+            return null;
+        }
+        if (!node.isString()) {
+            log.warn("예상 꼬리질문이 문자열이 아니라 비워 둡니다. feedbackId={}, questionId={}, 받은 모양={}",
+                    feedback.getFeedbackId(), questionId, node.getNodeType());
+            return null;
+        }
+        String question = node.stringValue().strip();
+        if (question.isEmpty()) {
+            return null;
+        }
+        // 분석 서버(Python)가 세는 글자 수와 맞춘다. String.length()는 이모지 하나를 둘로 센다.
+        int length = question.codePointCount(0, question.length());
+        if (length > FOLLOW_UP_QUESTION_MAX) {
+            log.warn("예상 꼬리질문이 {}자를 넘어 비워 둡니다. feedbackId={}, questionId={}, 길이={}",
+                    FOLLOW_UP_QUESTION_MAX, feedback.getFeedbackId(), questionId, length);
+            return null;
+        }
+        return question;
     }
 
     /**

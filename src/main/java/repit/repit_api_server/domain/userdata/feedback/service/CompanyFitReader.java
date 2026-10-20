@@ -58,6 +58,11 @@ final class CompanyFitReader {
                                    Long interviewId) {
         // 기업을 고르지 않은 면접이거나, 분석 서버가 만들지 못했으면 null로 온다.
         if (node == null || node.isNull() || node.isMissingNode()) {
+            if (snapshot != null) {
+                // 기업을 골랐는데 오지 않았다. 우리 쪽 검증에서 버린 것과 가려야 분석 서버 로그로 넘어갈지 정할 수 있다.
+                log.warn("기업을 고른 면접인데 기업 관점 코멘트가 오지 않았습니다. interviewId={}, 사유=FIT_NOT_RECEIVED, 기업 fact={}건",
+                        interviewId, snapshot.facts() == null ? 0 : snapshot.facts().size());
+            }
             return null;
         }
         if (snapshot == null) {
@@ -90,15 +95,16 @@ final class CompanyFitReader {
         List<CompanyFitResponse.Gap> gaps = readItems(gapsNode, "suggestion", facts, answeredQuestionIds, dropped,
                 (fact, detail, ids) -> new CompanyFitResponse.Gap(fact.factId(), fact.kind(), fact.title(), detail, ids));
 
+        // 대상 문항이 0건이면 원시 코멘트가 맞아도 모든 항목이 NO_ANSWERED_QUESTION으로 빠진다. 그 경우를 가리려고 함께 남긴다.
         int received = size(matchedNode) + size(gapsNode);
         if (received > 0 && matched.isEmpty() && gaps.isEmpty()) {
-            log.warn("기업 관점 코멘트의 항목이 모두 근거가 맞지 않아 코멘트 전체를 비워 둡니다. interviewId={}, 받은 항목={}, 사유={}",
-                    interviewId, received, dropped);
+            log.warn("기업 관점 코멘트의 항목이 모두 근거가 맞지 않아 코멘트 전체를 비워 둡니다. interviewId={}, 받은 항목={}, 대상 문항={}건, 사유={}",
+                    interviewId, received, answeredQuestionIds.size(), dropped);
             return null;
         }
         if (!dropped.isEmpty()) {
-            log.warn("기업 관점 코멘트에서 근거가 맞지 않는 항목을 뺐습니다. interviewId={}, 받은 항목={}, 남은 항목={}, 사유={}",
-                    interviewId, received, matched.size() + gaps.size(), dropped);
+            log.warn("기업 관점 코멘트에서 근거가 맞지 않는 항목을 뺐습니다. interviewId={}, 받은 항목={}, 남은 항목={}, 대상 문항={}건, 사유={}",
+                    interviewId, received, matched.size() + gaps.size(), answeredQuestionIds.size(), dropped);
         }
         return new CompanyFitResponse(comment, matched, gaps);
     }

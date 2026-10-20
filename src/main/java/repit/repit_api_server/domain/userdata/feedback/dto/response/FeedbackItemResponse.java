@@ -25,6 +25,8 @@ public class FeedbackItemResponse {
     private String comment;
     // 이 문항의 축별 점수(0..100). 해당 없는 축은 값이 비어 있다.
     private Map<String, Integer> axisScores;
+    // 이 답변에 이어질 예상 꼬리질문. 이전 피드백이나 만들지 못한 문항은 null이다.
+    private String followUpQuestion;
 
     public static FeedbackItemResponse from(FeedbackItemEntity item) {
         return FeedbackItemResponse.builder()
@@ -38,6 +40,7 @@ public class FeedbackItemResponse {
                 .improvements(item.getImprovements())
                 .comment(item.getComment())
                 .axisScores(item.getAxisScores())
+                .followUpQuestion(item.getFollowUpQuestion())
                 .build();
     }
 }
