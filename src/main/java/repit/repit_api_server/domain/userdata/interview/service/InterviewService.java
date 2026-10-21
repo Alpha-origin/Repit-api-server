@@ -49,10 +49,12 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -61,6 +63,8 @@ public class InterviewService {
 
     private static final Logger log = LoggerFactory.getLogger(InterviewService.class);
 
+    // 질문 카테고리로 받는 형식. 분석 서버 채점 계약(competency-v1)과 같다.
+    private static final Pattern CATEGORY = Pattern.compile("^[a-z][a-z0-9_]{0,63}$");
 
     private final InterviewRepository interviewRepository;
     private final QuestionRepository questionRepository;
@@ -545,6 +549,7 @@ public class InterviewService {
                     .parentId(type == Type.FOLLOW ? lastOriginalId : null)
                     .personaId(question.getPersonaId())
                     .type(type)
+                    .category(categoryOf(question))
                     .intention(intentionOf(question, type))
                     .content(question.getQuestion())
                     // 채팅 서버는 질문마다의 시각을 보내지 않는다. 저장 순서가 곧 면접 순서라
@@ -605,6 +610,17 @@ public class InterviewService {
             return expectedAnswer;
         }
         return question.getCategory();
+    }
+
+    /**
+     * 채점 역량을 고를 카테고리. 앞뒤 공백을 빼고 소문자로 맞춘 뒤 소문자 스네이크케이스 1~64자만 받는다.
+     *
+     * <p>옛 채팅 면접은 카테고리 자리에 질문 의도 문장을 보낸다. 그 문장을 카테고리로 저장하면 분석 서버가 모르는 값으로 보고
+     * 어차피 미분류로 채점하지만, 화면·통계에서 분류처럼 보이므로 비운다. 의도 문장일 수 있어 원문은 로그에 남기지 않는다.
+     */
+    private String categoryOf(SaveInterviewRequest.Question question) {
+        String value = question.getCategory() == null ? null : question.getCategory().strip().toLowerCase(Locale.ROOT);
+        return value != null && CATEGORY.matcher(value).matches() ? value : null;
     }
 
     private void saveAnswers(InterviewEntity interview, List<SaveInterviewRequest.QnA> qnAs,

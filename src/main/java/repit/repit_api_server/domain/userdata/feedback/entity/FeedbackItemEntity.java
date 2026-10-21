@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.CompetencyScoreResponse;
 
 import java.util.List;
 import java.util.Map;
@@ -66,4 +67,14 @@ public class FeedbackItemEntity {
     // 이 답변에 이어질 예상 꼬리질문. 이전 피드백이나 만들지 못한 문항은 값이 없다.
     @Column(columnDefinition = "TEXT")
     private String followUpQuestion;
+
+    // 질문이 물은 것에 답했는지(응답 적중 등급 0..4). competency-v1 이전 결과는 값이 없다.
+    // 컬럼이 SMALLINT라 타입을 맞춘다. 맞추지 않으면 스키마 검증(ddl-auto: validate)에서 기동이 막힌다.
+    @JdbcTypeCode(SqlTypes.SMALLINT)
+    private Integer responseLevel;
+
+    // 점수에 들어간 역량마다 등급과 근거 인용. competency-v1 이전 결과는 값이 없다.
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private List<CompetencyScoreResponse> competencies;
 }

@@ -61,7 +61,8 @@ public class SaveInterviewRequest {
         // 채팅 서버가 매긴 번호. 우리 PK와는 다른 체계다. 꼬리질문은 음수로 온다.
         private Long id;
         private Long personaId;
-        // 이 질문이 무엇을 묻는 갈래인지. 꼬리질문은 채팅 서버가 만든 의도가 실려 온다.
+        // 이 질문이 무엇을 묻는 갈래인지(tech_choice 등). 꼬리질문은 채팅 서버가 부모 질문의 값을 복사해 보낸다.
+        // 옛 채팅 면접은 이 자리에 질문 의도 문장을 보낸다 — 저장할 때 형식으로 걸러 낸다.
         private String category;
         private String question;
         // 채점 기준. 면접을 열 때 우리가 넘긴 값이 돌아오고, 꼬리질문은 채팅 서버가 정한 의도가 온다.

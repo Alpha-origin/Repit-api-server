@@ -68,6 +68,24 @@ class FeedbackSoloRequestSerializationTest {
         });
     }
 
+    /** 카테고리가 없는 질문은 키 자체를 보내지 않는다. 분석 서버는 키가 없으면 미분류로 채점한다. */
+    @Test
+    void 질문_카테고리는_있을_때만_직렬화된다() {
+        contextRunner.run(context -> {
+            ObjectMapper mapper = context.getBean(ObjectMapper.class);
+            FeedbackSoloRequest request = FeedbackSoloRequest.builder()
+                    .questions(List.of(
+                            FeedbackSoloRequest.Question.builder().questionId("11").category("tech_choice").build(),
+                            FeedbackSoloRequest.Question.builder().questionId("12").build()))
+                    .build();
+
+            JsonNode questions = mapper.readTree(mapper.writeValueAsString(request)).get("questions");
+
+            assertThat(questions.get(0).get("category").stringValue()).isEqualTo("tech_choice");
+            assertThat(questions.get(1).has("category")).isFalse();
+        });
+    }
+
     @Test
     void 면접_상태는_interviewStatus_키로_직렬화된다() {
         contextRunner.run(context -> {

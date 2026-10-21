@@ -64,6 +64,23 @@ class FeedbackMultiRequestSerializationTest {
     }
 
     @Test
+    void 질문_카테고리는_있을_때만_직렬화된다() {
+        contextRunner.run(context -> {
+            ObjectMapper objectMapper = context.getBean(ObjectMapper.class);
+            FeedbackMultiRequest request = FeedbackMultiRequest.builder()
+                    .questions(List.of(
+                            FeedbackMultiRequest.Question.builder().questionId("901").category("motivation").build(),
+                            FeedbackMultiRequest.Question.builder().questionId("902").build()))
+                    .build();
+
+            JsonNode questions = objectMapper.readTree(objectMapper.writeValueAsString(request)).get("questions");
+
+            assertThat(questions.get(0).get("category").stringValue()).isEqualTo("motivation");
+            assertThat(questions.get(1).has("category")).isFalse();
+        });
+    }
+
+    @Test
     void 시각은_ISO_8601_UTC로_나간다() {
         contextRunner.run(context -> {
             ObjectMapper objectMapper = context.getBean(ObjectMapper.class);

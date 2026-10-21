@@ -67,6 +67,9 @@ public class FeedbackMultiRequest {
         // ORIGINAL이면 반드시 null, FOLLOW면 반드시 값이 있어야 한다. 어기면 422다.
         private String parentId;
         private Type type;
+        // 질문 카테고리(tech_choice, motivation 등). 1:1과 같다 — 없거나 모르는 값이면 분석 서버가 미분류로 채점한다.
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String category;
         private String intention;
         private String content;
         // ISO 8601 + UTC 오프셋(Z)으로 직렬화된다.

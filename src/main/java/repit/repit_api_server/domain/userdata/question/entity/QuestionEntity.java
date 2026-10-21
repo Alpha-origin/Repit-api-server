@@ -43,6 +43,11 @@ public class QuestionEntity {
     @Column(nullable = false)
     private Type type;
 
+    // 질문 사이클·N:1 생성 질문의 카테고리(tech_choice 등). 분석 서버가 이 값으로 채점 역량을 고른다.
+    // 소문자 스네이크케이스만 담는다. 옛 채팅 면접이 이 자리에 보낸 의도 문장은 담지 않아 비어 있다.
+    @Column(length = 64)
+    private String category;
+
     // 채팅 서버가 만드는 꼬리질문은 의도가 비어 올 수 있다. 여기서 막으면 면접 결과 저장이
     // 통째로 실패하고, 사용자에게는 "면접 완료"가 실패로 보인다.
     @Column(columnDefinition = "TEXT")

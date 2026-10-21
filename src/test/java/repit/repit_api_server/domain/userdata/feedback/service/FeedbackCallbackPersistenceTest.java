@@ -9,7 +9,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 import repit.repit_api_server.domain.userdata.feedback.dto.request.FeedbackCallbackRequest;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.AxisScoreResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.CompetencyScoreResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.CredibilityResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.FrequentWordResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.ResponseSummaryResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackEntity;
 import repit.repit_api_server.domain.userdata.feedback.entity.FeedbackItemEntity;
@@ -40,6 +43,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.groups.Tuple.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -110,7 +114,7 @@ class FeedbackCallbackPersistenceTest {
                 "조회가 쓰기보다 많아서요.", "지연을 수치로 제시한다.",
                 List.of("p99 지연을 근거로 든 점"), List.of("무효화 전략 미언급"),
                 "부작용까지는 못 짚었습니다.", null,
-                JsonMapper.shared().valueToTree(FOLLOW_UP_QUESTION));
+                JsonMapper.shared().valueToTree(FOLLOW_UP_QUESTION), null, null);
 
         return new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech, hr), List.of(item), null), null);
@@ -178,7 +182,7 @@ class FeedbackCallbackPersistenceTest {
     void 예상_꼬리질문이_없는_콜백도_문항이_저장된다() {
         FeedbackEntity accepted = givenAccepted();
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item(
-                "901", 11L, "질문", "의도", "답변", "모범답변", List.of(), List.of(), "총평", null, null);
+                "901", 11L, "질문", "의도", "답변", "모범답변", List.of(), List.of(), "총평", null, null, null, null);
         FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
                 70, 70, 70, "요약", List.of(), List.of(), List.of(), 1, 1, null);
 
@@ -241,7 +245,7 @@ class FeedbackCallbackPersistenceTest {
                 12L, "HR", null, "담당 답변 없음", List.of(), List.of(), 0, 0, null);
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item(
                 "901", 11L, "질문", "의도", "답변", "모범답변", List.of(), List.of(), "총평",
-                JsonMapper.shared().valueToTree(axisScores), null);
+                JsonMapper.shared().valueToTree(axisScores), null, null, null);
 
         feedbackService.handleCallback(new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech, hr), List.of(item), null), null));
@@ -267,6 +271,162 @@ class FeedbackCallbackPersistenceTest {
         assertThat(savedItem.getAxisScores())
                 .containsEntry("INTENT", 88)
                 .containsEntry("ACCURACY", null);
+    }
+
+    /**
+     * competency-v1 콜백. 연동 계약(01 문서) 4장 예시 본문이다. 종합 점수만 축 점수와 가중치로 다시 계산한 값(66)으로 바꿨다 —
+     * 예시의 68은 계약의 보장 식과 어긋난다.
+     */
+    private static final String COMPETENCY_CALLBACK = """
+            {
+              "jobId": "%s",
+              "sessionId": "%s",
+              "status": "succeeded",
+              "result": {
+                "overall": {
+                  "totalScore": 66,
+                  "intentAlignmentScore": 88,
+                  "reliabilityScore": 75,
+                  "scoreBreakdown": {
+                    "scoringVersion": "competency-v1",
+                    "axes": [
+                      { "axis": "PROBLEM_SOLVING", "score": 75, "weight": 30, "verdict": "SOLID", "evidenceCount": 3 },
+                      { "axis": "KNOWLEDGE", "score": 58, "weight": 25, "verdict": "BORDERLINE", "evidenceCount": 2 },
+                      { "axis": "OWNERSHIP", "score": 70, "weight": 25, "verdict": "SOLID", "evidenceCount": 3 },
+                      { "axis": "COLLABORATION", "score": null, "weight": null, "verdict": null, "evidenceCount": 0 },
+                      { "axis": "GROWTH", "score": 50, "weight": 10, "verdict": "BORDERLINE", "evidenceCount": 1 }
+                    ],
+                    "consistencyScore": 75,
+                    "response": { "score": 88, "hitCount": 5, "gradedCount": 6 },
+                    "motivation": null,
+                    "credibility": {
+                      "score": 75,
+                      "issues": [
+                        {
+                          "kind": "ROLE",
+                          "questionIds": ["101", "105"],
+                          "quotes": ["결제 모듈은 제가 전부 맡았습니다", "결제 쪽은 동료가 개발했고"]
+                        }
+                      ]
+                    }
+                  },
+                  "summary": "요약",
+                  "strengths": [],
+                  "improvements": [],
+                  "frequentWords": [],
+                  "answeredCount": 6,
+                  "questionCount": 6
+                },
+                "feedbacks": [
+                  {
+                    "questionId": "101",
+                    "questionContent": "재고 차감에 Redis 분산락을 쓴 이유는 무엇인가요?",
+                    "intention": "재고 차감에 분산락을 고른 이유를 DB 락과 비교해 설명할 수 있는지",
+                    "userAnswer": "재고 차감 경합이 잦아 DB 비관적 락은 커넥션을 오래 잡아서 분산락을 썼고, TTL이 지나면 락이 자동으로 풀리고",
+                    "comment": "총평",
+                    "responseLevel": 4,
+                    "axisScores": { "PROBLEM_SOLVING": 75, "KNOWLEDGE": 100 },
+                    "competencies": [
+                      {
+                        "competency": "PROBLEM_SOLVING",
+                        "role": "PRIMARY",
+                        "level": 3,
+                        "score": 75,
+                        "evidence": [
+                          { "slot": "reason", "quote": "재고 차감 경합이 잦아" },
+                          { "slot": "alternatives", "quote": "DB 비관적 락은 커넥션을 오래 잡아서" }
+                        ]
+                      },
+                      {
+                        "competency": "KNOWLEDGE",
+                        "role": "SECONDARY",
+                        "level": 4,
+                        "score": 100,
+                        "evidence": [ { "slot": "mechanism", "quote": "TTL이 지나면 락이 자동으로 풀리고" } ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+            """;
+
+    /** 역량 축 결과는 새 필드가 저장되고, 조회 응답에 그대로 나간다. 비어 있는 지원 동기는 키가 없다. */
+    @Test
+    void competency_v1_결과가_저장되고_조회_응답에_그대로_나간다() {
+        FeedbackEntity accepted = givenAccepted();
+        FeedbackCallbackRequest callback = JsonMapper.shared().readValue(
+                COMPETENCY_CALLBACK.formatted(jobId, sessionId), FeedbackCallbackRequest.class);
+
+        feedbackService.handleCallback(callback);
+        flushAndClear();
+
+        FeedbackEntity saved = feedbackRepository.findById(accepted.getFeedbackId()).orElseThrow();
+        assertThat(saved.getScoringVersion()).isEqualTo("competency-v1");
+        assertThat(saved.getTotalScore()).isEqualTo(66);
+        ScoreBreakdownResponse breakdown = saved.getScoreBreakdown();
+        assertThat(breakdown.getAxes())
+                .extracting(AxisScoreResponse::getAxis, AxisScoreResponse::getScore, AxisScoreResponse::getWeight,
+                        AxisScoreResponse::getVerdict, AxisScoreResponse::getEvidenceCount)
+                .containsExactly(
+                        tuple("PROBLEM_SOLVING", 75, 30, "SOLID", 3),
+                        tuple("KNOWLEDGE", 58, 25, "BORDERLINE", 2),
+                        tuple("OWNERSHIP", 70, 25, "SOLID", 3),
+                        tuple("COLLABORATION", null, null, null, 0),
+                        tuple("GROWTH", 50, 10, "BORDERLINE", 1));
+        assertThat(breakdown.getResponse()).isEqualTo(new ResponseSummaryResponse(88, 5, 6));
+        assertThat(breakdown.getMotivation()).isNull();
+        assertThat(breakdown.getCredibility()).isEqualTo(new CredibilityResponse(75, List.of(
+                new CredibilityResponse.Issue("ROLE", List.of("101", "105"),
+                        List.of("결제 모듈은 제가 전부 맡았습니다", "결제 쪽은 동료가 개발했고")))));
+
+        FeedbackItemEntity item =
+                feedbackItemRepository.findAllByFeedbackIdOrderBySortOrderAsc(accepted.getFeedbackId()).getFirst();
+        assertThat(item.getResponseLevel()).isEqualTo(4);
+        // jsonb는 키 순서를 지키지 않는다.
+        assertThat(item.getAxisScores()).containsOnly(Map.entry("PROBLEM_SOLVING", 75), Map.entry("KNOWLEDGE", 100));
+        assertThat(item.getCompetencies()).containsExactly(
+                new CompetencyScoreResponse("PROBLEM_SOLVING", "PRIMARY", 3, 75, List.of(
+                        new CompetencyScoreResponse.Evidence("reason", "재고 차감 경합이 잦아"),
+                        new CompetencyScoreResponse.Evidence("alternatives", "DB 비관적 락은 커넥션을 오래 잡아서"))),
+                new CompetencyScoreResponse("KNOWLEDGE", "SECONDARY", 4, 100, List.of(
+                        new CompetencyScoreResponse.Evidence("mechanism", "TTL이 지나면 락이 자동으로 풀리고"))));
+
+        JsonNode body = JsonMapper.shared().valueToTree(feedbackService.getFeedback(9L, 999_999L));
+        JsonNode responseBreakdown = body.get("scoreBreakdown");
+        assertThat(responseBreakdown.get("axes").get(3).has("verdict")).isFalse();
+        assertThat(responseBreakdown.get("axes").get(3).get("evidenceCount").intValue()).isZero();
+        assertThat(responseBreakdown.get("response").get("hitCount").intValue()).isEqualTo(5);
+        assertThat(responseBreakdown.has("motivation")).isFalse();
+        assertThat(responseBreakdown.get("credibility").get("issues").get(0).get("kind").stringValue())
+                .isEqualTo("ROLE");
+        JsonNode responseItem = body.get("feedbacks").get(0);
+        assertThat(responseItem.get("responseLevel").intValue()).isEqualTo(4);
+        assertThat(responseItem.get("competencies").get(1).get("evidence").get(0).get("quote").stringValue())
+                .isEqualTo("TTL이 지나면 락이 자동으로 풀리고");
+    }
+
+    /** axis-v4 결과에는 새 필드가 없다. 조회 응답에도 키가 생기지 않아 지금 화면이 그대로다. */
+    @Test
+    void axis_v4_결과의_조회_응답에는_새_키가_없다() {
+        givenAccepted();
+        JsonNode breakdown = JsonMapper.shared().valueToTree(new ScoreBreakdownResponse("axis-v4", List.of(
+                new AxisScoreResponse("INTENT", 88, 35)), 75));
+        FeedbackCallbackRequest.Overall overall = new FeedbackCallbackRequest.Overall(
+                88, 88, 69, "요약", List.of(), List.of(), List.of(), 1, 1, breakdown);
+        FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item(
+                "901", null, "질문", "의도", "답변", "모범답변", List.of(), List.of(), "총평", null, null, null, null);
+
+        feedbackService.handleCallback(new FeedbackCallbackRequest(jobId, sessionId, "succeeded",
+                new FeedbackCallbackRequest.Result(overall, null, List.of(item), null), null));
+        flushAndClear();
+
+        JsonNode body = JsonMapper.shared().valueToTree(feedbackService.getFeedback(9L, 999_999L));
+        assertThat(body.get("scoreBreakdown").get("axes").get(0).has("verdict")).isFalse();
+        assertThat(body.get("scoreBreakdown").get("axes").get(0).has("evidenceCount")).isFalse();
+        assertThat(body.get("scoreBreakdown").has("response")).isFalse();
+        assertThat(body.get("scoreBreakdown").has("credibility")).isFalse();
+        assertThat(body.get("feedbacks").get(0).get("competencies").isNull()).isTrue();
     }
 
     /** 컬럼보다 긴 버전을 그대로 넣으면 플러시에서 터지고, 트랜잭션이 롤백돼 채점 결과가 폐기된다. */
