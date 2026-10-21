@@ -254,7 +254,7 @@ class FeedbackServiceSoloRequestTest {
                 .build();
     }
 
-    /** 저장된 면접 기록. 901은 최초 질문, 902는 901에 달린 꼬리질문이다. */
+    /** 저장된 면접 기록. 901은 최초 질문, 902는 901에 달린 꼬리질문이다. 902는 카테고리 없이 저장된 옛 꼬리질문이다. */
     private List<QuestionEntity> questions() {
         return List.of(
                 QuestionEntity.builder()
@@ -263,6 +263,7 @@ class FeedbackServiceSoloRequestTest {
                         .chatQuestionId(1L)
                         .personaId(5L)
                         .type(repit.repit_api_server.domain.userdata.question.entity.enums.Type.ORIGINAL)
+                        .category("tech_choice")
                         .intention("도입 근거 확인")
                         .content("WebFlux 를 도입한 이유가 무엇인가요?")
                         .createdAt(LocalDateTime.parse("2026-08-18T01:00:00"))
@@ -383,6 +384,30 @@ class FeedbackServiceSoloRequestTest {
         // ORIGINAL에 parentId가 실려 있거나 FOLLOW에 없으면 분석 서버가 요청 전체를 거부한다.
         assertThat(questions.get(0).getParentId()).isNull();
         assertThat(questions.get(1).getParentId()).isEqualTo("901");
+    }
+
+    /** 분석 서버가 이 값으로 채점 역량을 고른다. 비어 있는 꼬리질문은 분석 서버가 부모 값을 물려 쓰므로 그대로 비워 보낸다. */
+    @Test
+    void 저장된_질문_카테고리를_그대로_싣는다() {
+        service.requestFeedback(USER_ID, 3L);
+
+        assertThat(captureRequest().getQuestions()).extracting(FeedbackSoloRequest.Question::getCategory)
+                .containsExactly("tech_choice", null);
+    }
+
+    @Test
+    void N대1_채점에도_질문_카테고리를_싣는다() {
+        when(interviewRepository.findById(3L)).thenReturn(Optional.of(interview(Status.COMPLETED, null)));
+        when(interviewPersonaRepository.findAllByInterviewIdOrderByPersonaOrderAsc(3L)).thenReturn(List.of(
+                InterviewPersonaEntity.builder().interviewId(3L).personaId(5L).personaOrder(0).build()));
+        when(personaRepository.findAllById(List.of(5L))).thenReturn(List.of(persona(Type.REALISTIC)));
+
+        service.requestFeedback(USER_ID, 3L);
+
+        ArgumentCaptor<FeedbackMultiRequest> sent = ArgumentCaptor.forClass(FeedbackMultiRequest.class);
+        verify(aiServerClient).requestMultiFeedback(sent.capture());
+        assertThat(sent.getValue().getQuestions()).extracting(FeedbackMultiRequest.Question::getCategory)
+                .containsExactly("tech_choice", null);
     }
 
     @Test

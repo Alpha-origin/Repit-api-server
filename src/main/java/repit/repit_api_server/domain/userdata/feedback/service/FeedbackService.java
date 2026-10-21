@@ -463,6 +463,8 @@ public class FeedbackService {
                 .questionId(String.valueOf(question.getQuestionId()))
                 .parentId(parentId)
                 .type(type)
+                // 부모를 못 찾아 홑질문으로 낮춘 꼬리질문도 저장된 값을 그대로 보낸다. 채팅 서버가 부모 값을 복사해 두어 대개 있다.
+                .category(question.getCategory())
                 .intention(intentionOf(question))
                 .content(question.getContent())
                 .createdAt(toUtc(question.getCreatedAt()))
@@ -479,6 +481,7 @@ public class FeedbackService {
                 .personaId(String.valueOf(personaByQuestion.get(question.getQuestionId())))
                 .parentId(parentId)
                 .type(type)
+                .category(question.getCategory())
                 .intention(intentionOf(question))
                 .content(question.getContent())
                 .createdAt(toUtc(question.getCreatedAt()))
@@ -704,10 +707,12 @@ public class FeedbackService {
         feedbackPersonaRepository.saveAll(personaRows);
         feedbackItemRepository.saveAll(itemRows);
 
-        // 화면에서 기업 관점 코멘트나 예상 꼬리질문이 비면, 콜백에 실려 왔는지와 저장됐는지를 이 한 줄로 가린다.
-        log.info("채점 결과를 저장했습니다. interviewId={}, jobId={}, 문항={}건, 예상 꼬리질문={}건, 기업 관점 코멘트 수신={}, 저장={}",
-                interviewId, callbackJobId, itemRows.size(),
+        // 화면에서 기업 관점 코멘트·예상 꼬리질문·역량 근거가 비면, 콜백에 실려 왔는지와 저장됐는지를 이 한 줄로 가린다.
+        log.info("채점 결과를 저장했습니다. interviewId={}, jobId={}, 채점 방식={}, 문항={}건, 예상 꼬리질문={}건, "
+                        + "역량 근거={}건, 기업 관점 코멘트 수신={}, 저장={}",
+                interviewId, callbackJobId, feedback.getScoringVersion(), itemRows.size(),
                 itemRows.stream().filter(item -> item.getFollowUpQuestion() != null).count(),
+                itemRows.stream().filter(item -> item.getCompetencies() != null).count(),
                 isPresent(result.getCompanyFit()), feedback.getCompanyFit() != null);
     }
 
@@ -811,6 +816,10 @@ public class FeedbackService {
                     .axisScores(ScoreBreakdownReader.readAxisScores(item.getAxisScores(),
                             "문항 " + questionId, feedback.getInterviewId()))
                     .followUpQuestion(followUpQuestionOf(feedback, questionId, item.getFollowUpQuestion()))
+                    .responseLevel(CompetencyReader.readLevel(item.getResponseLevel(),
+                            "문항 " + questionId, feedback.getInterviewId()))
+                    .competencies(CompetencyReader.read(item.getCompetencies(),
+                            "문항 " + questionId, feedback.getInterviewId()))
                     .build());
         }
         return entities;

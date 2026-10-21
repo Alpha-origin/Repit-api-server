@@ -47,6 +47,10 @@ public class FeedbackSoloRequest {
         // ORIGINAL이면 반드시 null, FOLLOW면 반드시 값이 있어야 한다. 어기면 분석 서버가 422로 거부한다.
         private String parentId;
         private Type type;
+        // 질문 카테고리(tech_choice 등). 분석 서버가 이 값으로 채점 역량을 고르고, 없거나 모르는 값이면 미분류로 채점한다.
+        // 꼬리질문이 비어 있으면 분석 서버가 부모 값을 물려 쓴다. 저장된 값이 없으면 키 자체를 보내지 않는다.
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String category;
         private String intention;
         private String content;
         // ISO 8601 + UTC 오프셋(Z)으로 직렬화된다.

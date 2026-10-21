@@ -213,6 +213,47 @@ class InterviewServiceSaveResultTest {
                 .containsExactly("WebFlux를 고른 이유를 MVC와 비교해 설명할 수 있는지", "대안을 비교했는지");
     }
 
+    private SaveInterviewRequest withCategories(String... categories) {
+        List<SaveInterviewRequest.QnA> qnAs = new java.util.ArrayList<>();
+        for (int i = 0; i < categories.length; i++) {
+            qnAs.add(new SaveInterviewRequest.QnA(new SaveInterviewRequest.Question((long) i + 1, 5L, categories[i],
+                    "질문 " + i, "의도 " + i, null, null), null));
+        }
+        return new SaveInterviewRequest("sess-1", 3L, 7L, Status.COMPLETED,
+                LocalDateTime.parse("2026-08-18T01:00:00"), qnAs);
+    }
+
+    /** 분석 서버가 채점 역량을 고르는 열쇠다. 대소문자·공백만 다른 값은 같은 카테고리로 맞춘다. */
+    @Test
+    void 질문_카테고리를_다듬어_남긴다() {
+        service.saveInterview(withCategories("tech_choice", " Market_Analysis ", "q2", "a".repeat(64)));
+
+        assertThat(savedQuestions()).extracting(QuestionEntity::getCategory)
+                .containsExactly("tech_choice", "market_analysis", "q2", "a".repeat(64));
+    }
+
+    /** 옛 채팅 면접은 카테고리 자리에 질문 의도 문장을 보낸다. 분류처럼 보이지 않게 비운다. */
+    @Test
+    void 형식에_맞지_않는_카테고리는_비운다() {
+        service.saveInterview(withCategories("대안 검토 확인", "tech choice", "tech-choice", "2nd_round",
+                "_hidden", "a".repeat(65), "", null));
+
+        assertThat(savedQuestions()).extracting(QuestionEntity::getCategory)
+                .containsOnlyNulls()
+                .hasSize(8);
+    }
+
+    /** 카테고리를 비워도 의도가 없는 옛 꼬리질문은 그 문장을 의도로 쓴다. 채점 기준이 그것뿐이다. */
+    @Test
+    void 의도_문장이_온_카테고리는_비우되_의도로는_그대로_쓴다() {
+        service.saveInterview(request());
+
+        List<QuestionEntity> questions = savedQuestions();
+        assertThat(questions).extracting(QuestionEntity::getCategory)
+                .containsExactly("tech_choice", null, "ops");
+        assertThat(questions.get(1).getIntention()).isEqualTo("대안 검토 확인");
+    }
+
     @Test
     void 답변을_우리_질문_PK에_매단다() {
         service.saveInterview(request());

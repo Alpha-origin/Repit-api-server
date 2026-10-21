@@ -3,6 +3,9 @@ package repit.repit_api_server.domain.userdata.feedback.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.AxisScoreResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.CredibilityResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.MotivationSummaryResponse;
+import repit.repit_api_server.domain.userdata.feedback.dto.response.ResponseSummaryResponse;
 import repit.repit_api_server.domain.userdata.feedback.dto.response.ScoreBreakdownResponse;
 import tools.jackson.databind.JsonNode;
 
@@ -10,6 +13,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 채점 콜백의 점수 산출 근거를 읽는다.
@@ -25,6 +29,12 @@ final class ScoreBreakdownReader {
 
     // feedback.scoring_version 컬럼 길이. 넘는 값을 그대로 넣으면 플러시에서 터져 결과가 폐기된다.
     static final int SCORING_VERSION_MAX_LENGTH = 64;
+
+    // 답변 원문 인용 한 조각의 최대 글자 수. 분석 서버 인용은 짧은 구절이라, 넘으면 인용이 아니라 답변을 통째로 실은 것이다.
+    static final int QUOTE_MAX = 1_000;
+
+    private static final Set<String> VERDICTS = Set.of("STRONG", "SOLID", "BORDERLINE", "WEAK");
+    private static final Set<String> ISSUE_KINDS = Set.of("ROLE", "TECH_CHOICE", "CAUSE", "DETAIL", "OTHER");
 
     private ScoreBreakdownReader() {
     }
@@ -48,13 +58,17 @@ final class ScoreBreakdownReader {
             return null;
         }
 
+        // 응답 적중·지원 동기는 축 목록에 넣지 않는다. 그래야 아래 재계산 식에 섞이지 않는다.
         List<AxisScoreResponse> axes = readAxes(node.get("axes"), label, interviewId);
         warnIfTotalDiffers(axes, total, label, interviewId);
 
         return new ScoreBreakdownResponse(
                 text(node.get("scoringVersion")),
                 axes,
-                score(node.get("consistencyScore"), label + " 일관성 점수", interviewId));
+                score(node.get("consistencyScore"), label + " 일관성 점수", interviewId),
+                readResponse(node.get("response"), label, interviewId),
+                readMotivation(node.get("motivation"), label, interviewId),
+                readCredibility(node.get("credibility"), label, interviewId));
     }
 
     /**
@@ -133,13 +147,169 @@ final class ScoreBreakdownReader {
         List<AxisScoreResponse> axes = new ArrayList<>();
         for (int i = 0; i < names.size(); i++) {
             JsonNode value = values.get(i);
-            // 축 이름을 키로 한 모양에서는 값이 점수 하나일 수도 있다.
-            JsonNode scoreNode = value.isObject() ? value.get("score") : value;
+            String what = label + " " + names.get(i) + " 축";
+            // 축 이름을 키로 한 모양에서는 값이 점수 하나일 수도 있다. 판정과 근거 문항 수는 competency-v1부터 실린다.
+            boolean object = value.isObject();
             axes.add(new AxisScoreResponse(names.get(i),
-                    score(scoreNode, label + " " + names.get(i) + " 축 점수", interviewId),
-                    weights.get(i)));
+                    score(object ? value.get("score") : value, what + " 점수", interviewId),
+                    weights.get(i),
+                    object ? verdict(value.get("verdict"), what + " 판정", interviewId) : null,
+                    object ? count(value.get("evidenceCount"), what + " 근거 문항 수", interviewId) : null));
         }
         return axes;
+    }
+
+    /** 응답 적중(competency-v1). */
+    private static ResponseSummaryResponse readResponse(JsonNode node, String label, Long interviewId) {
+        String what = label + " 응답 적중";
+        if (!isObject(node, what, interviewId)) {
+            return null;
+        }
+        return new ResponseSummaryResponse(
+                score(node.get("score"), what + " 점수", interviewId),
+                count(node.get("hitCount"), what + " 문항 수", interviewId),
+                count(node.get("gradedCount"), what + " 채점 문항 수", interviewId));
+    }
+
+    /** 지원 동기·회사 이해(competency-v1). motivation 문항이 없는 면접은 비어서 온다. */
+    private static MotivationSummaryResponse readMotivation(JsonNode node, String label, Long interviewId) {
+        String what = label + " 지원 동기";
+        if (!isObject(node, what, interviewId)) {
+            return null;
+        }
+        return new MotivationSummaryResponse(
+                score(node.get("score"), what + " 점수", interviewId),
+                verdict(node.get("verdict"), what + " 판정", interviewId),
+                count(node.get("evidenceCount"), what + " 근거 문항 수", interviewId));
+    }
+
+    /** 신뢰성(competency-v1). 면접관별 근거에는 비어서 온다. */
+    private static CredibilityResponse readCredibility(JsonNode node, String label, Long interviewId) {
+        String what = label + " 신뢰성";
+        if (!isObject(node, what, interviewId)) {
+            return null;
+        }
+        return new CredibilityResponse(
+                score(node.get("score"), what + " 점수", interviewId),
+                readIssues(node.get("issues"), what, interviewId));
+    }
+
+    /**
+     * 서로 어긋난 답변 쌍. 모양이 어긋난 항목만 버린다.
+     *
+     * <p>모르는 종류는 버리지 않고 OTHER로 둔다 — 어긋났다는 사실은 그대로 쓸 수 있다. 문항 id와 인용은 둘씩 짝이 맞아야
+     * 화면이 "Q1 ↔ Q5"로 그릴 수 있어, 짝이 안 맞으면 그 항목을 버린다. 인용은 답변 원문이라 로그에는 사유와 길이만 남긴다.
+     */
+    private static List<CredibilityResponse.Issue> readIssues(JsonNode node, String label, Long interviewId) {
+        if (isAbsent(node)) {
+            return List.of();
+        }
+        if (!node.isArray()) {
+            log.warn("{} 모순 목록이 배열이 아니라 비워 둡니다. interviewId={}, 받은 모양={}",
+                    label, interviewId, node.getNodeType());
+            return List.of();
+        }
+        List<CredibilityResponse.Issue> issues = new ArrayList<>();
+        int index = 0;
+        for (JsonNode element : node.values()) {
+            String what = label + " 모순 " + index++;
+            if (!element.isObject()) {
+                log.warn("{}이 객체가 아니라 버립니다. interviewId={}, 받은 모양={}",
+                        what, interviewId, element.getNodeType());
+                continue;
+            }
+            List<String> questionIds = pair(element.get("questionIds"), Integer.MAX_VALUE);
+            if (questionIds == null) {
+                log.warn("{}의 문항 id가 문자열 두 개가 아니라 버립니다. interviewId={}, 받은 값={}",
+                        what, interviewId, element.get("questionIds"));
+                continue;
+            }
+            List<String> quotes = pair(element.get("quotes"), QUOTE_MAX);
+            if (quotes == null) {
+                JsonNode received = element.get("quotes");
+                log.warn("{}의 인용이 {}자 이하 문자열 두 개가 아니라 버립니다. interviewId={}, 받은 모양={}, 길이={}",
+                        what, QUOTE_MAX, interviewId, received == null ? null : received.getNodeType(),
+                        quoteLengths(received));
+                continue;
+            }
+            issues.add(new CredibilityResponse.Issue(issueKind(element.get("kind"), what, interviewId),
+                    questionIds, quotes));
+        }
+        return issues;
+    }
+
+    private static String issueKind(JsonNode node, String what, Long interviewId) {
+        String kind = text(node);
+        if (kind != null && ISSUE_KINDS.contains(kind)) {
+            return kind;
+        }
+        log.warn("{}의 종류를 알 수 없어 OTHER로 둡니다. interviewId={}, 받은 값={}", what, interviewId, node);
+        return "OTHER";
+    }
+
+    /** 비지 않은 문자열 정확히 두 개. 하나라도 maxLength(글자 수)를 넘으면 쓰지 않는다. */
+    private static List<String> pair(JsonNode node, int maxLength) {
+        if (isAbsent(node) || !node.isArray() || node.size() != 2) {
+            return null;
+        }
+        List<String> values = new ArrayList<>();
+        for (JsonNode element : node.values()) {
+            if (!element.isString() || element.stringValue().isBlank() || length(element.stringValue()) > maxLength) {
+                return null;
+            }
+            values.add(element.stringValue());
+        }
+        return values;
+    }
+
+    // 인용 원문 대신 남기는 길이. 문자열이 아닌 원소는 -1이다.
+    private static List<Integer> quoteLengths(JsonNode node) {
+        if (isAbsent(node) || !node.isArray()) {
+            return null;
+        }
+        List<Integer> lengths = new ArrayList<>();
+        for (JsonNode element : node.values()) {
+            lengths.add(element.isString() ? length(element.stringValue()) : -1);
+        }
+        return lengths;
+    }
+
+    /** 판정. 네 값 밖이면 비운다. */
+    private static String verdict(JsonNode node, String what, Long interviewId) {
+        if (isAbsent(node)) {
+            return null;
+        }
+        String verdict = node.isString() ? node.stringValue() : null;
+        if (verdict != null && VERDICTS.contains(verdict)) {
+            return verdict;
+        }
+        log.warn("{}이 {} 중 하나가 아니라 비워 둡니다. interviewId={}, 받은 값={}", what, VERDICTS, interviewId, node);
+        return null;
+    }
+
+    /** 0 이상의 정수 개수. 음수나 정수가 아닌 값은 비운다. */
+    private static Integer count(JsonNode node, String what, Long interviewId) {
+        if (isAbsent(node)) {
+            return null;
+        }
+        Integer count = wholeNumber(node);
+        if (count != null && count >= 0) {
+            return count;
+        }
+        log.warn("{}가 0 이상의 정수가 아니라 비워 둡니다. interviewId={}, 받은 값={}", what, interviewId, node);
+        return null;
+    }
+
+    // 없으면 조용히 비운다. 객체가 아니면 비우고 로그를 남긴다.
+    private static boolean isObject(JsonNode node, String what, Long interviewId) {
+        if (isAbsent(node)) {
+            return false;
+        }
+        if (!node.isObject()) {
+            log.warn("{} 값이 객체가 아니라 비워 둡니다. interviewId={}, 받은 모양={}", what, interviewId, node.getNodeType());
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -249,6 +419,24 @@ final class ScoreBreakdownReader {
         return null;
     }
 
+    /** 정수 값. 4.0처럼 소수점 아래가 없는 숫자도 받는다. 문자열이나 소수는 null이다. */
+    static Integer wholeNumber(JsonNode node) {
+        if (isAbsent(node) || !node.isNumber()) {
+            return null;
+        }
+        double value = node.doubleValue();
+        if (!Double.isFinite(value) || value != Math.rint(value)
+                || value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+            return null;
+        }
+        return (int) value;
+    }
+
+    // 분석 서버(Python)가 세는 글자 수와 맞춘다. String.length()는 이모지 하나를 둘로 센다.
+    static int length(String value) {
+        return value.codePointCount(0, value.length());
+    }
+
     private static Double finite(double value, JsonNode node, String what, Long interviewId) {
         if (Double.isFinite(value)) {
             return value;
@@ -264,7 +452,7 @@ final class ScoreBreakdownReader {
         return node.isString() ? node.stringValue() : node.asString();
     }
 
-    private static boolean isAbsent(JsonNode node) {
+    static boolean isAbsent(JsonNode node) {
         return node == null || node.isNull() || node.isMissingNode();
     }
 }

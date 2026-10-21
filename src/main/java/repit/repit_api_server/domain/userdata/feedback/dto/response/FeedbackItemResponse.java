@@ -27,6 +27,10 @@ public class FeedbackItemResponse {
     private Map<String, Integer> axisScores;
     // 이 답변에 이어질 예상 꼬리질문. 이전 피드백이나 만들지 못한 문항은 null이다.
     private String followUpQuestion;
+    // 응답 적중 등급(0..4). competency-v1 이전 결과는 null이다.
+    private Integer responseLevel;
+    // 점수에 들어간 역량별 등급과 근거 인용. 주 역량이 앞에 온다. competency-v1 이전 결과는 null이다.
+    private List<CompetencyScoreResponse> competencies;
 
     public static FeedbackItemResponse from(FeedbackItemEntity item) {
         return FeedbackItemResponse.builder()
@@ -41,6 +45,8 @@ public class FeedbackItemResponse {
                 .comment(item.getComment())
                 .axisScores(item.getAxisScores())
                 .followUpQuestion(item.getFollowUpQuestion())
+                .responseLevel(item.getResponseLevel())
+                .competencies(item.getCompetencies())
                 .build();
     }
 }

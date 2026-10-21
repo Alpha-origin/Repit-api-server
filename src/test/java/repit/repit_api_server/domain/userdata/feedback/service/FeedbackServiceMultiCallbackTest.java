@@ -111,7 +111,7 @@ class FeedbackServiceMultiCallbackTest {
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item(
                 "2", 11L, "Redis를 캐시로 두신 이유는?", "기술 선택의 근거",
                 "조회가 쓰기보다 많아서요.", "지연을 수치로 제시한다.",
-                List.of("p99 지연을 근거로 든 점"), List.of("무효화 전략 미언급"), "부작용까지는 못 짚었습니다.", null, null);
+                List.of("p99 지연을 근거로 든 점"), List.of("무효화 전략 미언급"), "부작용까지는 못 짚었습니다.", null, null, null, null);
 
         return new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech, hr, ceo), List.of(item), null), null);
@@ -253,7 +253,7 @@ class FeedbackServiceMultiCallbackTest {
         FeedbackCallbackRequest request = callback();
         FeedbackCallbackRequest.Item stray = new FeedbackCallbackRequest.Item(
                 "903", 99L, "팀에서 갈등이 있었다면?", "협업 태도",
-                null, "사실과 대응을 나눠 말한다.", List.of(), List.of(), "답하지 않았습니다.", null, null);
+                null, "사실과 대응을 나눠 말한다.", List.of(), List.of(), "답하지 않았습니다.", null, null, null, null);
         FeedbackCallbackRequest withStray = new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(request.getResult().getOverall(),
                         request.getResult().getPersonas(), List.of(stray), null),
@@ -298,7 +298,7 @@ class FeedbackServiceMultiCallbackTest {
 
     private FeedbackCallbackRequest.Item item(String questionId, Long personaId) {
         return new FeedbackCallbackRequest.Item(questionId, personaId, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평", null, null);
+                "답변", "모범답변", List.of(), List.of(), "총평", null, null, null, null);
     }
 
     private FeedbackCallbackRequest.Persona persona(Long personaId, Integer score) {
@@ -420,7 +420,7 @@ class FeedbackServiceMultiCallbackTest {
         axisScores.put("INTENT", 88);
         axisScores.put("ACCURACY", null);
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item("2", 11L, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores), null);
+                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores), null, null, null);
 
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(tech), List.of(item), null), null));
@@ -475,7 +475,7 @@ class FeedbackServiceMultiCallbackTest {
         Map<String, Integer> axisScores = new LinkedHashMap<>();
         axisScores.put("DEPTH", -5);
         FeedbackCallbackRequest.Item item = new FeedbackCallbackRequest.Item("2", 11L, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores), null);
+                "답변", "모범답변", List.of(), List.of(), "총평", json(axisScores), null, null, null);
 
         service.handleCallback(new FeedbackCallbackRequest("job-1", "sess-1", "succeeded",
                 new FeedbackCallbackRequest.Result(overall, List.of(persona(11L, 78)), List.of(item), null), null));
@@ -532,6 +532,6 @@ class FeedbackServiceMultiCallbackTest {
 
     private FeedbackCallbackRequest.Item followUp(String questionId, JsonNode followUpQuestion) {
         return new FeedbackCallbackRequest.Item(questionId, 11L, "질문", "의도",
-                "답변", "모범답변", List.of(), List.of(), "총평", null, followUpQuestion);
+                "답변", "모범답변", List.of(), List.of(), "총평", null, followUpQuestion, null, null);
     }
 }

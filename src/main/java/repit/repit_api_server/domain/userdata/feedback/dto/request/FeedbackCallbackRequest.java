@@ -93,6 +93,10 @@ public class FeedbackCallbackRequest {
         // 이 답변에 이어질 예상 꼬리질문 한 문장. 새로 생긴 필드라 구버전 분석 서버는 보내지 않는다.
         // 문자열이 아닌 값이 와도 본문 전체를 잃지 않도록 모양을 가리지 않고 받는다. 푸는 것은 FeedbackService가 한다.
         private JsonNode followUpQuestion;
+        // 이 문항의 응답 적중 등급(0~4). competency-v1부터 실린다.
+        private JsonNode responseLevel;
+        // 역량별 등급과 근거 인용. competency-v1부터 실린다. 모양을 가리지 않고 받아 CompetencyReader가 푼다.
+        private JsonNode competencies;
     }
 
     @Getter
